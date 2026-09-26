@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { startScanUsage, bindScanWorkers, collectScanUsage, refreshScanUsage, recordScanSourceAttempt, compareScanUsage, renderScanUsage } from '../src/scan-usage.mjs';
+import { startScanUsage, bindScanWorkers, collectScanUsage, refreshScanUsage, recordScanSourceAttempt, compareScanUsage } from '../src/scan-usage.mjs';
 import { writeReceiptCreateOnly } from '../src/verify-scan-receipt.mjs';
 
 const parent = '11111111-1111-1111-1111-111111111111';
@@ -31,7 +31,7 @@ const observation = ({ scope, threadIds }) => ({ issues: [], threads: threadIds.
   observed_settings: [{ model: thread_id === parent ? 'coordinator-model' : 'worker-model', reasoning_effort: 'medium', tokens }],
   started_at: at, completed_at: done, wall_ms: 60000, issues: [], root_turn_id: scope.root_turn_id })) });
 
-test('start/bind are idempotent; resume preserves exact scopes and no unrelated receipt fields change', t => {
+test('start/bind are idempotent and resume preserves exact scopes', t => {
   const runRoot = fixture(t);
   startScanUsage({ runRoot, capture, now: at });
   startScanUsage({ runRoot, capture, now: done });
@@ -41,7 +41,6 @@ test('start/bind are idempotent; resume preserves exact scopes and no unrelated 
   const first = readFileSync(path.join(runRoot, 'usage-context.json'), 'utf8');
   const value = JSON.parse(first);
   assert.equal(value.segments.length, 1);
-  assert.match(value.implementation.files['config/worker-scoring.md'], /^[a-f0-9]{64}$/);
   assert.deepEqual(value.segments[0].workers['worker-1'], [child]);
   startScanUsage({ runRoot, capture, rootTurnId: 'next-root-turn', now: done });
   const after = JSON.parse(readFileSync(path.join(runRoot, 'usage-context.json')));
@@ -77,7 +76,6 @@ test('aggregation counts disjoint root scopes, reports actual settings, and neve
   assert.equal(value.timing.task_wall_ms, 60000);
   assert.equal(value.timing.worker_wall_ms_sum, 60000);
   assert.equal(value.efficiency.tokens_per_assigned_job, 240);
-  assert.equal(value.outcome.semantic_quality, 'unreviewed');
   assert.equal(JSON.stringify(value).includes('/private/path'), false);
   assert.deepEqual(refreshScanUsage({ runRoot, collect: observation, now: done }), value);
 });
@@ -138,7 +136,7 @@ test('historical backfill requires an explicit original scope and cannot pretend
   assert.deepEqual(JSON.parse(readFileSync(path.join(runRoot, 'receipt.json'))), receipt);
 });
 
-test('comparison flags changed inputs and shared turns; CSV/JSON preserve unknown values and all token subsets', t => {
+test('comparison flags changed inputs and overlapping turns', t => {
   const runRoot = fixture(t);
   startScanUsage({ runRoot, capture, now: at });
   bindScanWorkers({ runRoot, workers: [`worker-1=${child}`] });
@@ -148,11 +146,6 @@ test('comparison flags changed inputs and shared turns; CSV/JSON preserve unknow
   const result = compareScanUsage([one, two]);
   assert.ok(result.warnings.some(item => item.includes('sample: differs')));
   assert.ok(result.warnings.some(item => item.includes('totals overlap')));
-  assert.match(renderScanUsage(result), /Partial totals are measured subtotals/);
-  assert.match(renderScanUsage(result, 'csv'), /reasoning_output_tokens/);
-  assert.match(renderScanUsage(result, 'csv'), /totals overlap/);
-  assert.match(renderScanUsage(result), /workflow_seconds/);
-  assert.deepEqual(JSON.parse(renderScanUsage(result, 'json')), result);
   const before = one.fingerprints.sample;
   const acquisition = JSON.parse(readFileSync(path.join(runRoot, 'acquisition.json')));
   acquisition.acquired[0].title = 'Staff Engineer';

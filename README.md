@@ -364,7 +364,7 @@ be replaced with the exact reviewed run/posting identities, never guessed by tit
 All implementations are present, but this is a reviewable candidate, not a completed release.
 The following checks passed on macOS as of 2026-09-26:
 
-- Public candidate tests: **315/315**; development repository tests: **319/319**.
+- Public candidate tests: **295/295**; development repository tests: **298/298**.
 - A fresh Career-Ops installation, including Chromium, succeeded. Onboarding with a
   fictional CV/profile, full doctor, profile/CV consistency, pipeline, writer-interface,
   statistics/collector and canonical-register checks passed; empty inputs produced zero counts.

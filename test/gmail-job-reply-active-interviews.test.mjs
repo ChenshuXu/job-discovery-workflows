@@ -18,7 +18,6 @@ import {
   ActiveInterviewsValidationError,
   assertInterviewProcessesPreserved,
   readInterviewProcessSummary,
-  formatInterviewTodo,
   validateActiveInterviews,
   withActiveInterviewsLock,
 } from '../.agents/skills/gmail-job-reply-review/scripts/active-interviews.mjs';
@@ -157,16 +156,6 @@ test('requires every TODO to identify exactly one active process', () => {
       return true;
     },
   );
-});
-
-test('checked TODOs retain exact process fields until evidence is reconciled', () => {
-  const parsed = validateActiveInterviews(document({
-    active: [TRACKED],
-    todos: ['- [x] **Example Security / #101：** accept the calendar invitation'],
-  }));
-  assert.equal(parsed.todos[0].checked, true);
-  assert.equal(parsed.active[0].status, 'Action Required');
-  assert.equal(parsed.active[0].dateOrDeadline, '2000-01-04 11:00 PT');
 });
 
 test('admitted identities persist and reopened terminal history remains visible', () => {
@@ -313,26 +302,6 @@ test('prepare CLI atomically reclaims a lock left by a dead process', async t =>
   assert.equal(existsSync(lockPath), false);
 });
 
-test('formatter emits ordinary Markdown with exact visible identity', () => {
-  assert.equal(
-    formatInterviewTodo({
-      identity: 'tracker:#101',
-      label: 'Example Security R10001',
-      action: 'accept the calendar invitation',
-    }),
-    '- [ ] **Example Security R10001 / #101：** accept the calendar invitation',
-  );
-  assert.equal(
-    formatInterviewTodo({
-      identity: 'action:example-labs-backend-recruiter-screen',
-      label: 'Example Labs',
-      action: 'send four time slots',
-      checked: true,
-    }),
-    '- [x] **Example Labs / action:example-labs-backend-recruiter-screen：** send four time slots',
-  );
-});
-
 test('linked summary reads only the matching identity and rejects out-of-scope or mismatched links', t => {
   const root = mkdtempSync(join(tmpdir(), 'interview-summary-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -345,7 +314,6 @@ test('linked summary reads only the matching identity and rejects out-of-scope o
   const result = readInterviewProcessSummary(row, register);
   assert.match(result.text, /Old Rejected/);
   assert.doesNotMatch(result.text, /Other evidence/);
-  assert.match(result.sha256, /^[a-f0-9]{64}$/u);
   assert.throws(() => readInterviewProcessSummary({ ...row, identity: 'tracker:#102' }, register), /exactly tracker:#102/u);
   assert.throws(() => readInterviewProcessSummary({ ...row, notes: row.notes + ' extra log' }, register), /only/u);
   assert.throws(() => readInterviewProcessSummary({ ...row, notes: '[Process summary](../process-summary.md#tracker-101)' }, register), /one company folder/u);

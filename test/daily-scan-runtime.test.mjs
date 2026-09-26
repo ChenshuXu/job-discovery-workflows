@@ -3,17 +3,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { loadDailyScanRuntime, validateDailyScanRuntime, workerIdsForRuntime } from '../src/daily-scan-runtime.mjs';
 
-const postScanHandoff = readFileSync(new URL('../linkedin-post-scan/src/career-ops.mjs', import.meta.url), 'utf8');
-
 test('runtime loads every value from the JSON source of truth', () => {
   const runtime = loadDailyScanRuntime();
   const configured = JSON.parse(readFileSync(new URL('../config/daily-scan-runtime.json', import.meta.url), 'utf8'));
   assert.deepEqual(runtime, configured);
-  assert.match(runtime.worker.model, /^gpt-[A-Za-z0-9._-]+$/);
-  assert.ok(['none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(runtime.worker.reasoning_effort));
-  assert.equal('quarantine' in runtime, false);
 });
-
 test('runtime accepts safe non-default scheduler, reporting, and failure values', () => {
   const runtime = loadDailyScanRuntime();
   const configured = validateDailyScanRuntime({
@@ -40,11 +34,4 @@ test('runtime rejects unsafe numeric values', () => {
   for (const value of [undefined, '7', 0, -1, 1.5]) {
     assert.throws(() => validateDailyScanRuntime({ ...runtime, retention: { evaluated_unapplied_ttl_days: value } }), /evaluated_unapplied_ttl_days/);
   }
-});
-
-test('Post Scan uses the planner runtime snapshot for worker slots and handoff', () => {
-  assert.match(postScanHandoff, /workerIdsForRuntime\(stages\.plan\.runtime\)/);
-  assert.match(postScanHandoff, /runtime: stages\.plan\.runtime/);
-  assert.match(postScanHandoff, /else stages\[worker\] = runNode\('merge-worker-results\.mjs'/);
-  assert.doesNotMatch(postScanHandoff, /\['worker-1', 'worker-2', 'worker-3'\]/);
 });

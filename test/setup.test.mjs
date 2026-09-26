@@ -22,7 +22,7 @@ test('setup is create-only, selection-aware and resolves all linked Skills outsi
   assert.deepEqual(second.writes, []); assert.equal(readFileSync(file, 'utf8'), before);
   assert.ok(second.results[0].checks.every(x => !x.id.startsWith('career-ops:')));
   for (const skill of readdirSync(links)) assert.equal(skillRoot(path.join(links, skill, 'SKILL.md')), root);
-  assert.equal(readdirSync(links).length, 8);
+  assert.deepEqual(readdirSync(links).sort(), readdirSync(path.join(root, '.agents/skills')).sort());
   const infographic = setup({ root, workflows: ['process-infographic'] });
   assert.equal(infographic.dependencies[0].name, 'Career-Ops');
   assert.ok(infographic.results[0].checks.some(x => x.id === 'infographic:stats.mjs'));

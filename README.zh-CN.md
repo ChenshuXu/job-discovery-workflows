@@ -217,7 +217,7 @@ npm test
 
 全部实现都已包含；这是可供审阅的候选版，尚未完成发布。截至 2026-09-26，已在 macOS 通过：
 
-- 公开候选测试 **315/315**，开发仓库测试 **319/319**。
+- 公开候选测试 **295/295**，开发仓库测试 **298/298**。
 - 全新 Career-Ops 安装成功，含 Chromium；使用虚构 CV/profile 的 onboarding、完整 doctor、profile/CV 一致性、pipeline、writer interface、统计/采集器及 canonical register 检查通过，空输入计数为零。上游仍提示无法自动检测 Codex Playwright MCP，以及默认 Vinted portal 无 provider；这些检查不代表 Job Discovery 来源就绪。
 - Codex CLI 实际读取八个内置 Skill，在候选本地及独立 Career Docs 的 Skill 链接中均解析到公开 checkout；用显式 Skill 路径区分其他 checkout 的同名 Skill。
 - Gmail 主账号连接器、次账号 Chrome 的身份匹配与只读搜索通过；LinkedIn、Jobright 登录读取通过。公开 JobSpy adapter 使用当前包真实采集到一个含 JD 的岗位，错误数为零。

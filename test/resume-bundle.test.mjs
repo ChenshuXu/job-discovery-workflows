@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { resolveReport } from '../src/resume/resolve-report.mjs';
-import { generateChangesMarkdown, writeBundle } from '../src/resume/write-bundle.mjs';
+import { writeBundle } from '../src/resume/write-bundle.mjs';
 
 function fixture() {
   const root = mkdtempSync(resolve(tmpdir(), 'resume-bundle-test-'));
@@ -79,11 +79,9 @@ test('passing build writes directly and refuses overwrite', () => {
   const resolved = resolveReport('9', { careerOpsRoot: root, results: [{ reportNum: '9', company: 'Acme', role: 'Engineer', reportPath: 'reports/9-acme-engineer-2026-01-01.md' }] });
   const pageCount = { status: 'NOT RUN', reason: 'disabled for test' };
   const coverage = { hit: ['Go'], miss: ['APIs'], gap: ['Rust'], unverified: ['Kubernetes-native'] };
-  const expected = generateChangesMarkdown({ resolved, source, baseline, plan, fit, pageCount, coverage });
   writeBundle({ resolved, source, baseline, plan, docxBuffer: Buffer.from('docx'), fit, pageCount, coverage });
-  assert.equal(readFileSync(resolve(resolved.targetPath, 'changes.md'), 'utf8'), expected);
-  assert.match(expected, /## JD keyword coverage[\s\S]*4 keywords · 1 hit · 1 miss · 1 gap · 1 unverified/);
-  assert.doesNotMatch(expected, /## Status|precision|Estimator disagreed/);
+  const changes = readFileSync(resolve(resolved.targetPath, 'changes.md'), 'utf8');
+  assert.ok(changes.includes(plan.rationale) && changes.includes(plan.gaps[0]));
   assert.throws(() => writeBundle({ resolved, source, baseline, plan, docxBuffer: Buffer.from('docx'), fit, pageCount, coverage }), /OUTPUT_EXISTS/);
-  assert.ok(existsSync(resolve(resolved.targetPath, 'cv.docx')));
+  assert.equal(readFileSync(resolve(resolved.targetPath, 'cv.docx'), 'utf8'), 'docx');
 });

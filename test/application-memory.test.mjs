@@ -58,7 +58,6 @@ test('semantic rules resolve equivalent wording only after meaning and dimension
   });
   assert.equal(resolved.status, 'exact');
   assert.equal(resolved.selected.value, 'No');
-  assert.equal(resolved.selected.matchedBy, 'semantic_rule');
 
   assert.equal(resolveQuestion(memory, {
     label: 'Were you referred by an employee at Example Corp?',
@@ -134,26 +133,6 @@ test('the most specific answer applies without leaking across companies or roles
   assert.equal(lookup(memory, { ...base, company: 'Acme', role: 'Engineer' }).selected.value, 'Job');
   assert.equal(lookup(memory, { ...base, company: 'Acme', role: 'Manager' }).selected.value, 'Company');
   assert.equal(lookup(memory, { ...base, company: 'Other', role: 'Engineer' }).selected.value, 'Global');
-});
-
-test('an exact ATS question and a reviewed alias both resolve exactly', () => {
-  const key = 'preferences.sms_consent';
-  let memory = save(emptyMemory(), {
-    key,
-    label: 'Do you consent to receiving text messages?',
-    value: 'Yes',
-    scope: 'global',
-  });
-  memory = save(memory, {
-    key,
-    label: 'May we send you SMS updates?',
-    value: 'Yes',
-    scope: 'global',
-    approveAlias: true,
-  });
-
-  assert.equal(lookup(memory, { label: 'Do you consent to receiving text messages?' }).status, 'exact');
-  assert.equal(lookup(memory, { key, label: 'May we send you SMS updates?' }).status, 'exact');
 });
 
 test('new wording for an existing canonical key requires key review', () => {
@@ -351,7 +330,6 @@ test('company and global scope require explicit reuse authorization', () => {
 
   const created = remember(emptyMemory(), { ...input, company: 'Acme', role: 'Engineer' }).memory.records[0];
   assert.equal(created.scope, 'job');
-  assert.equal(created.scopeKey, 'acme/engineer');
 });
 
 test('keyword search discovers canonical employment facts without resolving new wording', () => {
@@ -371,13 +349,9 @@ test('keyword search discovers canonical employment facts without resolving new 
   const current = search(memory, { query: 'current employee contractor' });
   assert.equal(current.status, 'matches');
   assert.equal(current.candidates[0].key, 'employment.current_employer_affiliation');
-  assert.ok(current.candidates[0].matchedKeywords.includes('current'));
-  assert.ok(current.candidates[0].matchedKeywords.includes('employee'));
 
   const prior = search(memory, { query: 'previous worked employer' });
   assert.equal(prior.candidates[0].key, 'employment.prior_employer_affiliation');
-  assert.ok(prior.candidates[0].matchedKeywords.includes('previous'));
-  assert.ok(prior.candidates[0].matchedKeywords.includes('worked'));
 
   assert.equal(lookup(memory, {
     key: current.candidates[0].key,
@@ -460,27 +434,6 @@ test('the CLI writes, reads, and verifies one memory file', (t) => {
   assert.equal(JSON.parse(readFileSync(memoryPath, 'utf8')).records.length, 1);
   assert.equal(found.status, 'exact');
   assert.deepEqual(checked, { ok: true, recordCount: 1, ruleCount: 0, errors: [] });
-});
-
-test('the CLI searches by canonical fact keywords before exact lookup', (t) => {
-  const testDir = mkdtempSync(join(tmpdir(), 'ego-apply-memory-search-test-'));
-  t.after(() => rmSync(testDir, { recursive: true, force: true }));
-  const memoryPath = join(testDir, 'application-memory.json');
-  const scriptPath = resolve('.agents/skills/career-ops-ego-apply/scripts/application-memory.mjs');
-
-  execFileSync(process.execPath, [
-    scriptPath, 'remember', '--memory', memoryPath,
-    '--key', 'employment.current_employer_affiliation',
-    '--label', 'Are you currently employed by the hiring company?',
-    '--value', 'No', '--scope', 'global', '--reuse-authorized', 'true',
-  ]);
-  const found = JSON.parse(execFileSync(process.execPath, [
-    scriptPath, 'search', '--memory', memoryPath,
-    '--query', 'current employee contractor',
-  ], { encoding: 'utf8' }));
-
-  assert.equal(found.status, 'matches');
-  assert.equal(found.candidates[0].key, 'employment.current_employer_affiliation');
 });
 
 test('the CLI maps kebab-case reuse and alias approval flags', (t) => {

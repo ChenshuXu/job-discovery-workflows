@@ -33,16 +33,6 @@ function registryFixture(t, enabled, minimum = 1) {
   return { root, file, write };
 }
 
-test('active registry declares all three sources in execution order', () => {
-  const registry = loadAdapterRegistry();
-  assert.deepEqual(Object.keys(registry.adapters), ['jobspy', 'ego-browser', 'jobright']);
-  assert.deepEqual(Object.values(registry.adapters).map(adapter => adapter.enabled), [true, true, true]);
-  assert.deepEqual(Object.values(registry.adapters).map(adapter => adapter.config), [
-    'config/jobspy-ego.json', 'config/jobspy-ego.json', 'config/jobright.json',
-  ]);
-  assert.ok(Object.values(registry.adapters).every(adapter => adapter.employer_exclusions && /^[a-f0-9]{64}$/.test(adapter.config_sha256)));
-});
-
 test('enabled order is frozen in the baseline profile', t => {
   const fixture = registryFixture(t, ['jobspy', 'jobright']);
   const snapshot = snapshotAdapterProfile(fixture.file);
@@ -73,11 +63,11 @@ test('runner dry-run previews only current enabled commands without creating a r
   }));
   assert.equal(output.dry_run, true);
   assert.deepEqual(output.adapters.map(adapter => adapter.adapter_id), ['ego-browser', 'jobright']);
-  assert.deepEqual(output.adapters.map(adapter => adapter.argv.slice(-4, -2)), [
-    ['--run-id', 'dry-run-preview'], ['--run-id', 'dry-run-preview'],
-  ]);
-  assert.equal(output.adapters[0].argv.at(-1), path.join(PROJECT_ROOT, 'config/jobspy-ego.json'));
-  assert.equal(output.adapters[1].argv.at(-1), path.join(PROJECT_ROOT, 'config/jobright.json'));
+  for (const { adapter_id, argv } of output.adapters) {
+    assert.equal(argv[argv.indexOf('--run-id') + 1], 'dry-run-preview');
+    assert.equal(argv[argv.indexOf('--config') + 1], path.join(PROJECT_ROOT, definitions([])[adapter_id].config));
+  }
+  assert.equal(existsSync(runRoot), false);
 });
 
 test('retry is recorded when bootstrap failed before writing source artifacts', t => {

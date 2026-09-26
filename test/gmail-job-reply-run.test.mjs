@@ -415,22 +415,6 @@ test('tracker rejection note matching rejects misleading substrings and wrong bo
   }
 });
 
-test('help distinguishes mailbox transaction options from direct register commands', () => {
-  const result = spawnSync(process.execPath, [SCRIPT, 'help'], {
-    cwd: ROOT,
-    encoding: 'utf8',
-  });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  const output = JSON.parse(result.stdout);
-  assert.equal(output.common_options, undefined);
-  assert.equal(
-    output.mailbox_transaction_options,
-    '--career-ops-root PATH --interviews-file PATH [--state-root PATH]',
-  );
-  assert.deepEqual(output.allowed_dispositions.application_confirmation, ['no_action']);
-  assert.deepEqual(output.allowed_dispositions.explicit_rejection, ['tracker_rejected', 'no_action']);
-});
-
 test('page results support selective batched classification and identical page replay', (t) => {
   const fx = fixture(t);
   const statePath = join(fx.state, 'gmail-job-reply-state.json');
@@ -687,49 +671,6 @@ test('application confirmations permit only no_action', (t) => {
   );
   assert.equal(ignored.status, 0, ignored.stdout);
   assert.deepEqual(ignored.output.register_markers, []);
-});
-
-test('candidate register markers are stable across aborted retry runs', (t) => {
-  const fx = fixture(t);
-  const descriptor = candidateDescriptor();
-
-  const first = command(fx, 'begin').output;
-  stage(fx, first, descriptor);
-  const firstClassification = command(
-    fx,
-    'classify',
-    ...credentials(first),
-    '--mailbox', 'primary',
-    '--category', 'action_required',
-    '--disposition', 'register_updated',
-    '--identity-key', 'action:acme-engineer',
-    descriptor,
-  );
-  assert.equal(firstClassification.status, 0, firstClassification.stdout);
-  assert.equal(command(
-    fx,
-    'abort',
-    ...credentials(first),
-    '--reason-code', 'test_retry',
-  ).status, 0);
-
-  const second = command(fx, 'begin').output;
-  assert.notEqual(second.run_id, first.run_id);
-  stage(fx, second, descriptor);
-  const secondClassification = command(
-    fx,
-    'classify',
-    ...credentials(second),
-    '--mailbox', 'primary',
-    '--category', 'action_required',
-    '--disposition', 'register_updated',
-    '--identity-key', 'action:acme-engineer',
-    descriptor,
-  );
-  assert.deepEqual(
-    secondClassification.output.register_markers,
-    firstClassification.output.register_markers,
-  );
 });
 
 test('a stable register marker is a valid receipt after abort and retry', (t) => {

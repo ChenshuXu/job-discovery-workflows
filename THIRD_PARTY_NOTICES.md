@@ -4,7 +4,7 @@ Job Discovery's original code and documentation are provided under the [MIT Lice
 
 ## Included compatibility grammar
 
-`test/career-ops-tracker-format.test.mjs` contains the requisition-note regular expression
+`test/daily-scan-rebuild.test.mjs` contains the requisition-note regular expression
 from Career-Ops `merge-tracker.mjs`. The upstream source and license were checked at
 [`9d9f5d5f5fe0`](https://github.com/career-ops-hq/career-ops/blob/9d9f5d5f5fe0c9076eb39fa15149153437d834bf/merge-tracker.mjs#L293).
 The upstream license for that portion follows:

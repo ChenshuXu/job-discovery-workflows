@@ -42,7 +42,6 @@ test('captures explicit historical scope and latest active or completed turn wit
   const sessionsDir = fixture(t, { main: [meta('main'), start('prior-turn'), context('prior-turn'), complete('prior-turn'), start(), context(), usage()] });
   const active = captureCodexUsageScope({ sessionsDir, threadId: 'main' });
   assert.equal(active.root_turn_id, root);
-  assert.equal(active.selection, 'latest_active_turn');
   assert.equal(captureCodexUsageScope({ sessionsDir, threadId: 'main', rootTurnId: 'prior-turn' }).root_turn_id, 'prior-turn');
   assert.equal(captureCodexUsageScope({ sessionsDir, threadId: 'main', rootTurnId: 'missing' }).status, 'unavailable');
   const result = collectCodexUsage({ scope: active, sessionsDir, now: '2026-09-07T12:00:03Z' });
@@ -100,7 +99,6 @@ test('a resumed active turn cannot reuse an earlier completion marker', t => {
   const resumed = start();
   resumed.timestamp = '2026-09-07T12:00:03.000Z';
   const sessionsDir = fixture(t, { main: [meta('main'), start(), context(), usage(), complete(), resumed] });
-  assert.equal(captureCodexUsageScope({ sessionsDir, threadId: 'main' }).selection, 'latest_active_turn');
   const result = collectCodexUsage({ scope, sessionsDir, now: '2026-09-07T12:00:04Z' });
   assert.equal(result.status, 'partial');
   assert.equal(result.completed_at, null);

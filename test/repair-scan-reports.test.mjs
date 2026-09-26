@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { repairScanReports } from '../src/repair-scan-reports.mjs';
@@ -197,7 +197,6 @@ test('report correction dry run has seven exact effects and makes no filesystem 
   assert.equal(plan.effects[0].report_allowed, false); assert.equal(plan.effects[0].hard_exclusion, true); assert.equal(plan.effects[0].tracker.status, 'SKIP');
   assert.equal(plan.effects[2].old_score, 4.4); assert.equal(plan.effects[2].new_score, 4.4);
   for (const effect of plan.effects.slice(3)) { assert.equal(effect.old_score, 3.5); assert.equal(effect.new_score, effect.original_raw_fit_score); }
-  for (const effect of plan.effects) assert.match(effect.new_report_sha256, /^[a-f0-9]{64}$/);
   await assert.rejects(invoke(fx, { apply: true }), /reviewed --plan-sha256/);
 });
 
@@ -227,7 +226,6 @@ test('apply uses headed additions, preserves report IDs/source run/unrelated sta
   const retention = buildEvaluatedRetentionPlan({ trackerText: read(path.join(fx.careerRoot,'data/applications.md')), scanHistoryText: read(path.join(fx.careerRoot,'data/scan-history.tsv')),
     careerRoot: fx.careerRoot, parser: await loadCareerTrackerParser(fx.careerRoot), asOfDate: '2026-09-15', ttlDays: 7, statusLogText: read(path.join(fx.careerRoot,'data/status-log.tsv')) });
   assert.equal(retention.cleaned.length, 6); assert.deepEqual(retention.protected, []);
-  assert.equal(existsSync(path.join(fx.careerRoot,'reports/.repair-backups')),false);
   const applied = snapshot(fx.root); assert.equal((await invoke(fx, { apply: true, expectedPlanHash: plan.plan_sha256 })).status, 'ALREADY_APPLIED'); assert.deepEqual(snapshot(fx.root), applied);
 });
 

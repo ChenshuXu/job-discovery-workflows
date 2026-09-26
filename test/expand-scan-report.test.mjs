@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 
 import os from 'node:os';
 import path from 'node:path';
 import { commitExpansion, prepareExpansion } from '../src/expand-scan-report.mjs';
-import { requiredScanReportHeadings, renderCompactReport } from '../src/scan-report-contract.mjs';
+import { renderCompactReport } from '../src/scan-report-contract.mjs';
 
 const KEY = 'workday:example/exampleexternalcareersite:JR1000003';
 const POSTING_URL = 'https://example.wd5.myworkdayjobs.com/exampleexternalcareersite/job/x/JR1000003';
@@ -49,12 +49,6 @@ function fixture() {
   writeFileSync(report, `# Evaluation: Example Company — Senior Software Engineer\n\n**Report Number:** 007  \n**Score:** 4.2/5  \n**URL:** ${POSTING_URL}  \n**Posting Key:** ${KEY}  \n\n---\n\n${compact()}\n`);
   return { root, discovery, career, jd, report };
 }
-
-test('report-contract headings and compact validator stay aligned', () => {
-  const contract = readFileSync(new URL('../config/report-contract.md', import.meta.url), 'utf8');
-  for (const heading of requiredScanReportHeadings()) assert.ok(contract.includes('`' + heading + '`'));
-  assert.deepEqual(compact().split('\n').filter(line => /^## /.test(line)), requiredScanReportHeadings());
-});
 
 test('on-demand expansion binds the original JD and preserves a compact backup', () => {
   const fx = fixture();

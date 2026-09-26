@@ -1,11 +1,11 @@
-import { runInNewContext } from 'node:vm';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { collectLinkedIn } from '../adapters/egobrowser_linkedin_scan.mjs';
 
 const JOBSPY = fileURLToPath(new URL('../adapters/jobspy_linkedin_scan.py', import.meta.url));
 const EGO = fileURLToPath(new URL('../adapters/egobrowser_linkedin_scan.mjs', import.meta.url));
@@ -129,40 +129,44 @@ if (input.includes('await collectLinkedIn(')) {
   }
 });
 
-
-test('recommendation discovery waits for the exact module and link without hiding permanent failures', async () => {
-  const adapter = readFileSync(EGO, 'utf8');
-  const implementation = adapter.slice(adapter.indexOf('async function findTopApplicantShowAllUrl('), adapter.indexOf('async function verifyTopApplicantFilter('));
-  const config = JSON.parse(readFileSync(CONFIG, 'utf8')).top_applicant_recommendations;
-  const target = 'https://www.linkedin.com/jobs/search-results/?origin=JobSearchOrigin_QUALIFICATION_LANDING';
+test('recommendation collector records missing modules, delayed wrong links and authentication failures', async t => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'linkedin-collector-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(path.join(root, 'src'));
+  copyFileSync(new URL('../src/employer-exclusions.mjs', import.meta.url), path.join(root, 'src/employer-exclusions.mjs'));
+  const config = JSON.parse(readFileSync(CONFIG, 'utf8'));
   const health = { login_form: false, challenge: false, auth_path: false, login_text: false };
-  const absent = { href: '', diagnostic: { ...health, expected_heading_count: 0, scoped_show_all_count: 0 } };
-  const headingOnly = { href: '', diagnostic: { ...health, expected_heading_count: 1, scoped_show_all_count: 0 } };
-  const ready = { href: target, diagnostic: { ...health, expected_heading_count: 1, scoped_show_all_count: 1 } };
-  for (const [sequence, expected, expectedWaits] of [
-    [[absent, headingOnly, ready], target, 2],
-    [[ready], target, 0],
-    [[absent], 'MODULE_ABSENT', 10],
-    [[headingOnly], 'SELECTOR_DRIFT', 10],
-    [[{ href: '', diagnostic: { ...health, expected_heading_count: 2, scoped_show_all_count: 0 } }], 'SELECTOR_AMBIGUOUS', 0],
-    [[{ ...ready, href: 'https://example.com/jobs/search-results/' }], 'UNEXPECTED_DESTINATION', 0],
-    [[{ ...absent, diagnostic: { ...absent.diagnostic, challenge: true } }], 'AUTH_OR_CHALLENGE', 0],
+  const absent = { ...health, href: '', diagnostic: { ...health, expected_heading_count: 0, scoped_show_all_count: 0 } };
+  const wrong = { ...health, href: 'https://example.com/jobs/search-results/', diagnostic: { ...health, expected_heading_count: 1, scoped_show_all_count: 1 } };
+  const helpers = { useOrCreateTaskSpace: async () => ({ id: 'fixture' }), cliLog() {},
+    openOrReuseTab: async () => {}, waitForLoad: async () => {}, wait: async () => {}, js: undefined };
+  const originals = Object.fromEntries(Object.keys(helpers).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  const exitCode = process.exitCode;
+  t.after(() => {
+    for (const [key, descriptor] of Object.entries(originals)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
+    process.exitCode = exitCode;
+  });
+  Object.assign(globalThis, helpers);
+  for (const [sequence, expected] of [
+    [[absent], 'MODULE_ABSENT'],
+    [[health, absent, wrong], 'UNEXPECTED_DESTINATION'],
+    [[{ ...health, challenge: true }], 'AUTH_OR_CHALLENGE'],
   ]) {
-    let calls = 0, waits = 0;
-    const stat = {};
-    const find = runInNewContext(`(${implementation.trim()})`, {
-      topApplicantRecommendations: config, URL,
-      Date: { now: () => waits * 2000 },
-      openResultsPage: async () => {},
-      requireHealthyPage: async () => ({ ...health, challenge: calls > 0 && sequence[Math.min(calls - 1, sequence.length - 1)].diagnostic.challenge }),
-      js: async () => sequence[Math.min(calls++, sequence.length - 1)],
-      wait: async seconds => { assert.equal(seconds, 2); waits++; },
-      sourceError: (code, message, retryable) => Object.assign(new Error(message), { code, retryable }),
+    let calls = 0;
+    globalThis.js = async () => sequence[Math.min(calls++, sequence.length - 1)];
+    await collectLinkedIn({ ...config, discovery_root: root, run_id: expected,
+      direct_search: { enabled: false, required: false },
+      top_applicant_recommendations: { ...config.top_applicant_recommendations, enabled: true, required: true },
     });
-    if (expected === target) assert.equal(await find(stat), target);
-    else await assert.rejects(find(stat), error => error.code === expected && error.retryable === false);
-    assert.equal(waits, expectedWaits, expected);
-    assert.equal(stat.diagnostic.discovery_attempts, calls);
-    assert.equal(stat.diagnostic.discovery_wait_ms, waits * 2000);
+    const summary = JSON.parse(readFileSync(path.join(root, 'runs', expected, 'sources/ego-browser/summary.json')));
+    assert.equal(process.exitCode, 1);
+    assert.equal(summary.status, 'FAILED');
+    assert.equal(summary.failure_class, expected);
+    assert.equal(summary.retryable, false);
+    assert.equal(summary.markdown_jobs, 0);
+    if (expected === 'UNEXPECTED_DESTINATION') assert.ok(summary.top_applicant_recommendations.diagnostic.discovery_attempts > 1);
   }
 });

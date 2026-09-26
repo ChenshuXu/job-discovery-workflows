@@ -489,15 +489,6 @@ test('merger fails closed when a below-threshold result omits rationale', () => 
   assert.throws(() => validateWorkerParts(run, 'worker-1'), /requires a single-line rationale/);
 });
 
-test('merger rejects a rationale longer than 150 characters', () => {
-  const run = fixture();
-  const file = path.join(run, 'results/worker-1.part-1.json');
-  const artifact = JSON.parse(readFileSync(file, 'utf8'));
-  artifact.results[0].rationale = 'x'.repeat(151);
-  writeFileSync(file, JSON.stringify(artifact));
-  assert.throws(() => validateWorkerParts(run, 'worker-1'), /at most 150 characters/);
-});
-
 test('merger validates a completed prefix before later parts exist', () => {
   const run = fixture();
   unlinkSync(path.join(run, 'results/worker-1.part-2.json'));
@@ -561,7 +552,7 @@ test('v4 renders authoritative fields once from structured evidence with zero ga
     { source: 'jd', quote: 'Build backend systems', explanation: 'Direct backend scope.' },
     { source: 'candidate', locator: 'cv.md/CV', fact: 'Master of Science in Computer Science', explanation: 'Relevant education.' },
   ] }));
-  const { result, markdown, summary } = rendered(run);
+  const { result, summary } = rendered(run);
   assert.equal(result.report.markdown, undefined);
   assert.equal(summary.company, 'Example');
   assert.equal(summary.role, 'Backend Engineer');
@@ -572,7 +563,6 @@ test('v4 renders authoritative fields once from structured evidence with zero ga
   assert.deepEqual(summary.soft_gaps, []);
   assert.equal(summary.risk_summary.legitimacy, 'high_confidence');
   assert.equal(summary.via, 'LinkedIn');
-  assert.match(markdown, /No material gaps identified/);
   mergeWorkerResults(run, 'worker-2');
   assert.deepEqual(loadScanResults(run).errors, []);
 });

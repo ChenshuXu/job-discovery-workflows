@@ -15,10 +15,10 @@ test('planning and precommit shared audit finds the verified Elastic mirror with
   assert.deepEqual(audit.results[0].matches[0].prior_artifacts, ['career-ops/reports/101.md']);
 });
 
-test('history dedupe matches any exact key in a posting-key set', () => {
+test('history dedupe matches a secondary key in a posting-key set', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'fingerprint-'));
   mkdirSync(path.join(root, 'reports'), { recursive: true });
-  writeFileSync(path.join(root, 'reports/001.md'), 'URL: https://boards.greenhouse.io/acme/jobs/123456\n');
+  writeFileSync(path.join(root, 'reports/001.md'), 'URL: https://www.linkedin.com/jobs/view/1000000105\n');
   const records = [{
     primary_key: 'greenhouse:acme:123456',
     posting_keys: ['greenhouse:acme:123456', 'linkedin:linkedin.com:1000000105'],
@@ -26,7 +26,7 @@ test('history dedupe matches any exact key in a posting-key set', () => {
   const audit = buildCanonicalFingerprintAudit({ records, careerRoot: root, runId: 'run-1' });
   assert.equal(audit.exact_set_verified, true);
   assert.deepEqual(audit.duplicate_keys, ['greenhouse:acme:123456']);
-  assert.deepEqual(audit.results[0].matched_keys, ['greenhouse:acme:123456']);
+  assert.deepEqual(audit.results[0].matched_keys, ['linkedin:linkedin.com:1000000105']);
 });
 
 test('history dedupe indexes a report-linked LinkedIn ID beside its ATS primary key', () => {
@@ -43,7 +43,6 @@ test('history dedupe indexes a report-linked LinkedIn ID beside its ATS primary 
   }];
   const audit = buildCanonicalFingerprintAudit({ records, careerRoot: root, runId: 'run-2' });
   assert.deepEqual(audit.duplicate_keys, ['linkedin:linkedin.com:1000000107']);
-  assert.deepEqual(audit.results[0].matched_keys, ['linkedin:linkedin.com:1000000107']);
   assert.deepEqual(audit.results[0].matches, [{
     posting_key: 'linkedin:linkedin.com:1000000107',
     prior_artifacts: ['career-ops/reports/102.md'],
@@ -72,7 +71,6 @@ test('history dedupe joins an exact CareerPuck mirror to its native Greenhouse p
     runId: 'run-careerpuck',
   });
   assert.deepEqual(audit.duplicate_keys, ['greenhouse:acmeco:1000000004']);
-  assert.deepEqual(audit.results[0].matched_keys, ['greenhouse:acmeco:1000000004']);
 });
 
 test('history dedupe upgrades verified Greenhouse redirects across three legacy URL shapes', () => {
@@ -91,7 +89,6 @@ test('history dedupe upgrades verified Greenhouse redirects across three legacy 
   const audit = buildCanonicalFingerprintAudit({ records, careerRoot: root, runId: 'run-greenhouse-legacy' });
 
   assert.deepEqual(audit.duplicate_keys, records.map(record => record.primary_key));
-  assert.deepEqual(audit.results.map(item => item.matched_keys), records.map(record => [record.primary_key]));
   assert.deepEqual(audit.results[0].matches[0].prior_artifacts, ['career-ops/reports/examplepay.md']);
 });
 

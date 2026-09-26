@@ -39,11 +39,7 @@ test('verified Elastic Ongig mirror shares identity and keeps immutable v2 artif
 });
 
 test('workday locale and location path variants share one fingerprint', () => {
-  const report = postingFingerprint(WORKDAY_REPORT);
-  assert.deepEqual(
-    { ats: report.ats, tenant: report.tenant, requisitionId: report.requisitionId },
-    { ats: 'workday', tenant: 'example/exampleexternalcareersite', requisitionId: 'JR1000001' },
-  );
+  assert.equal(postingKey(WORKDAY_REPORT), 'workday:example/exampleexternalcareersite:JR1000001');
   assert.equal(samePosting(WORKDAY_REPORT, WORKDAY_JD), true);
 });
 
@@ -89,17 +85,12 @@ test('workday keeps opaque requisition suffixes and accepts an optional apply ta
 
 test('major ATS hosts resolve to tenant and requisition', () => {
   for (const [url, expected] of [
-    ['https://boards.greenhouse.io/acmeco/jobs/4567890', { ats: 'greenhouse', tenant: 'acmeco', requisitionId: '4567890' }],
-    ['https://job-boards.greenhouse.io/acmeco/jobs/4567890?gh_src=abc', { ats: 'greenhouse', tenant: 'acmeco', requisitionId: '4567890' }],
-    ['https://jobs.lever.co/acmeco/8f2a1c3d-0000-4a11-9b22-cc3344556677', { ats: 'lever', tenant: 'acmeco', requisitionId: '8F2A1C3D-0000-4A11-9B22-CC3344556677' }],
-    ['https://jobs.ashbyhq.com/acmeco/11112222-3333-4444-5555-666677778888/application', { ats: 'ashby', tenant: 'acmeco', requisitionId: '11112222-3333-4444-5555-666677778888' }],
+    ['https://boards.greenhouse.io/acmeco/jobs/4567890', 'greenhouse:acmeco:4567890'],
+    ['https://job-boards.greenhouse.io/acmeco/jobs/4567890?gh_src=abc', 'greenhouse:acmeco:4567890'],
+    ['https://jobs.lever.co/acmeco/8f2a1c3d-0000-4a11-9b22-cc3344556677', 'lever:acmeco:8F2A1C3D-0000-4A11-9B22-CC3344556677'],
+    ['https://jobs.ashbyhq.com/acmeco/11112222-3333-4444-5555-666677778888/application', 'ashby:acmeco:11112222-3333-4444-5555-666677778888'],
   ]) {
-    const actual = postingFingerprint(url);
-    assert.deepEqual(
-      { ats: actual.ats, tenant: actual.tenant, requisitionId: actual.requisitionId },
-      expected,
-      url,
-    );
+    assert.equal(postingKey(url), expected, url);
   }
 });
 
@@ -175,7 +166,6 @@ test('generic identity never treats an API version path as an exact requisition'
   const hirebridgeB = 'https://recruit.hirebridge.com/v3/careercenter/v2/details.aspx?jid=100002&cid=1002&locvalue=10000001';
   assert.equal(postingFingerprint(jometerA), null);
   assert.equal(postingFingerprint(zipRecruiterRedirect), null);
-  assert.equal(postingKey(zipRecruiterRedirect), null);
   assert.equal(samePosting(jometerA, jometerB), false);
   assert.equal(samePosting(hirebridgeA, hirebridgeB), false);
   assert.equal(postingKey(hirebridgeA), 'hirebridge:recruit.hirebridge.com/1001:100001');

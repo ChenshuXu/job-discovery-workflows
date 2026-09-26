@@ -60,15 +60,13 @@ function fixture() {
   return { discoveryRoot, careerRoot, fixtureFile };
 }
 
-test('Google ATS config builds one qdr:d query for each supported ATS family', () => {
-  const config = loadGoogleAtsConfig();
+test('Google ATS queries preserve configured roles, locations, exclusions and sites', () => {
+  const config = { ...loadGoogleAtsConfig(), role_terms: ['Backend Engineer'], location_terms: ['US Remote'], negative_terms: ['intern'] };
   const queries = buildGoogleQueries(config);
-  assert.deepEqual(queries.map(row => row.ats), ['ashby', 'lever', 'greenhouse', 'workday', 'smartrecruiters']);
-  assert.equal(config.provider.freshness_tbs, 'qdr:d');
-  assert.equal(config.max_post_age_hours, 24);
-  assert.equal(config.http_timeout_ms, 45000);
-  assert.deepEqual(config.serp_retry_delays_ms, [1000, 4000, 16000]);
-  assert.ok(queries.every(row => config.role_terms.every(term => row.query.includes(`"${term}"`))));
+  assert.deepEqual(queries.map(row => row.ats), config.ats_sites.map(site => site.id));
+  for (const { query, domains } of queries) {
+    for (const term of ['"Backend Engineer"', '"US Remote"', '-intern', ...domains.map(domain => `site:${domain}`)]) assert.ok(query.includes(term), term);
+  }
 });
 
 test('one exhausted SERP query is audited but does not fail the adapter', async () => {

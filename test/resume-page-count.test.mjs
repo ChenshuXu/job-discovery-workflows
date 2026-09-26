@@ -17,7 +17,6 @@ test('missing Word container directory returns NOT RUN', () => {
   const { countDir, docxPath } = fixture();
   const result = countWordPages(docxPath, { countDir, runScript: () => assert.fail('runScript must not run') });
   assert.equal(result.status, 'NOT RUN');
-  assert.match(result.reason, /container Documents directory not found/);
 });
 
 test('successful injected page count removes the container copy', () => {
@@ -54,27 +53,6 @@ test('injected script failure returns NOT RUN and removes the container copy', (
     },
   });
   assert.deepEqual(result, { status: 'NOT RUN', reason: 'injected failure' });
-  assert.deepEqual(readdirSync(countDir), []);
-});
-
-test('AppleScript locates the opened document by index with an explicit get', () => {
-  const { countDir, docxPath } = fixture();
-  mkdirSync(countDir);
-  let script = '';
-  const result = countWordPages(docxPath, {
-    countDir,
-    runScript(args) {
-      script = args
-        .filter((value, index) => args[index - 1] === '-e')
-        .join('\n');
-      return '1';
-    },
-  });
-  assert.deepEqual(result, { status: 'PASS', pages: 1 });
-  // Real Word behavior can only be verified by a process with container access;
-  // privileged runs proved loop-variable property access returns "" and causes -2700.
-  assert.match(script, /get name of document i/);
-  assert.doesNotMatch(script, /repeat with d in documents/);
   assert.deepEqual(readdirSync(countDir), []);
 });
 

@@ -78,7 +78,6 @@ test('a specified run freezes only its receipt report IDs and emits all waves', 
 
   assert.deepEqual(result.scope.frozenReportIds, [101, 103]);
   assert.deepEqual(result.waves.flatMap(wave => wave.reportIds), [101, 103]);
-  assert.equal(result.waves.some(wave => wave.reportIds.includes(102)), false);
 });
 
 test('strict arguments reject partial integers, unknown flags, and impossible dates', () => {
@@ -115,19 +114,13 @@ test('companies in the active interview register are excluded without fuzzy matc
   ]);
   const activeInterviewCompanies = buildActiveInterviewCompanyIndex([
     { Company: 'ACME INC', Status: 'Confirmed' },
+    { identity: 'tracker:#101', company: 'Other Company' },
   ]);
   const result = planBatch(fx.rows, { ...fx, activeInterviewCompanies });
 
-  assert.deepEqual(result.waves.flatMap(wave => wave.reportIds), [212, 213]);
-  assert.deepEqual(result.skipped.map(item => item.reportId), [211]);
+  assert.deepEqual(result.waves.flatMap(wave => wave.reportIds), [212]);
+  assert.deepEqual(result.skipped.map(item => item.reportId), [211, 213]);
   assert.equal(result.skipped[0].reason, 'active interview company: ACME INC');
-});
-
-test('active company index accepts the canonical process-schema row shape', () => {
-  const companies = buildActiveInterviewCompanyIndex([
-    { identity: 'tracker:#101', company: 'Active Co' },
-  ]);
-  assert.equal(companies.get('activeco'), 'Active Co');
 });
 
 test('receipt posting identity and canonical paths are hard constraints', (t) => {

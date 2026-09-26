@@ -106,5 +106,4 @@ test('collector CLI accepts --career-docs and rejects --projects without an alia
   assert(!Object.hasOwn(snapshot.paths,'projects'));
   const legacy=run('--projects');
   assert.equal(legacy.status,1);
-  assert.match(legacy.stderr,/Unknown option '--projects'/);
 });

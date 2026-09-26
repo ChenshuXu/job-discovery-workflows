@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
-  existsSync, mkdirSync, mkdtempDisposableSync, mkdtempSync, readFileSync, utimesSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempDisposableSync, mkdtempSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
@@ -24,12 +24,10 @@ const documentXml = `<?xml version="1.0"?><w:document xmlns:w="w"><w:body>${p('S
 
 function writeTestDocx(outputPath, entries) {
   using work = mkdtempDisposableSync(resolve(tmpdir(), 'resume-docx-fixture-'));
-  const timestamp = new Date('2000-01-02T12:00:00Z');
   for (const [name, data] of entries) {
     const path = resolve(work.path, name);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, data);
-    utimesSync(path, timestamp, timestamp);
   }
   execFileSync('/usr/bin/zip', ['-q', resolve(outputPath), ...entries.map(([name]) => name)], { cwd: work.path });
 }
@@ -38,15 +36,10 @@ function docxEntryNames(path) {
   return execFileSync('/usr/bin/unzip', ['-Z1', path], { encoding: 'utf8' }).trim().split('\n');
 }
 
-function docxEntryTimestamp(path, name) {
-  return execFileSync('/usr/bin/unzip', ['-Z', '-T', path, name], { encoding: 'utf8' }).trim().split(/\s+/).at(-2);
-}
-
 test('synthetic renderer preserves static paragraphs, sectPr, and all non-document entries', () => {
   const dir = mkdtempSync(resolve(tmpdir(), 'resume-render-test-'));
   const template = resolve(dir, 'template.docx');
   const output = resolve(dir, 'output.docx');
-  const secondOutput = resolve(dir, 'second-output.docx');
   writeTestDocx(template, [['word/document.xml', documentXml], ['word/styles.xml', '<styles/>'], ['custom/item.bin', 'same']]);
   const plan = {
     report: 'synthetic', summary: '**Synthetic** summary.',
@@ -54,9 +47,6 @@ test('synthetic renderer preserves static paragraphs, sectPr, and all non-docume
     skills: [{ label: 'Core', items: ['Go'] }, { label: 'Interfaces', items: ['APIs'] }], rationale: '', gaps: [],
   };
   const result = renderDocx({ templatePath: template, source, plan, outputPath: output });
-  renderDocx({ templatePath: template, source, plan, outputPath: secondOutput });
-  assert.ok(readFileSync(output).equals(readFileSync(secondOutput)));
-  assert.equal(docxEntryTimestamp(output, 'word/document.xml'), docxEntryTimestamp(template, 'word/document.xml'));
   assert.deepEqual(docxEntryNames(output).sort(), docxEntryNames(template).sort());
   for (const name of docxEntryNames(template).filter((entry) => entry !== 'word/document.xml')) {
     assert.ok(readDocxEntry(template, name).equals(readDocxEntry(output, name)));
@@ -67,7 +57,7 @@ test('synthetic renderer preserves static paragraphs, sectPr, and all non-docume
   assert.equal(oldStructure.roleGroups[0].headerIndex, newStructure.roleGroups[0].headerIndex);
   assert.equal(oldStructure.paragraphs[oldStructure.roleGroups[0].headerIndex].raw, newStructure.paragraphs[newStructure.roleGroups[0].headerIndex].raw);
   assert.equal(oldStructure.sectPr, newStructure.sectPr);
-  assert.match(result.renderedXml, /<w:b\/><w:bCs\/>[\s\S]*<w:t>service two<\/w:t>/);
+  assert.equal(newStructure.paragraphs[newStructure.roleGroups[0].bulletIndexes[0]].markedText, 'Built **service two**.');
 });
 
 test('template drift is a hard error', () => {

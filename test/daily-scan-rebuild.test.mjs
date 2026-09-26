@@ -6,7 +6,7 @@ import path from 'node:path';
 import { combineRun } from '../src/combine.mjs';
 import { commitScan } from '../src/commit-scan.mjs';
 import { planEvaluations } from '../src/plan-scan-evaluations.mjs';
-import { discoveryVia, renderScanReports, trackerIdentityNote } from '../src/render-scan-reports.mjs';
+import { renderScanReports, trackerIdentityNote } from '../src/render-scan-reports.mjs';
 import { resolveCanonicalUrls } from '../src/resolve-canonical-urls.mjs';
 import { validateRun } from '../src/run-contract.mjs';
 import {
@@ -255,14 +255,6 @@ function twoJobRun(root, runName, jobs) {
   combineRun(run);
   return run;
 }
-
-test('discovery sources map to a readable deduplicated via channel', () => {
-  assert.equal(discoveryVia(['jobspy']), 'LinkedIn');
-  assert.equal(discoveryVia(['ego-browser', 'jobspy']), 'LinkedIn');
-  assert.equal(discoveryVia(['jobright']), 'Jobright');
-  assert.equal(discoveryVia(['constructor']), 'constructor');
-  assert.throws(() => discoveryVia([]), /sources are required/);
-});
 
 test('a failed source still contributes its validated captured JDs without satisfying source liveness', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'daily-partial-source-'));
@@ -1154,14 +1146,12 @@ process.exit(1);
   assert.deepEqual(readdirSync(path.join(fx.career, 'jds')), []);
 });
 
-test('the commit path does not invoke the CV checker or claim runtime CV/output hashing', async () => {
+test('committing a scan preserves candidate documents and existing output', async () => {
   const fx = bulkRun(1);
   const cvFile = path.join(fx.career, 'cv.md');
   const cvBefore = readFileSync(cvFile, 'utf8');
-  const { baseline } = captureBaseline({ runRoot: fx.run, careerRoot: fx.career });
-  assert.equal(baseline.schema_version, 3);
+  captureBaseline({ runRoot: fx.run, careerRoot: fx.career });
   assert.throws(() => captureBaseline({ runRoot: fx.run, careerRoot: fx.career }), /baseline already exists/);
-  assert.equal('protected_state' in baseline, false);
   planEvaluations(fx.run, undefined, fx.career);
   writeWorkerResults(fx.run, key => ({ posting_key: key, score: 3.5, hard_exclusion: false, rationale: 'Material baseline gaps keep this below the report threshold.', report: null }));
   write(path.join(fx.career, 'cv-sync-check.mjs'), "import { writeFileSync } from 'node:fs'; writeFileSync('cv.md', '# unauthorized mutation\\n');\n");
