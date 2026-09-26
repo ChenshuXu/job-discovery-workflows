@@ -29,7 +29,7 @@
 
 ### Agent 执行步骤
 
-1. **先定位再修改。** 找到 Job Discovery、Career-Ops、JobSpy 和 Career Docs，优先同级布局，但复用用户已有安装与登记表。读取各工作区已有的 AGENTS.md。从 Job Discovery 运行 `node src/setup-check.mjs --json`，按 `checks` 和 `action` 建立缺项清单。退出码 1 表示设置缺失或无效，不能据此删除旧文件。这些自定义路径可用 `--career-ops PATH`、`--projects PATH`、`--jobspy PATH` 传给 setup-check。简历命令须在同一 shell 中设置 `export CAREER_OPS_ROOT=/绝对路径/career-ops`；setup-check 也读取此值，显式 `--career-ops` 优先。其他流程使用各自已有的参数或配置路径，setup-check 参数不会自动修改它们。
+1. **先定位再修改。** 找到 Job Discovery、Career-Ops、JobSpy 和 Career Docs，优先同级布局，但复用用户已有安装与登记表。读取各工作区已有的 AGENTS.md。从 Job Discovery 运行 `node src/setup-check.mjs --json`，按 `checks` 和 `action` 建立缺项清单。退出码 1 表示设置缺失或无效，不能据此删除旧文件。这些自定义路径可用 `--career-ops PATH`、`--career-docs PATH`、`--jobspy PATH` 传给 setup-check。简历命令须在同一 shell 中设置 `export CAREER_OPS_ROOT=/绝对路径/career-ops`；setup-check 也读取此值，显式 `--career-ops` 优先。其他流程使用各自已有的参数或配置路径，setup-check 参数不会自动修改它们。
 2. **集中询问缺少的信息。** 收集用户的 CV 或本地路径、要启用的流程/来源、目标岗位关键词与级别、城市/远程范围、雇佣类型、雇主排除项、时区、匹配所需的工作许可/赞助事实，以及已有面试登记表。只有选用相关流程时才询问 Gmail 账户和浏览器 profile。创建空登记表前确认是否已有活跃面试；缺文件不代表没有面试。复用本轮已提供的答案，等待时继续独立设置；不索取密码、cookie 或一次性验证码。
 3. **安装缺失工具。** 按下文安装依赖，JobSpy 使用 main。仅在缺少时安装 Career-Ops、Ego Lite，使 8 个内置 Skill 可用并加载所需外部 Skill。设置授权不意味着升级、重置或替换已有安装。登录/验证由用户通过正常浏览器流程完成，凭证不写入报告或 Git。
 4. **设置 Career-Ops。** 在其仓库读取自己的 Skill 和安装说明，使用 `interview` 模式进行资料/CV onboarding。依据真实 CV 和已确认回答，一致地创建或更新 `cv.md`、`config/profile.yml`、`modes/_profile.md`，保留其他字段和文档。不虚构职位、时间、经历、指标或工作许可。运行 `node doctor.mjs --json --cli codex`（换成实际 CLI），即使退出码为 0 也读取 `missing` 和 `unpersonalized`。Doctor 可能补缺失模板；新上游的 `modes/_brief.md` 也须依据同一 CV 和已确认选择个性化，自动复制模板不代表 onboarding 完成。简历解析器需要 `## PROFESSIONAL EXPERIENCE`、`### 职位, 公司 | 地点` 和 `-` 条目，以及 `## TECHNICAL SKILLS` 下的 `**类别:** 技能, 技能`；适配格式不能改动事实。缺 CV 或事实不明确时记录具体阻碍。
@@ -122,7 +122,7 @@ career-docs/
 
 其余 Skill同样按名称调用，并提供各自要求的准确报告、申请范围或面试目标。加载 Skill 不会自动启动工作流。独立 Google ATS 和修复命令是 CLI 工具，不是另外的 Skill。
 
-申请和面试的数据归属、默认 Career Docs 结构、`--projects` / `--interviews-file` 及非标准登记格式的适配见[来源说明](.agents/skills/process-infographic/references/interview-records.md)。按[渲染设置](.agents/skills/process-infographic/references/rendering.md)准备 Python 3、Pillow 和覆盖图中文字的字体，中文图需含中文字形。整个输出目录都应保密：即使只渲染无名称版，目录内仍保留私有 JSON 快照。对外只交付审阅过的 PNG/SVG。
+申请和面试的数据归属、默认 Career Docs 结构、`--career-docs` / `--interviews-file` 及非标准登记格式的适配见[来源说明](.agents/skills/process-infographic/references/interview-records.md)。按[渲染设置](.agents/skills/process-infographic/references/rendering.md)准备 Python 3、Pillow 和覆盖图中文字的字体，中文图需含中文字形。整个输出目录都应保密：即使只渲染无名称版，目录内仍保留私有 JSON 快照。对外只交付审阅过的 PNG/SVG。
 
 ### 需要另行安装的外部 Skills
 
@@ -217,7 +217,7 @@ npm test
 
 全部实现都已包含；这是可供审阅的候选版，尚未完成发布。截至 2026-09-26，已在 macOS 通过：
 
-- 公开候选测试 **313/313**，开发仓库测试 **317/317**。
+- 公开候选测试 **315/315**，开发仓库测试 **319/319**。
 - 全新 Career-Ops 安装成功，含 Chromium；使用虚构 CV/profile 的 onboarding、完整 doctor、profile/CV 一致性、pipeline、writer interface、统计/采集器及 canonical register 检查通过，空输入计数为零。上游仍提示无法自动检测 Codex Playwright MCP，以及默认 Vinted portal 无 provider；这些检查不代表 Job Discovery 来源就绪。
 - Codex CLI 实际读取八个内置 Skill，在候选本地及独立 Career Docs 的 Skill 链接中均解析到公开 checkout；用显式 Skill 路径区分其他 checkout 的同名 Skill。
 - Gmail 主账号连接器、次账号 Chrome 的身份匹配与只读搜索通过；LinkedIn、Jobright 登录读取通过。公开 JobSpy adapter 使用当前包真实采集到一个含 JD 的岗位，错误数为零。

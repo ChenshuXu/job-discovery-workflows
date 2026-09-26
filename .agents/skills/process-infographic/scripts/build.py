@@ -8,13 +8,13 @@ from render import render
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ('career-ops', 'projects', 'interviews-file', 'register-json', 'events', 'font'):
+    for name in ('career-ops', 'career-docs', 'interviews-file', 'register-json', 'events', 'font'):
         parser.add_argument('--' + name)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--variant', choices=['both', 'full', 'anonymous'], default='both')
     args = parser.parse_args()
     command = ['node', str(Path(__file__).with_name('collect.mjs')), '--out', str(args.out)]
-    for name in ('career-ops', 'projects', 'interviews-file', 'register-json', 'events'):
+    for name in ('career-ops', 'career-docs', 'interviews-file', 'register-json', 'events'):
         value = getattr(args, name.replace('-', '_'))
         if value:
             command += ['--' + name, value]

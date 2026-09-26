@@ -8,7 +8,7 @@
 python3 -m venv /path/to/venv
 /path/to/venv/bin/python -m pip install Pillow
 /path/to/venv/bin/python .agents/skills/process-infographic/scripts/build.py \
-  --career-ops /path/to/career-ops --projects /path/to/career-docs \
+  --career-ops /path/to/career-ops --career-docs /path/to/career-docs \
   --out /path/to/career-docs/outputs/NEW-SNAPSHOT --font /path/to/cjk-font.ttf
 ```
 

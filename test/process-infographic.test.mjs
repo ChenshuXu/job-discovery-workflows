@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { collect, chart } from '../.agents/skills/process-infographic/scripts/collect.mjs';
 
 const sha = text => createHash('sha256').update(text).digest('hex');
@@ -16,10 +17,10 @@ const row = (id, tracker, status) => `| ${id} | ${tracker} | Example Co | Engine
 function fixture(t) {
   const root = mkdtempSync(path.join(tmpdir(), 'infographic-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const careerOps = path.join(root, 'ops-code'), projects = path.join(root, 'private-docs');
-  mkdirSync(careerOps); mkdirSync(projects);
+  const careerOps = path.join(root, 'ops-code'), careerDocs = path.join(root, 'private-docs');
+  mkdirSync(careerOps); mkdirSync(careerDocs);
   const tracker = path.join(root, 'custom-applications.json');
-  const register = path.join(projects, 'custom-register.md');
+  const register = path.join(careerDocs, 'custom-register.md');
   const put = (name, text) => writeFileSync(path.join(careerOps, name), text);
   put('path-resolver.mjs', `export const getCareerOpsRoot = () => ${JSON.stringify(root)}; export const resolveTrackerPath = () => ${JSON.stringify(tracker)};`);
   put('tracker-parse.mjs', `export const resolveColumns = () => ({}); export const parseTrackerRow = line => line.trim() ? JSON.parse(line) : null;`);
@@ -38,13 +39,13 @@ function fixture(t) {
     {num:4,reached:[1,0,0,0]}, {num:5,reached:[1,0,0,0]},
   ]));
   writeFileSync(register, doc([row('tracker:#3','#3','Waiting'), row('action:direct','','Waiting')]));
-  return {careerOps,projects,register,setApps,options:{careerOps,projects,interviewsFile:register}};
+  return {careerOps,careerDocs,register,setApps,options:{careerOps,careerDocs,interviewsFile:register}};
 }
 
 test('recollects counts, outcomes and graph paths; custom roots, history and exact IDs', async t => {
   const f=fixture(t);
   const before=await collect(f.options);
-  assert.equal((await collect({...f.options,projects:undefined})).paths.projects,path.resolve('../career-docs'));
+  assert.equal((await collect({...f.options,careerDocs:undefined})).paths.career_docs,path.resolve('../career-docs'));
   assert.equal(before.applications.total,3); // Evaluated excluded; historically applied Discarded retained.
   assert.equal(before.interviews.total,2);
   assert.equal(before.interviews.unlinked,1);
@@ -62,7 +63,7 @@ test('recollects counts, outcomes and graph paths; custom roots, history and exa
 });
 
 test('completed events come from hashed sources; changed evidence and unknown IDs fail', async t => {
-  const f=fixture(t), file=path.join(f.projects,'debrief.md'), eventsFile=path.join(f.projects,'events.json');
+  const f=fixture(t), file=path.join(f.careerDocs,'debrief.md'), eventsFile=path.join(f.careerDocs,'events.json');
   writeFileSync(file,'Completed debugging on 2000-01-01.');
   const event={id:'session-a',identity:'tracker:#3',date:'2000-01-01',kind:'debugging',sources:[{path:'debrief.md',sha256:sha(readFileSync(file))}]};
   writeFileSync(eventsFile,JSON.stringify({events:[event]}));
@@ -77,15 +78,33 @@ test('completed events come from hashed sources; changed evidence and unknown ID
 });
 
 test('alternate register format preserves identities and rejects ambiguous records', async t => {
-  const f=fixture(t), registerJson=path.join(f.projects,'adapted.json'), original=path.join(f.projects,'original.csv');
+  const f=fixture(t), registerJson=path.join(f.careerDocs,'adapted.json'), original=path.join(f.careerDocs,'original.csv');
   writeFileSync(original,'stable-id,waiting\n');
   const process={identity:'custom-stable-id',tracker:'',company:'Example',role:'Engineer',status:'Waiting',sources:[{path:'original.csv',sha256:sha(readFileSync(original))}]};
   const save=processes=>writeFileSync(registerJson,JSON.stringify({processes}));
   save([process]);
-  const options={careerOps:f.careerOps,projects:f.projects,registerJson};
+  const options={careerOps:f.careerOps,careerDocs:f.careerDocs,registerJson};
   assert.equal((await collect(options)).interviews.total,1);
   save([process,process]);
   await assert.rejects(collect(options),/duplicate process identity/);
   save([{...process,tracker:'#99'}]);
   await assert.rejects(collect(options),/Tracker link missing/);
+});
+
+test('collector CLI accepts --career-docs and rejects --projects without an alias', t => {
+  const f=fixture(t), out=path.join(f.careerDocs,'snapshot');
+  const register=path.join(f.careerDocs,'context/Interview/active-interviews.md');
+  mkdirSync(path.dirname(register),{recursive:true});
+  writeFileSync(register,readFileSync(f.register));
+  const run=flag=>spawnSync(process.execPath,['.agents/skills/process-infographic/scripts/collect.mjs',
+    '--career-ops',f.careerOps,flag,f.careerDocs,'--out',out],{encoding:'utf8'});
+  const current=run('--career-docs');
+  assert.equal(current.status,0,current.stderr);
+  const snapshot=JSON.parse(readFileSync(path.join(out,'snapshot.json')));
+  assert.equal(snapshot.paths.career_docs,f.careerDocs);
+  assert.equal(snapshot.paths.register,register);
+  assert(!Object.hasOwn(snapshot.paths,'projects'));
+  const legacy=run('--projects');
+  assert.equal(legacy.status,1);
+  assert.match(legacy.stderr,/Unknown option '--projects'/);
 });

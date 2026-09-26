@@ -1,8 +1,12 @@
 """Small invariant check using fictional data; no personal records."""
 from copy import deepcopy
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 import xml.etree.ElementTree as ET
+import build
 from render import prepare, render
 
 data = dict(width=1200,height=600,title='Private Co pipeline',public_title='Process',
@@ -23,6 +27,16 @@ assert merged_counts['s'] == 4 and merged_counts['w'] == 2
 assert merged_edges['r','w'] == merged_edges['a','w'] == 1
 with TemporaryDirectory() as directory:
     root = Path(directory)
+    with patch('sys.argv', ['build.py', '--career-docs', directory, '--out', str(root/'build')]), patch('build.subprocess.run') as collect:
+        build.main()
+        assert collect.call_args.args[0][-2:] == ['--career-docs', directory]
+    with patch('sys.argv', ['build.py', '--projects', directory, '--out', str(root/'build')]), redirect_stderr(StringIO()) as errors:
+        try:
+            build.main()
+        except SystemExit as error:
+            assert error.code == 2 and 'unrecognized arguments: --projects' in errors.getvalue()
+        else:
+            raise AssertionError('Legacy workspace option accepted')
     render(data,root)
     full = ET.parse(root/'process-full.svg').getroot()
     anon = ET.parse(root/'process-anonymous.svg').getroot()

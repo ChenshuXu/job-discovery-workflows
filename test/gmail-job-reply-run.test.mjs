@@ -70,8 +70,8 @@ function fixture(t, options = {}) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const career = join(root, 'career-ops');
   const state = join(root, 'state');
-  const projects = join(root, 'projects');
-  const interviews = join(projects, 'context/Interview/active-interviews.md');
+  const careerDocs = join(root, 'career-docs');
+  const interviews = join(careerDocs, 'context/Interview/active-interviews.md');
   mkdirSync(join(career, 'data'), { recursive: true });
   mkdirSync(state, { recursive: true });
 
@@ -117,17 +117,17 @@ function fixture(t, options = {}) {
     legacy_thread_token_floor_at: mailboxState.last_successful_run_at,
   }, null, 2)}\n`);
 
-  git(projects, 'init', '-q');
-  git(projects, 'config', 'user.name', 'Test User');
-  git(projects, 'config', 'user.email', 'test@example.com');
-  git(projects, 'add', 'context/Interview/active-interviews.md');
-  git(projects, 'commit', '-qm', 'initial interview register');
+  git(careerDocs, 'init', '-q');
+  git(careerDocs, 'config', 'user.name', 'Test User');
+  git(careerDocs, 'config', 'user.email', 'test@example.com');
+  git(careerDocs, 'add', 'context/Interview/active-interviews.md');
+  git(careerDocs, 'commit', '-qm', 'initial interview register');
 
   return {
     root,
     career,
     state,
-    projects,
+    careerDocs,
     interviews,
     common: [
       '--career-ops-root', career,
@@ -223,16 +223,16 @@ test('begin preserves checked TODOs and commit requires whole-process reconcilia
   const row = '| action:acme-engineer |  | Acme | Engineer | Recruiter Screen | 2026-09-02 | Action Required | 2026-08-31 | |';
   const original = document({ row, todo: '- [x] **Acme Engineer / action:acme-engineer：** Confirm the interview slot' });
   const fx = fixture(t, { interviews: original });
-  write(join(fx.projects, 'unrelated.md'), 'keep staged\n');
-  git(fx.projects, 'add', 'unrelated.md');
-  const priorHead = git(fx.projects, 'rev-parse', 'HEAD');
+  write(join(fx.careerDocs, 'unrelated.md'), 'keep staged\n');
+  git(fx.careerDocs, 'add', 'unrelated.md');
+  const priorHead = git(fx.careerDocs, 'rev-parse', 'HEAD');
   const result = command(fx, 'begin');
   assert.equal(result.status, 0, result.stdout);
   assert.equal(result.output.interview_preflight.reconciliation_required, true);
   assert.equal(result.output.interview_preflight.checked_todo_count, 1);
   assert.equal(result.output.interview_preflight.checked_todos[0].identity, 'action:acme-engineer');
   assert.equal(readFileSync(fx.interviews, 'utf8'), original);
-  assert.equal(git(fx.projects, 'rev-parse', 'HEAD'), priorHead);
+  assert.equal(git(fx.careerDocs, 'rev-parse', 'HEAD'), priorHead);
   closeEmptyMailbox(fx, result.output, 'primary');
   closeEmptySecondary(fx, result.output);
   const blocked = command(fx, 'commit', ...credentials(result.output));
@@ -240,7 +240,7 @@ test('begin preserves checked TODOs and commit requires whole-process reconcilia
   write(fx.interviews, document({ row: row.replace('Action Required', 'Scheduled').replace(' | |', ' | Confirmed slot accepted. |') }));
   const committed = command(fx, 'commit', ...credentials(result.output));
   assert.equal(committed.status, 0, committed.stdout);
-  assert.equal(git(fx.projects, 'status', '--porcelain'), 'A  unrelated.md');
+  assert.equal(git(fx.careerDocs, 'status', '--porcelain'), 'A  unrelated.md');
   assert.match(readFileSync(fx.interviews, 'utf8'), /Scheduled/u);
 });
 
@@ -266,7 +266,7 @@ test('an active process may retain an Offer tracker status', (t) => {
 
 test('final tracker mismatch fails before committing the interview register', (t) => {
   const fx = fixture(t);
-  const priorHead = git(fx.projects, 'rev-parse', 'HEAD');
+  const priorHead = git(fx.careerDocs, 'rev-parse', 'HEAD');
   const priorState = JSON.parse(readFileSync(join(fx.state, 'gmail-job-reply-state.json'), 'utf8'));
   const begin = command(fx, 'begin').output;
   const descriptor = candidateDescriptor();
@@ -305,7 +305,7 @@ test('final tracker mismatch fails before committing the interview register', (t
   const blocked = command(fx, 'commit', ...credentials(begin));
   assert.equal(blocked.status, 1);
   assert.equal(blocked.output.error.code, 'TRACKER_REGISTER_MISMATCH');
-  assert.equal(git(fx.projects, 'rev-parse', 'HEAD'), priorHead);
+  assert.equal(git(fx.careerDocs, 'rev-parse', 'HEAD'), priorHead);
   assert.equal(
     JSON.parse(readFileSync(join(fx.state, 'gmail-job-reply-state.json'), 'utf8')).last_successful_run_at,
     priorState.last_successful_run_at,
@@ -314,7 +314,7 @@ test('final tracker mismatch fails before committing the interview register', (t
   write(join(fx.career, 'data/applications.md'), applications('Interview'));
   const committed = command(fx, 'commit', ...credentials(begin));
   assert.equal(committed.status, 0, committed.stdout);
-  assert.notEqual(git(fx.projects, 'rev-parse', 'HEAD'), priorHead);
+  assert.notEqual(git(fx.careerDocs, 'rev-parse', 'HEAD'), priorHead);
 });
 
 test('tracker rejection needs only a tracker receipt when the baseline is already Rejected', (t) => {
@@ -816,14 +816,14 @@ test('a missing required receipt blocks Git commit and cursor advancement', (t) 
   const descriptor = candidateDescriptor();
   stage(fx, begin, descriptor);
   classifyRejectionAndFinish(fx, begin, descriptor);
-  const head = git(fx.projects, 'rev-parse', 'HEAD');
+  const head = git(fx.careerDocs, 'rev-parse', 'HEAD');
   const edited = readFileSync(fx.interviews, 'utf8').replace('# Interview Pipeline', '# Updated Interview Pipeline');
   write(fx.interviews, edited);
 
   const committed = command(fx, 'commit', ...credentials(begin));
   assert.equal(committed.status, 1);
   assert.equal(committed.output.error.code, 'WRITE_RECEIPT_MISSING');
-  assert.equal(git(fx.projects, 'rev-parse', 'HEAD'), head);
+  assert.equal(git(fx.careerDocs, 'rev-parse', 'HEAD'), head);
   assert.equal(readFileSync(fx.interviews, 'utf8'), edited);
   const after = JSON.parse(readFileSync(join(fx.state, 'gmail-job-reply-state.json'), 'utf8'));
   assert.equal(after.last_successful_run_at, original.last_successful_run_at);
@@ -835,21 +835,21 @@ test('verification failure preserves the uncommitted register until a successful
   const begin = command(fx, 'begin').output;
   closeEmptyMailbox(fx, begin, 'primary');
   closeEmptySecondary(fx, begin);
-  const head = git(fx.projects, 'rev-parse', 'HEAD');
+  const head = git(fx.careerDocs, 'rev-parse', 'HEAD');
   const cursor = readFileSync(join(fx.state, 'gmail-job-reply-state.json'), 'utf8');
   const edited = readFileSync(fx.interviews, 'utf8').replace('# Interview Pipeline', '# Updated Interview Pipeline');
   write(fx.interviews, edited);
   write(join(fx.career, '.fail-verify'), '1');
   const failed = command(fx, 'commit', ...credentials(begin));
   assert.equal(failed.output.error.code, 'VERIFICATION_GATE_FAILED');
-  assert.equal(git(fx.projects, 'rev-parse', 'HEAD'), head);
+  assert.equal(git(fx.careerDocs, 'rev-parse', 'HEAD'), head);
   assert.equal(readFileSync(fx.interviews, 'utf8'), edited);
   assert.equal(readFileSync(join(fx.state, 'gmail-job-reply-state.json'), 'utf8'), cursor);
   rmSync(join(fx.career, '.fail-verify'));
   const retried = command(fx, 'commit', ...credentials(begin));
   assert.equal(retried.status, 0, retried.stdout);
-  assert.notEqual(git(fx.projects, 'rev-parse', 'HEAD'), head);
-  assert.equal(git(fx.projects, 'show', 'HEAD:context/Interview/active-interviews.md'), edited.trim());
+  assert.notEqual(git(fx.careerDocs, 'rev-parse', 'HEAD'), head);
+  assert.equal(git(fx.careerDocs, 'show', 'HEAD:context/Interview/active-interviews.md'), edited.trim());
 });
 
 test('invalid interview structure fails before a run ledger is created', (t) => {
@@ -874,7 +874,7 @@ test('preflight and final gate refuse to delete admitted process identities', (t
   assert.equal(preflight.status, 1);
   assert.equal(preflight.output.error.code, 'ACTIVE_INTERVIEWS_INVALID');
   assert.equal(preflight.output.error.errors[0].code, 'process_removed');
-  assert.match(git(preflightFx.projects, 'show', 'HEAD:context/Interview/active-interviews.md'), /action:old-role/u);
+  assert.match(git(preflightFx.careerDocs, 'show', 'HEAD:context/Interview/active-interviews.md'), /action:old-role/u);
 
   const active = '| action:current-role |  | Current Co | Engineer | Recruiter Screen | 2026-08-30 | Waiting | 2026-08-30 | |';
   const finalFx = fixture(t, { interviews: document({ row: active }) });
@@ -886,7 +886,7 @@ test('preflight and final gate refuse to delete admitted process identities', (t
   assert.equal(committed.status, 1);
   assert.equal(committed.output.error.code, 'ACTIVE_INTERVIEWS_INVALID');
   assert.equal(committed.output.error.errors[0].code, 'process_removed');
-  assert.match(git(finalFx.projects, 'show', 'HEAD:context/Interview/active-interviews.md'), /action:current-role/u);
+  assert.match(git(finalFx.careerDocs, 'show', 'HEAD:context/Interview/active-interviews.md'), /action:current-role/u);
 });
 
 test('receipts refresh after mailbox finish and verification failure', (t) => {
@@ -946,16 +946,16 @@ test('receipts refresh after mailbox finish and verification failure', (t) => {
 
 test('linked receipts bind exact sections, detect summary edits, and commit only changed linked files', t => {
   const fx = fixture(t);
-  const unrelated = join(fx.projects, 'context/Interview/Other/process-summary.md');
+  const unrelated = join(fx.careerDocs, 'context/Interview/Other/process-summary.md');
   write(unrelated, 'Unrelated staged summary\n');
-  git(fx.projects, 'add', 'context/Interview/Other/process-summary.md');
+  git(fx.careerDocs, 'add', 'context/Interview/Other/process-summary.md');
   const begin = command(fx, 'begin').output;
   const descriptor = candidateDescriptor();
   stage(fx, begin, descriptor);
   const classified = command(fx, 'classify', ...credentials(begin), '--mailbox', 'primary', '--category', 'action_required', '--disposition', 'register_updated', '--identity-key', 'action:acme-engineer', descriptor);
   assert.equal(classified.status, 0, classified.stdout);
   const marker = classified.output.register_markers[0];
-  const summaryPath = join(fx.projects, 'context/Interview/Acme/process-summary.md');
+  const summaryPath = join(fx.careerDocs, 'context/Interview/Acme/process-summary.md');
   const summary = (first, other = '') => `# Acme\n\n## action-acme-engineer\nIdentity: \`action:acme-engineer\`\n${first}\n\n## action-acme-other\nIdentity: \`action:acme-other\`\n${other}\n`;
   write(fx.interviews, document({ row: '| action:acme-engineer |  | Acme | Engineer | Recruiter Screen | 2026-09-02 | Scheduled | 2026-08-31 | [Process summary](Acme/process-summary.md#action-acme-engineer) |' }));
   write(summaryPath, summary('Scheduled.', marker));
@@ -970,38 +970,38 @@ test('linked receipts bind exact sections, detect summary edits, and commit only
   assert.equal(command(fx, ...receiptArgs).status, 0);
   const committed = command(fx, 'commit', ...credentials(begin));
   assert.equal(committed.status, 0, committed.stdout);
-  assert.equal(git(fx.projects, 'status', '--porcelain'), 'A  context/Interview/Other/process-summary.md');
-  assert.deepEqual(git(fx.projects, 'show', '--pretty=format:', '--name-only', 'HEAD').split('\n').sort(), ['context/Interview/Acme/process-summary.md', 'context/Interview/active-interviews.md']);
+  assert.equal(git(fx.careerDocs, 'status', '--porcelain'), 'A  context/Interview/Other/process-summary.md');
+  assert.deepEqual(git(fx.careerDocs, 'show', '--pretty=format:', '--name-only', 'HEAD').split('\n').sort(), ['context/Interview/Acme/process-summary.md', 'context/Interview/active-interviews.md']);
 });
 
 test('commit preserves baseline summary edits and refuses to combine them with new run changes', t => {
   const fx = fixture(t);
-  const summaryPath = join(fx.projects, 'context/Interview/Acme/process-summary.md');
+  const summaryPath = join(fx.careerDocs, 'context/Interview/Acme/process-summary.md');
   const summary = '# Acme\n\n## action-acme-engineer\nIdentity: `action:acme-engineer`\nScheduled.\n';
   write(summaryPath, summary);
   write(fx.interviews, document({ row: '| action:acme-engineer |  | Acme | Engineer | Screen | 2026-09-02 | Scheduled | 2026-08-31 | [Process summary](Acme/process-summary.md#action-acme-engineer) |' }));
-  git(fx.projects, 'add', 'context/Interview/active-interviews.md', 'context/Interview/Acme/process-summary.md');
-  git(fx.projects, 'commit', '-qm', 'linked baseline');
+  git(fx.careerDocs, 'add', 'context/Interview/active-interviews.md', 'context/Interview/Acme/process-summary.md');
+  git(fx.careerDocs, 'commit', '-qm', 'linked baseline');
   write(summaryPath, summary + 'Pre-existing staged note.\n');
-  git(fx.projects, 'add', 'context/Interview/Acme/process-summary.md');
-  const staged = git(fx.projects, 'show', ':context/Interview/Acme/process-summary.md');
+  git(fx.careerDocs, 'add', 'context/Interview/Acme/process-summary.md');
+  const staged = git(fx.careerDocs, 'show', ':context/Interview/Acme/process-summary.md');
   const begin = command(fx, 'begin').output;
   closeEmptyMailbox(fx, begin, 'primary');
   closeEmptySecondary(fx, begin);
   write(summaryPath, summary + 'Pre-existing staged note.\nNew run note.\n');
   const blocked = command(fx, 'commit', ...credentials(begin));
   assert.equal(blocked.output.error.code, 'GIT_COMMIT_CONFLICT');
-  assert.equal(git(fx.projects, 'show', ':context/Interview/Acme/process-summary.md'), staged);
+  assert.equal(git(fx.careerDocs, 'show', ':context/Interview/Acme/process-summary.md'), staged);
 });
 
 test('summary-only updates commit and report a change while preserving the register bytes', t => {
   const fx = fixture(t);
-  const summaryPath = join(fx.projects, 'context/Interview/Acme/process-summary.md');
+  const summaryPath = join(fx.careerDocs, 'context/Interview/Acme/process-summary.md');
   write(summaryPath, '# Acme\n\n## action-acme-engineer\nIdentity: `action:acme-engineer`\nScheduled.\n');
   const register = document({ row: '| action:acme-engineer |  | Acme | Engineer | Screen | 2026-09-02 | Scheduled | 2026-08-31 | [Process summary](Acme/process-summary.md#action-acme-engineer) |' });
   write(fx.interviews, register);
-  git(fx.projects, 'add', 'context/Interview');
-  git(fx.projects, 'commit', '-qm', 'linked baseline');
+  git(fx.careerDocs, 'add', 'context/Interview');
+  git(fx.careerDocs, 'commit', '-qm', 'linked baseline');
   const begin = command(fx, 'begin').output;
   closeEmptyMailbox(fx, begin, 'primary');
   closeEmptySecondary(fx, begin);
@@ -1010,5 +1010,5 @@ test('summary-only updates commit and report a change while preserving the regis
   assert.equal(committed.status, 0, committed.stdout);
   assert.equal(committed.output.writes.interview_evidence_changed, true);
   assert.equal(readFileSync(fx.interviews, 'utf8'), register);
-  assert.equal(git(fx.projects, 'show', '--pretty=format:', '--name-only', 'HEAD'), 'context/Interview/Acme/process-summary.md');
+  assert.equal(git(fx.careerDocs, 'show', '--pretty=format:', '--name-only', 'HEAD'), 'context/Interview/Acme/process-summary.md');
 });

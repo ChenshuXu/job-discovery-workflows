@@ -39,11 +39,11 @@ workspace/
 
 ```sh
 node .agents/skills/process-infographic/scripts/collect.mjs \
-  --career-ops ../career-ops --projects ../career-docs \
+  --career-ops ../career-ops --career-docs ../career-docs \
   --out ../career-docs/outputs/NEW-SNAPSHOT
 ```
 
-`--career-ops` 指代码目录；数据根和 tracker 优先级委托 Career-Ops 自身的环境变量/marker/path-resolver。环境变量路径建议给绝对值，避免不同 Career-Ops 版本的相对路径差异。`--projects` 指私有文档根；`--interviews-file /actual/register.md` 覆盖默认登记位置。输出目录必须全新，脚本不改源文件。
+`--career-ops` 指代码目录；数据根和 tracker 优先级委托 Career-Ops 自身的环境变量/marker/path-resolver。环境变量路径建议给绝对值，避免不同 Career-Ops 版本的相对路径差异。`--career-docs` 指私有文档根；`--interviews-file /actual/register.md` 覆盖默认登记位置。输出目录必须全新，脚本不改源文件。
 
 如果只是文件夹布局不同，传绝对路径即可；如果登记格式也不同，先依据其真实字段编写一次性只读转换代码，生成私有 `--register-json /path/adapted.json`，替代 Markdown 登记输入：
 

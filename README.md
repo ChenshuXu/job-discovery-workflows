@@ -42,7 +42,7 @@ Do not start a scan, retention cleanup, schedule, application or message during 
    from Job Discovery and use its `checks` and `action` fields as the initial inventory.
    Exit 1 means missing/invalid setup items, not a reason to discard existing files.
    Alternative dependency locations can be passed with `--career-ops PATH`,
-   `--projects PATH`, `--jobspy PATH` for setup-check. For resume commands, export
+   `--career-docs PATH`, `--jobspy PATH` for setup-check. For resume commands, export
    `CAREER_OPS_ROOT=/absolute/path/to/career-ops` in the same shell; setup-check also
    uses it unless `--career-ops` overrides it. Other workflows take their existing
    path flags/config fields; these setup-check flags do not configure them automatically.
@@ -149,7 +149,7 @@ unrelated files. Existing private repositories/history are preserved. Interview 
 in `active-interviews.md`; no second process tracker is required. Obsidian is optional for
 file creation, but its vault root is `career-docs/context/` when used.
 
-Process charts read application totals from Career-Ops and interview processes from Career Docs. See [source paths and layout adaptation](.agents/skills/process-infographic/references/interview-records.md) for `--career-ops`, `--projects`, `--interviews-file` and nonstandard register formats. Follow the [rendering setup](.agents/skills/process-infographic/references/rendering.md) to prepare Python 3 with Pillow and a font covering your chart text, including CJK when needed. Keep the entire output directory private: even an anonymous render retains private JSON snapshots. Share only reviewed PNG/SVG files.
+Process charts read application totals from Career-Ops and interview processes from Career Docs. See [source paths and layout adaptation](.agents/skills/process-infographic/references/interview-records.md) for `--career-ops`, `--career-docs`, `--interviews-file` and nonstandard register formats. Follow the [rendering setup](.agents/skills/process-infographic/references/rendering.md) to prepare Python 3 with Pillow and a font covering your chart text, including CJK when needed. Keep the entire output directory private: even an anonymous render retains private JSON snapshots. Share only reviewed PNG/SVG files.
 
 ### Setup checks and completion criteria
 
@@ -364,7 +364,7 @@ be replaced with the exact reviewed run/posting identities, never guessed by tit
 All implementations are present, but this is a reviewable candidate, not a completed release.
 The following checks passed on macOS as of 2026-09-26:
 
-- Public candidate tests: **313/313**; development repository tests: **317/317**.
+- Public candidate tests: **315/315**; development repository tests: **319/319**.
 - A fresh Career-Ops installation, including Chromium, succeeded. Onboarding with a
   fictional CV/profile, full doctor, profile/CV consistency, pipeline, writer-interface,
   statistics/collector and canonical-register checks passed; empty inputs produced zero counts.

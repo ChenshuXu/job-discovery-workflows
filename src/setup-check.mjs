@@ -17,7 +17,7 @@ const SKILLS = ['career-ops-daily-linkedin-scan', 'career-ops-expand-report', 'c
 const nonempty = file => { if (!statSync(file).isFile() || !readFileSync(file, 'utf8').trim()) throw new Error('missing'); };
 const executable = file => accessSync(file, constants.X_OK);
 
-export function checkSetup({ root = ROOT, careerOps = process.env.CAREER_OPS_ROOT || path.resolve(root, '../career-ops'), projects = path.resolve(root, '../career-docs'), jobspy = path.resolve(root, '../JobSpy'), envPath = process.env.PATH ?? '' } = {}) {
+export function checkSetup({ root = ROOT, careerOps = process.env.CAREER_OPS_ROOT || path.resolve(root, '../career-ops'), careerDocs = path.resolve(root, '../career-docs'), jobspy = path.resolve(root, '../JobSpy'), envPath = process.env.PATH ?? '' } = {}) {
   const checks = [];
   const check = (id, scope, file, action, fn = () => nonempty(file)) => {
     try { fn(); checks.push({ id, scope, status: 'present', path: file }); }
@@ -37,12 +37,12 @@ export function checkSetup({ root = ROOT, careerOps = process.env.CAREER_OPS_ROO
   check('candidate:profile-summary', 'career-ops', path.join(careerOps, 'modes/_profile.md'), 'Use Career-Ops onboarding to generate the profile summary from the same confirmed facts.');
   const profile = path.join(careerOps, 'config/profile.yml');
   check('location:scan-policy', 'daily-scan', profile, 'Add location.scan_policy as two-space-indented inline JSON; see README. Do not silently substitute a supported region.', () => loadLocationPolicy(profile));
-  for (const name of ['AGENTS.md', 'context/00 Knowledge Base Hub.md']) check(`projects:${name}`, 'interviews', path.join(projects, name), 'Create only missing files from examples/career-docs; preserve existing workspace instructions and notes.');
-  const register = path.join(projects, 'context/Interview/active-interviews.md');
-  check('projects:register', 'interviews/apply/retention', register, 'Use the empty register example only after the user confirms no existing register/processes; otherwise preserve or reconcile the existing schema.', () => validateActiveInterviews(readFileSync(register, 'utf8')));
-  check('projects:git', 'gmail-writer', path.join(projects, '.git'), 'Initialize local Git for a new Career Docs workspace and commit its valid initial register; no public remote. Existing worktrees may use a .git file.', () => {
+  for (const name of ['AGENTS.md', 'context/00 Knowledge Base Hub.md']) check(`career-docs:${name}`, 'interviews', path.join(careerDocs, name), 'Create only missing files from examples/career-docs; preserve existing workspace instructions and notes.');
+  const register = path.join(careerDocs, 'context/Interview/active-interviews.md');
+  check('career-docs:register', 'interviews/apply/retention', register, 'Use the empty register example only after the user confirms no existing register/processes; otherwise preserve or reconcile the existing schema.', () => validateActiveInterviews(readFileSync(register, 'utf8')));
+  check('career-docs:git', 'gmail-writer', path.join(careerDocs, '.git'), 'Initialize local Git for a new Career Docs workspace and commit its valid initial register; no public remote. Existing worktrees may use a .git file.', () => {
     const options = { encoding: 'utf8', stdio: 'pipe' };
-    const gitRoot = execFileSync('git', ['-C', projects, 'rev-parse', '--show-toplevel'], options).trim();
+    const gitRoot = execFileSync('git', ['-C', careerDocs, 'rev-parse', '--show-toplevel'], options).trim();
     const relative = path.relative(realpathSync(gitRoot), realpathSync(register));
     if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('register outside Git repository');
     validateActiveInterviews(execFileSync('git', ['-C', gitRoot, 'show', `HEAD:${relative}`], options));
@@ -96,10 +96,10 @@ export function checkSetup({ root = ROOT, careerOps = process.env.CAREER_OPS_ROO
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2), options = {};
-  const flags = { '--career-ops': 'careerOps', '--projects': 'projects', '--jobspy': 'jobspy' };
+  const flags = { '--career-ops': 'careerOps', '--career-docs': 'careerDocs', '--jobspy': 'jobspy' };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--json') continue;
-    if (!flags[args[i]] || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error('Usage: node src/setup-check.mjs [--career-ops PATH] [--projects PATH] [--jobspy PATH] [--json]');
+    if (!flags[args[i]] || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error('Usage: node src/setup-check.mjs [--career-ops PATH] [--career-docs PATH] [--jobspy PATH] [--json]');
     options[flags[args[i]]] = path.resolve(args[++i]);
   }
   const report = checkSetup(options);

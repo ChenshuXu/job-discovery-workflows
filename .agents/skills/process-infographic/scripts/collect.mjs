@@ -52,9 +52,9 @@ export function chart(records, title, asOf) {
     nodes, records };
 }
 
-export async function collect({ careerOps = path.resolve(ROOT, '../career-ops'), projects = path.resolve(ROOT, '../career-docs'),
+export async function collect({ careerOps = path.resolve(ROOT, '../career-ops'), careerDocs = path.resolve(ROOT, '../career-docs'),
   interviewsFile, registerJson, eventsFile } = {}) {
-  careerOps = path.resolve(careerOps); projects = path.resolve(projects);
+  careerOps = path.resolve(careerOps); careerDocs = path.resolve(careerDocs);
   assert(!(interviewsFile && registerJson), 'Choose --interviews-file or --register-json');
   const sources = new Map();
   const read = file => {
@@ -112,7 +112,7 @@ export async function collect({ careerOps = path.resolve(ROOT, '../career-ops'),
     assert(Array.isArray(processes), 'Adapted register needs processes array');
     for (const row of processes) evidence(row.sources, path.dirname(registerFile));
   } else {
-    registerFile = path.resolve(interviewsFile || path.join(projects, 'context/Interview/active-interviews.md'));
+    registerFile = path.resolve(interviewsFile || path.join(careerDocs, 'context/Interview/active-interviews.md'));
     const parsed = validateActiveInterviews(read(registerFile));
     processes = [...parsed.active, ...parsed.archived];
   }
@@ -169,7 +169,7 @@ export async function collect({ careerOps = path.resolve(ROOT, '../career-ops'),
   if (drifts.length) warnings.push(`Status disagreement; sources preserved, no auto-repair: ${drifts.map(row => row.identity).join(', ')}`);
   // Check again after all reads: do not publish a snapshot mixed across a concurrent write.
   for (const [file, sha256] of sources) assert.equal(hash(readFileSync(file)), sha256, `Source changed: ${file}`);
-  return { schema_version: 1, as_of: asOf, paths: { career_ops: careerOps, projects, tracker: trackerFile, register: registerFile },
+  return { schema_version: 1, as_of: asOf, paths: { career_ops: careerOps, career_docs: careerDocs, tracker: trackerFile, register: registerFile },
     sources: [...sources].map(([file, sha256]) => ({ path: file, sha256 })), warnings,
     applications: { total: applications.length, funnel, by_status: tally(applications.map(row => row.status)), records: applications },
     interviews: { total: interviews.length, by_status: tally(interviews.map(row => row.status)),
@@ -180,9 +180,9 @@ export async function collect({ careerOps = path.resolve(ROOT, '../career-ops'),
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { values } = parseArgs({ options: Object.fromEntries(
-    ['career-ops', 'projects', 'interviews-file', 'register-json', 'events', 'out'].map(key => [key, { type: 'string' }])) });
+    ['career-ops', 'career-docs', 'interviews-file', 'register-json', 'events', 'out'].map(key => [key, { type: 'string' }])) });
   assert(values.out, '--out NEW_PRIVATE_DIRECTORY is required');
-  const snapshot = await collect({ careerOps: values['career-ops'], projects: values.projects,
+  const snapshot = await collect({ careerOps: values['career-ops'], careerDocs: values['career-docs'],
     interviewsFile: values['interviews-file'], registerJson: values['register-json'], eventsFile: values.events });
   // Refuse to overwrite dated snapshots or authoritative records.
   mkdirSync(path.dirname(path.resolve(values.out)), { recursive: true });
