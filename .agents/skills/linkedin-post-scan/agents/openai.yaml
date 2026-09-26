@@ -1,0 +1,6 @@
+interface:
+  display_name: "LinkedIn Post Scan"
+  short_description: "Scan recruiting posts and prepare outreach safely"
+  default_prompt: "Use $linkedin-post-scan to scan recent recruiting posts, route exact jobs, and stop every outreach action before Send."
+policy:
+  allow_implicit_invocation: true

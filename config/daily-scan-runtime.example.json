@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "semantic_dedup_mode": "enforce",
+  "retention": {
+    "evaluated_unapplied_ttl_days": 7
+  },
+  "worker": {
+    "model": "gpt-6-astra",
+    "reasoning_effort": "medium"
+  },
+  "scheduler": {
+    "batch_size": 10,
+    "max_active_workers": 3
+  },
+  "reporting": {
+    "full_report_threshold": 4.0
+  },
+  "failure": {
+    "per_job_retry_limit": 1
+  }
+}

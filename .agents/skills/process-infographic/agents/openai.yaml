@@ -1,0 +1,4 @@
+interface:
+  display_name: "流程统计信息图"
+  short_description: "从实际记录绘制完整流程桑基图，核对人数并导出具名版与匿名版"
+  default_prompt: "使用 $process-infographic，根据我的实际记录制作完整流程统计图，并导出带名称和不带名称的两版。"

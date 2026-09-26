@@ -1,0 +1,4 @@
+interface:
+  display_name: "Career-Ops Tailored Resume"
+  short_description: "Create a template-first role-specific Word resume"
+  default_prompt: "Use $career-ops-tailored-resume to start from the curated DOCX baseline, tailor a truthful one-page Word resume for this exact role, and store the final non-overwriting version in its Career-Ops output directory."

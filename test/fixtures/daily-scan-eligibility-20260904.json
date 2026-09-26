@@ -1,0 +1,134 @@
+[
+  {
+    "record": {
+      "primary_key": "fixture:example:case-0",
+      "company": "Example Company",
+      "title": "Software Engineer",
+      "employment_type": "Full-time"
+    },
+    "source": "synthetic",
+    "jdText": "# Synthetic role 0\n\n**Role:** Software Engineer\n\nThis fictional role requires eligibility review.\n",
+    "status": "ineligible",
+    "category": "mandatory_unacceptable_location"
+  },
+  {
+    "record": {
+      "primary_key": "fixture:example:case-1",
+      "company": "Example Company",
+      "title": "Software Engineer",
+      "employment_type": "Full-time"
+    },
+    "source": "synthetic",
+    "jdText": "# Synthetic role 1\n\n**Role:** Software Engineer\n\nThis fictional role requires eligibility review.\n",
+    "status": "needs_verification",
+    "category": "mandatory_unacceptable_location"
+  },
+  {
+    "record": {
+      "primary_key": "fixture:example:case-2",
+      "company": "Example Company",
+      "title": "Software Engineer",
+      "employment_type": "Full-time"
+    },
+    "source": "synthetic",
+    "jdText": "# Synthetic role 2\n\n**Role:** Software Engineer\n\nThis fictional role requires eligibility review.\n",
+    "status": "ineligible",
+    "category": "mandatory_unacceptable_location"
+  },
+  {
+    "record": {
+      "primary_key": "fixture:example:case-3",
+      "company": "Example Company",
+      "title": "Software Engineer",
+      "employment_type": "Full-time"
+    },
+    "source": "synthetic",
+    "jdText": "# Synthetic role 3\n\n**Role:** Software Engineer\n\nThis fictional role requires eligibility review.\n",
+    "status": "ineligible",
+    "category": "mandatory_unacceptable_location"
+  },
+  {
+    "record": {
+      "primary_key": "fixture:example:case-4",
+      "company": "Example Company",
+      "title": "Software Engineer",
+      "employment_type": "fulltime"
+    },
+    "source": "synthetic",
+    "jdText": "# Synthetic role 4\n\n**Role:** Software Engineer\n\nThis fictional role requires eligibility review.\n",
+    "status": "ineligible",
+    "category": "export_control"
+  },
+  {
+    "record": {
+      "primary_key": "fixture:example:case-5",
+      "company": "Example Company",
+      "title": "Software Engineer",
+      "employment_type": "Full-time"
+    },
+    "source": "synthetic",
+    "jdText": "# Synthetic role 5\n\n**Role:** Software Engineer\n\nThis fictional role requires eligibility review.\n",
+    "status": "ineligible",
+    "category": "employment_type"
+  },
+  {
+    "record": {
+      "primary_key": "fixture:example:case-6",
+      "company": "Example Company",
+      "title": "Software Engineer",
+      "employment_type": "other"
+    },
+    "source": "synthetic",
+    "jdText": "# Synthetic role 6\n\n**Role:** Software Engineer\n\nThis fictional role requires eligibility review.\n",
+    "status": "ineligible",
+    "category": "employment_type"
+  },
+  {
+    "record": {
+      "primary_key": "fixture:example:case-7",
+      "company": "Example Company",
+      "title": "Software Engineer",
+      "employment_type": "Full-time"
+    },
+    "source": "synthetic",
+    "jdText": "# Synthetic role 7\n\n**Role:** Software Engineer\n\nThis fictional role requires eligibility review.\n",
+    "status": "ineligible",
+    "category": "citizenship"
+  },
+  {
+    "record": {
+      "primary_key": "fixture:example:case-8",
+      "company": "Example Company",
+      "title": "Software Engineer",
+      "employment_type": "Full-time"
+    },
+    "source": "synthetic",
+    "jdText": "# Synthetic role 8\n\n**Role:** Software Engineer\n\nThis fictional role requires eligibility review.\n",
+    "status": "ineligible",
+    "category": "work_authorization"
+  },
+  {
+    "record": {
+      "primary_key": "fixture:example:case-9",
+      "company": "Example Company",
+      "title": "Software Engineer",
+      "employment_type": "Full-time"
+    },
+    "source": "synthetic",
+    "jdText": "# Synthetic role 9\n\n**Role:** Software Engineer\n\nThis fictional role requires eligibility review.\n",
+    "status": "ineligible",
+    "category": "work_authorization"
+  },
+  {
+    "record": {
+      "primary_key": "fixture:example:case-10",
+      "company": "Example Company",
+      "title": "Software Engineer",
+      "employment_type": "Full-time"
+    },
+    "source": "synthetic",
+    "jdText": "# Synthetic role 10\n\n**Role:** Software Engineer\n\nThis fictional role requires eligibility review.\n",
+    "status": "ineligible",
+    "category": "no_sponsorship"
+  }
+]

@@ -1,0 +1,33 @@
+{
+  "name": "job-discovery",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node scripts/test.mjs",
+    "test:resume": "node scripts/test.mjs test/resume-*.test.mjs",
+    "test:daily-scan": "node scripts/test.mjs test/adapter-registry.test.mjs test/canonical-url-fingerprint.test.mjs test/career-ops-tracker-format.test.mjs test/codex-usage.test.mjs test/daily-scan-config-parity.test.mjs test/daily-scan-rebuild.test.mjs test/daily-scan-recovery.test.mjs test/daily-scan-runtime.test.mjs test/daily-scan-skill-contract.test.mjs test/employer-exclusions.test.mjs test/employment-type.test.mjs test/evaluated-retention.test.mjs test/expand-scan-report.test.mjs test/jobright-recommendations.test.mjs test/location-scope.test.mjs test/merge-worker-results.test.mjs test/plan-scan-evaluations.test.mjs test/posting-fingerprint.test.mjs test/repair-excluded-scan-postings.test.mjs test/repair-scan-reports.test.mjs test/scan-usage.test.mjs test/scoring-safety*.test.mjs test/semantic-jd-identity.test.mjs",
+    "test:google-ats": "node scripts/test.mjs test/adapter-registry.test.mjs test/google-ats-direct.test.mjs test/posting-fingerprint.test.mjs",
+    "test:jobright": "node scripts/test.mjs test/jobright-recommendations.test.mjs",
+    "resume:context": "node src/resume/cli/resume-context.mjs",
+    "resume:build": "node src/resume/cli/resume-build.mjs",
+    "resume:template": "node src/resume/cli/resume-template.mjs",
+    "combine": "node src/combine.mjs",
+    "google-ats:scan": "node --env-file-if-exists=.env adapters/google_ats_direct_scan.mjs",
+    "jobright:scan": "node adapters/jobright_recommendations_scan.mjs",
+    "resolve-urls": "node src/resolve-canonical-urls.mjs",
+    "verify": "node src/run-contract.mjs",
+    "daily-scan:commit": "node src/commit-scan.mjs",
+    "daily-scan:baseline": "node src/prepare-daily-scan.mjs",
+    "daily-scan:sources": "node src/run-adapters.mjs",
+    "daily-scan:plan": "node src/plan-scan-evaluations.mjs",
+    "daily-scan:merge-worker": "node src/merge-worker-results.mjs",
+    "calibration:check": "node src/check-worker-calibration.mjs",
+    "report:expand:prepare": "node src/expand-scan-report.mjs prepare",
+    "report:expand:commit": "node src/expand-scan-report.mjs commit",
+    "daily-scan:closeout": "node src/verify-scan-receipt.mjs",
+    "daily-scan:usage": "node src/scan-usage.mjs",
+    "setup": "node src/setup.mjs"
+  },
+  "license": "MIT"
+}

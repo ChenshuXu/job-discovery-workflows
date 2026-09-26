@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "registry_version": "1",
+  "contract_version": 2,
+  "identity_schema": "posting-key-v1",
+  "minimum_successful_adapters": 1,
+  "adapters": {
+    "jobspy": {
+      "enabled": true,
+      "command": [
+        "python3",
+        "adapters/jobspy_linkedin_scan.py"
+      ],
+      "config": "config/jobspy-ego.json",
+      "employer_exclusions": true
+    },
+    "ego-browser": {
+      "enabled": false,
+      "command": [
+        "node",
+        "adapters/egobrowser_linkedin_scan.mjs"
+      ],
+      "config": "config/jobspy-ego.json",
+      "employer_exclusions": true
+    },
+    "jobright": {
+      "enabled": false,
+      "command": [
+        "node",
+        "adapters/jobright_recommendations_scan.mjs"
+      ],
+      "config": "config/jobright.json",
+      "employer_exclusions": true
+    }
+  }
+}

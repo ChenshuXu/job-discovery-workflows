@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "landing_url": "https://jobright.ai/jobs/recommend",
+  "max_post_age_hours": 24,
+  "timezone": "UTC",
+  "min_jd_chars": 200,
+  "filter_snapshot": {
+    "freshness": "Past 24 hours",
+    "sort": "Recommended",
+    "values": [],
+    "codes": {},
+    "visible_controls": []
+  },
+  "traversal": {
+    "page_size": 20,
+    "max_scroll_steps": 120,
+    "settle_seconds": 1,
+    "stable_observations": 3
+  },
+  "employer_exclusions": []
+}

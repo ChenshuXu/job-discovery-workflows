@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "registry_version": "1",
+  "profile_id": "linkedin-post-scan",
+  "contract_version": 2,
+  "identity_schema": "posting-key-v1",
+  "minimum_successful_adapters": 1,
+  "adapters": {
+    "linkedin-post-scan": {
+      "employer_exclusions": true
+    }
+  },
+  "phrase_groups": {
+    "HIRING": [
+      "We're hiring",
+      "We are hiring",
+      "Hiring now",
+      "Now hiring",
+      "Team is hiring"
+    ],
+    "JOIN_TEAM": [
+      "Join our team"
+    ],
+    "OPENINGS": [
+      "Open roles",
+      "New opening",
+      "New openings"
+    ],
+    "CAREERS": [
+      "Career opportunities"
+    ],
+    "LOOKING_FOR": [
+      "Looking for"
+    ]
+  },
+  "role_groups": {
+    "BACKEND_ENGINEER": [
+      "Backend Engineer",
+      "Backend Software Engineer",
+      "Senior Backend Engineer",
+      "Software Engineer Backend"
+    ],
+    "PLATFORM_ENGINEER": [
+      "Platform Engineer",
+      "Platform Software Engineer",
+      "Backend Platform Engineer",
+      "Software Engineer Platform"
+    ],
+    "SENIOR_SOFTWARE_ENGINEER": [
+      "Senior Software Engineer"
+    ]
+  },
+  "location_groups": {
+    "US_REMOTE": {
+      "query": "remote",
+      "accepted": [
+        "United States remote",
+        "U.S. remote",
+        "US remote"
+      ]
+    }
+  },
+  "search": {
+    "required_filters": [
+      "Posts",
+      "Past week"
+    ],
+    "prefer_latest": true,
+    "default_strategy": "split",
+    "per_query_limit": 20,
+    "run_limit_minutes": 45,
+    "priority_hours": {
+      "P1": 24,
+      "P2": 48
+    },
+    "p1_phrase_groups": [
+      "HIRING",
+      "JOIN_TEAM",
+      "OPENINGS"
+    ],
+    "representative_calibration": [
+      {
+        "role_group": "PLATFORM_ENGINEER",
+        "location_group": "US_REMOTE"
+      }
+    ]
+  },
+  "post_signal": {
+    "dimensions": {
+      "hiring_intent": 1.5,
+      "role_team_match": 1.5,
+      "location": 0.75,
+      "author_value": 0.75,
+      "freshness_actionability": 0.5
+    },
+    "ready_threshold": 4.0,
+    "review_minimum": 3.5
+  },
+  "outreach": {
+    "author_priority": [
+      "hiring_manager",
+      "team_lead",
+      "founder",
+      "internal_recruiter",
+      "team_member"
+    ]
+  },
+  "tombstone_days": 8,
+  "paths": {
+    "career_ops_root": "../career-ops",
+    "cv": "../career-ops/cv.md",
+    "profile": "../career-ops/config/profile.yml",
+    "employer_exclusions": "config/jobspy-ego.json",
+    "daily_scan_runtime": "config/daily-scan-runtime.json"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "max_post_age_hours": 24,
+  "location": "United States",
+  "results_wanted": 20,
+  "direct_search": {
+    "enabled": true,
+    "required": true
+  },
+  "top_applicant_recommendations": {
+    "enabled": true,
+    "required": false,
+    "landing_url": "https://www.linkedin.com/jobs/",
+    "section_heading": "Jobs where you\u2019d be a top applicant",
+    "show_all_aria_label": "Show all jobs where you\u2019d be a top applicant",
+    "date_posted_filter": "Past 24 hours"
+  },
+  "queries": [
+    "software engineer"
+  ],
+  "employer_exclusions": []
+}

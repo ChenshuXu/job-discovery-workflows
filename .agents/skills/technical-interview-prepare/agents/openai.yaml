@@ -1,0 +1,4 @@
+interface:
+  display_name: "Interview Research & Prep"
+  short_description: "Research interview sources with three dedicated workers"
+  default_prompt: "使用 $technical-interview-prepare，让三个 worker 分别调查英文网站、小红书和一亩三分地，全部通过 Ego Lite 访问，由主代理汇总我指定公司已约轮次的形式、准备题单、近期考题、含营销来源的频次和证据。"

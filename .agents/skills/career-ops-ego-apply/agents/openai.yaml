@@ -1,0 +1,4 @@
+interface:
+  display_name: "Career-Ops Ego Apply"
+  short_description: "用 Ego Lite 处理单个或批量求职申请并完成核账"
+  default_prompt: "Use $career-ops-ego-apply to prepare, submit, and reconcile the exact application scope I selected."

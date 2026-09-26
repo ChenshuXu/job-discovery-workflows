@@ -1,0 +1,17 @@
+.DS_Store
+node_modules/
+.env
+.local/
+.tmp/
+runs/
+*.log
+__pycache__/
+*.py[cod]
+assets/cv-template.docx
+test/fixtures/golden/
+linkedin-post-scan/data/
+linkedin-post-scan/reports/
+config/*.json
+!config/*.example.json
+linkedin-post-scan/config/*.json
+!linkedin-post-scan/config/*.example.json

@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "landing_url": "https://jobright.ai/jobs/recommend",
+  "max_post_age_hours": 24,
+  "timezone": "America/Los_Angeles",
+  "min_jd_chars": 200,
+  "filter_snapshot": {
+    "freshness": "Past 24 hours",
+    "sort": "Recommended",
+    "values": [
+      "Seattle, WA",
+      "Backend Engineer",
+      "Mid Level",
+      "Senior Level",
+      "Full-time",
+      "Onsite",
+      "Hybrid",
+      "Remote anywhere in the US",
+      "0-4 Years"
+    ],
+    "codes": {
+      "jobTypes": [
+        1
+      ],
+      "seniority": [
+        3,
+        4
+      ],
+      "workModel": [
+        1,
+        2,
+        3
+      ],
+      "daysAgo": 1,
+      "minYearsOfExperienceRange": [
+        0,
+        4
+      ],
+      "country": "US",
+      "city": "Seattle, WA",
+      "locations": [
+        {
+          "type": "city",
+          "city": "Seattle, WA",
+          "radiusRange": 25
+        }
+      ],
+      "radiusRange": 25
+    },
+    "visible_controls": [
+      "Seattle, WA",
+      "Backend Engineer",
+      "Mid Level (+1)",
+      "Full-time",
+      "Onsite (+2)",
+      "Past 24 hours",
+      "0-4 Years",
+      "Industry",
+      "Recommended"
+    ]
+  },
+  "traversal": {
+    "page_size": 20,
+    "max_scroll_steps": 120,
+    "settle_seconds": 1,
+    "stable_observations": 3
+  },
+  "employer_exclusions": [
+    {
+      "id": "amazon-aws",
+      "reason": "Amazon/AWS employer exclusion",
+      "company_pattern": "\\b(?:amazon(?:\\.com)?(?:\\s+web\\s+services)?|aws)\\b",
+      "attribution_line_pattern": "^(?:(?:Amazon(?:\\.com)?(?:\\s+Web\\s+Services)?|AWS)\\s+is\\s+an\\s+equal\\s+opportunity\\s+employer\\b|(?:Filing entity:\\s*)?Amazon(?:\\.com|\\s+Com)?(?:\\s+[A-Za-z0-9&.'()/\\-]+){0,8},?\\s+(?:Inc\\.?|LLC|Ltd\\.?|Limited)$|Amazon\\b.{0,240}\\b(?:is seeking|seeks|is hiring)\\b.{0,160}\\b(?:engineer|developer|scientist|architect|manager|candidate|professional|employee|talent|specialist|analyst|designer)s?\\b|As an? (?:SDE(?:\\s*[\u2013\u2014-]\\s*[IVX0-9]+)?|(?:[A-Za-z]+\\s+){0,5}(?:engineer|developer|scientist|architect|manager|analyst|designer))\\s+at (?:Amazon(?:\\.com)?(?:\\s+Web\\s+Services)?|AWS),?\\s+you will\\b)",
+      "jd_signal_patterns": [
+        "(?:^|\\n)Why AWS\\??(?:\\n|$)",
+        "Amazon is an equal opportunity employer",
+        "Our inclusive culture empowers Amazonians",
+        "(?:^|\\n)(?:[*+\\-]\\s*)?Amazon(?:\\n|$)",
+        "Employees at Amazon are often offered comprehensive health benefits"
+      ],
+      "required_jd_signal_count": 2
+    },
+    {
+      "id": "tiktok-bytedance",
+      "reason": "TikTok/ByteDance employer exclusion",
+      "company_pattern": "\\b(?:tik\\s*tok|byte\\s*dance)\\b",
+      "attribution_line_pattern": "^(?:TikTok|ByteDance)(?:\\s+[A-Za-z0-9&.'()/\\-]+){0,8},?\\s+(?:Inc\\.?|LLC|Ltd\\.?|Limited|Pte\\.?\\s+Ltd\\.?)$",
+      "jd_signal_patterns": [
+        "TikTok is the leading destination for short-form mobile video",
+        "TikTok is committed to creating an inclusive space",
+        "ByteDance is an equal opportunity employer"
+      ],
+      "required_jd_signal_count": 2
+    }
+  ]
+}

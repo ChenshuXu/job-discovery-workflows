@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "cases": [
+    {
+      "id": "synthetic-backend",
+      "posting_key": "fixture:example:backend",
+      "company": "Example Company",
+      "role": "Software Engineer",
+      "jd_path": "jd/synthetic-backend.md",
+      "expected": {
+        "score_min": 1.0,
+        "score_max": 5.0,
+        "hard_exclusion": false
+      }
+    }
+  ]
+}

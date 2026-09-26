@@ -1,0 +1,4 @@
+# Illustrative supported-region fragment only; merge into the existing profile.
+# Confirm these cities with the user. Do not overwrite other location fields.
+location:
+  scan_policy: {"local_metros":["Seattle","Bellevue"],"remote_country":"United States","require_structured_remote":true,"ambiguous_action":"exclude"}

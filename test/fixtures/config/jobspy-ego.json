@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "max_post_age_hours": 24,
+  "location": "Seattle, WA",
+  "results_wanted": 100,
+  "direct_search": {
+    "enabled": true,
+    "required": true
+  },
+  "top_applicant_recommendations": {
+    "enabled": true,
+    "required": false,
+    "landing_url": "https://www.linkedin.com/jobs/",
+    "section_heading": "Jobs where you\u2019d be a top applicant",
+    "show_all_aria_label": "Show all jobs where you\u2019d be a top applicant",
+    "date_posted_filter": "Past 24 hours"
+  },
+  "queries": [
+    "software engineer backend",
+    "software engineer platform",
+    "software engineer infrastructure",
+    "software engineer distributed systems",
+    "software engineer ai infrastructure",
+    "software engineer data platform"
+  ],
+  "employer_exclusions": [
+    {
+      "id": "amazon-aws",
+      "reason": "Amazon/AWS employer exclusion",
+      "company_pattern": "\\b(?:amazon(?:\\.com)?(?:\\s+web\\s+services)?|aws)\\b",
+      "attribution_line_pattern": "^(?:(?:Amazon(?:\\.com)?(?:\\s+Web\\s+Services)?|AWS)\\s+is\\s+an\\s+equal\\s+opportunity\\s+employer\\b|(?:Filing entity:\\s*)?Amazon(?:\\.com|\\s+Com)?(?:\\s+[A-Za-z0-9&.'()/\\-]+){0,8},?\\s+(?:Inc\\.?|LLC|Ltd\\.?|Limited)$|Amazon\\b.{0,240}\\b(?:is seeking|seeks|is hiring)\\b.{0,160}\\b(?:engineer|developer|scientist|architect|manager|candidate|professional|employee|talent|specialist|analyst|designer)s?\\b|As an? (?:SDE(?:\\s*[\u2013\u2014-]\\s*[IVX0-9]+)?|(?:[A-Za-z]+\\s+){0,5}(?:engineer|developer|scientist|architect|manager|analyst|designer))\\s+at (?:Amazon(?:\\.com)?(?:\\s+Web\\s+Services)?|AWS),?\\s+you will\\b)",
+      "jd_signal_patterns": [
+        "(?:^|\\n)Why AWS\\??(?:\\n|$)",
+        "Amazon is an equal opportunity employer",
+        "Our inclusive culture empowers Amazonians",
+        "(?:^|\\n)(?:[*+\\-]\\s*)?Amazon(?:\\n|$)",
+        "Employees at Amazon are often offered comprehensive health benefits"
+      ],
+      "required_jd_signal_count": 2
+    },
+    {
+      "id": "tiktok-bytedance",
+      "reason": "TikTok/ByteDance employer exclusion",
+      "company_pattern": "\\b(?:tik\\s*tok|byte\\s*dance)\\b",
+      "attribution_line_pattern": "^(?:TikTok|ByteDance)(?:\\s+[A-Za-z0-9&.'()/\\-]+){0,8},?\\s+(?:Inc\\.?|LLC|Ltd\\.?|Limited|Pte\\.?\\s+Ltd\\.?)$",
+      "jd_signal_patterns": [
+        "TikTok is the leading destination for short-form mobile video",
+        "TikTok is committed to creating an inclusive space",
+        "ByteDance is an equal opportunity employer"
+      ],
+      "required_jd_signal_count": 2
+    },
+    {
+      "id": "jobright-ai",
+      "reason": "Jobright.ai LinkedIn publisher exclusion",
+      "company_pattern": "^jobright(?:\\.ai|\\s+ai)$",
+      "attribution_line_pattern": "^Jobright(?:\\.ai|\\s+AI)(?:,?\\s+(?:Inc\\.?|LLC|Ltd\\.?|Limited))?$",
+      "jd_signal_patterns": [
+        "Jobright is your personal AI job search agent",
+        "This role is part of the Jobright (?:TNT|Direct Hiring Network)",
+        "How can I join Jobright TNT"
+      ],
+      "required_jd_signal_count": 2
+    }
+  ]
+}
