@@ -23,8 +23,12 @@ system error. Evaluate minimum successful sources only after all have finished.
 
 `daily-scan:baseline` runs retention before any adapter. The runtime setting
 `retention.evaluated_unapplied_ttl_days` owns the TTL; expiry is `age_days >= TTL`
-in local calendar dates. Only uniquely linked, untouched Daily Scan `Evaluated`
-rows without downstream work qualify. Changed or ambiguous evidence protects a row.
+in local calendar dates, using the tracker record date. Uniquely linked Daily Scan
+`Evaluated`, `SKIP` (also recognized as `Skipped`), and `Discarded` rows without
+downstream work qualify. For `SKIP`/`Discarded`, status history confined to these
+three states is allowed; application-stage, unknown, or inconsistent history still
+protects the row. Manual notes, interview/follow-up references and other existing
+artifact/identity protections remain. The append-only status ledger is retained.
 
 The command owns locks, deletion, derived-index synchronization and rollback.
 `maintenance/evaluated-retention.json` is create-only; reuse it when resuming.
@@ -270,6 +274,16 @@ that candidate's report without changing the live tracker. The key appears only 
 `receipt.json.job_issues`, never in persisted JD/history or a placeholder/recovery queue.
 Concurrent tracker changes stop commit; there is no automatic rebase. The derived SQLite
 index synchronizes once after the canonical Markdown set succeeds.
+
+At baseline and closeout, Job Discovery checks Career-Ops health. Its title-only
+duplicate warnings are resolved only when every reported member has a distinct
+saved posting identity; the raw count and member evidence remain in the health
+result. This checks distinct recorded postings, not whether cross-source listings
+belong to the same application. Shared posting identities, missing/conflicting
+identity evidence, other warning types, and incomplete health summaries block
+completion. Do not suppress warning categories or edit historical receipts.
+For a read-only health audit, run
+`node src/career-ops-health.mjs --career-ops ../career-ops`.
 
 Before finalizing persistence, including after isolating an issue, require a non-empty valid evaluated set. Here `eligible_evaluated_keys` means eligible for persistence, not `eligibility_status=eligible`: valid below-threshold and hard-excluded evaluations also enter scan history. Any non-empty valid evaluated set is persisted regardless of the number or ratio of job issues. Zero valid evaluated postings produces `FAILED` with no Career-Ops persistence. System failures are not job issues and remove only this invocation's exact owned writes.
 

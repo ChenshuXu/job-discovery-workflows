@@ -50,7 +50,9 @@ const tracker=readFileSync(process.env.CAREER_OPS_TRACKER,'utf8');
 const post=tracker.includes('| SKIP |');
 const nonzero=existsSync('PIPELINE_NONZERO_EXIT') || post && existsSync('POST_PIPELINE_NONZERO_EXIT');
 const errors=existsSync('PIPELINE_ERRORS') || post && existsSync('POST_PIPELINE_ERRORS');
-console.log('Pipeline Health: '+(errors?1:0)+' errors, 12 warnings');
+const warnings=existsSync('PIPELINE_WARNINGS') || post && existsSync('POST_PIPELINE_WARNINGS');
+if(warnings)console.log('⚠️ Unresolved fixture warning');
+console.log('Pipeline Health: '+(errors?1:0)+' errors, '+(warnings?1:0)+' warnings');
 if(nonzero)process.exitCode=1;
 `);
   write(path.join(career, 'tracker-parse.mjs'), `
@@ -206,7 +208,7 @@ test('apply uses headed additions, preserves report IDs/source run/unrelated sta
   const { plan } = await invoke(fx);
   const result = await invoke(fx, { apply: true, expectedPlanHash: plan.plan_sha256 });
   assert.equal(result.status, 'COMPLETE'); assert.deepEqual(snapshot(fx.runRoot), originalRun);
-  assert.equal(result.tracker_synced,true);assert.deepEqual(result.pipeline_before,{errors:0,exit_code:0});assert.deepEqual(result.pipeline_after,{errors:0,exit_code:0});
+  assert.equal(result.tracker_synced,true);assert.deepEqual(result.pipeline_before,{errors:0,warnings:0,exit_code:0});assert.deepEqual(result.pipeline_after,{errors:0,warnings:0,exit_code:0});
   assert.equal(read(path.join(fx.careerRoot,'data/synced-tracker.md')),read(path.join(fx.careerRoot,'data/applications.md')));
   assert.equal(read(path.join(fx.careerRoot,'data/sync-calls.log')),'sync\n');
   assert.equal(read(path.join(fx.careerRoot, 'batch/tracker-additions/unrelated.tsv')), 'unrelated queue is not consumed\n');
@@ -225,7 +227,8 @@ test('apply uses headed additions, preserves report IDs/source run/unrelated sta
   for (const row of rows.filter(row => row.status === 'Evaluated')) assert.equal(row.notes, trackerIdentityNote({ primary_key: result.completed.find(item => item.report_path === row.report_path).posting_key }));
   const retention = buildEvaluatedRetentionPlan({ trackerText: read(path.join(fx.careerRoot,'data/applications.md')), scanHistoryText: read(path.join(fx.careerRoot,'data/scan-history.tsv')),
     careerRoot: fx.careerRoot, parser: await loadCareerTrackerParser(fx.careerRoot), asOfDate: '2026-09-15', ttlDays: 7, statusLogText: read(path.join(fx.careerRoot,'data/status-log.tsv')) });
-  assert.equal(retention.cleaned.length, 6); assert.deepEqual(retention.protected, []);
+  assert.equal(retention.cleaned.length, 6);
+  assert.deepEqual(retention.protected, [{ tracker_number: 101, reason: 'MANUAL_NOTE' }]);
   const applied = snapshot(fx.root); assert.equal((await invoke(fx, { apply: true, expectedPlanHash: plan.plan_sha256 })).status, 'ALREADY_APPLIED'); assert.deepEqual(snapshot(fx.root), applied);
 });
 
@@ -264,7 +267,7 @@ test('failed restore compensates only owned rows/reports and retains exact backu
   assert.equal(read(path.join(fx.careerRoot,'data/status-log.tsv')).split('\n').filter(Boolean).length,3);
   const journal=JSON.parse(read(path.join(fx.careerRoot,'data/daily-scan-repairs',`${fx.manifest.run_id}-reports.json`)));
   assert.equal(journal.status,'FAILED');assert.deepEqual(journal.rollback_errors,[]);
-  assert.equal(journal.rollback_tracker_synced,true);assert.deepEqual(journal.rollback_pipeline,{errors:0,exit_code:0});
+  assert.equal(journal.rollback_tracker_synced,true);assert.deepEqual(journal.rollback_pipeline,{errors:0,warnings:0,exit_code:0});
   await assert.rejects(invoke(fx),/journal needs review/);
 });
 
@@ -290,20 +293,20 @@ test('manifest gap rewrite is exact, bound to the exact reviewed finding, and ne
 });
 
 test('preflight pipeline rejects nonzero exit or reported errors before any report writes', async t => {
-  for(const flag of ['PIPELINE_NONZERO_EXIT','PIPELINE_ERRORS']) {
+  for(const flag of ['PIPELINE_NONZERO_EXIT','PIPELINE_ERRORS','PIPELINE_WARNINGS']) {
     const fx=fixture(t);write(path.join(fx.careerRoot,flag),'enabled');const {plan}=await invoke(fx);const before=snapshot(fx.root);
     await assert.rejects(invoke(fx,{apply:true,expectedPlanHash:plan.plan_sha256}),/preflight pipeline failed/);assert.deepEqual(snapshot(fx.root),before);
   }
 });
 
 test('tracker sync and post-write pipeline failures compensate owned changes and synchronize restored state', async t => {
-  for(const flag of ['FAIL_SYNC_ONCE','POST_PIPELINE_NONZERO_EXIT','POST_PIPELINE_ERRORS']) {
+  for(const flag of ['FAIL_SYNC_ONCE','POST_PIPELINE_NONZERO_EXIT','POST_PIPELINE_ERRORS','POST_PIPELINE_WARNINGS']) {
     const fx=fixture(t);write(path.join(fx.careerRoot,flag),'enabled');const originals=fx.mappings.map(mapping=>read(path.join(fx.careerRoot,mapping.report_path)));
     const {plan}=await invoke(fx);await assert.rejects(invoke(fx,{apply:true,expectedPlanHash:plan.plan_sha256}),/report repair failed:.*(?:tracker\.mjs failed|post-write pipeline failed)/);
     assert.equal((await trackerRows(fx)).length,4);assert.equal((await trackerRows(fx)).find(row=>row.number===101).status,'Evaluated');
     for(const [index,mapping] of fx.mappings.entries())assert.equal(read(path.join(fx.careerRoot,mapping.report_path)),originals[index]);
     const journal=JSON.parse(read(path.join(fx.careerRoot,'data/daily-scan-repairs',`${fx.manifest.run_id}-reports.json`)));
-    assert.equal(journal.status,'FAILED');assert.equal(journal.rollback_tracker_synced,true);assert.deepEqual(journal.rollback_pipeline,{errors:0,exit_code:0});assert.deepEqual(journal.rollback_errors,[]);
+    assert.equal(journal.status,'FAILED');assert.equal(journal.rollback_tracker_synced,true);assert.deepEqual(journal.rollback_pipeline,{errors:0,warnings:0,exit_code:0});assert.deepEqual(journal.rollback_errors,[]);
     assert.equal(read(path.join(fx.careerRoot,'data/synced-tracker.md')),read(path.join(fx.careerRoot,'data/applications.md')));
     assert.equal(read(path.join(fx.careerRoot,'data/status-log.tsv')).split('\n').filter(Boolean).length,3);
   }

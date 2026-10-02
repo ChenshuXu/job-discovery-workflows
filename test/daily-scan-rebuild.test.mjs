@@ -1078,18 +1078,30 @@ test('one invalid report contract that reaches commit is isolated while four val
   assert.equal(receipt.scan_history_keys.length, 4);
 });
 
-test('pipeline warnings are ignored and are not written into the receipt', async () => {
+test('pipeline warnings fail closeout and roll back this run', async () => {
   const fx = bulkRun(2);
   captureBaseline({ runRoot: fx.run, careerRoot: fx.career });
   planEvaluations(fx.run, undefined, fx.career);
   writeWorkerResults(fx.run, key => ({ posting_key: key, score: 3.5, hard_exclusion: false, rationale: 'Material baseline gaps keep this below the report threshold.', report: null }));
   write(path.join(fx.career, 'verify-pipeline.mjs'), "console.log('⚠️ Schema drift without a posting identity'); console.log('Pipeline Health: 0 errors, 1 warning')\n");
   const { receipt } = await commitScan(fx.run, fx.career, '2026-08-07');
-  assert.equal(receipt.status, 'COMPLETE');
-  assert.deepEqual(receipt.career_ops_pipeline.after, { errors: 0, exit_code: 0 });
-  assert.equal(JSON.stringify(receipt).includes('warning'), false);
-  assert.equal(readdirSync(path.join(fx.career, 'jds')).length, 2);
-  assert.equal(readFileSync(path.join(fx.career, 'data/scan-history.tsv'), 'utf8').split('\n').filter(line => line.includes('daily-scan:')).length, 2);
+  assert.equal(receipt.status, 'FAILED');
+  assert.equal(receipt.career_ops_pipeline.after.errors, 0);
+  assert.equal(receipt.career_ops_pipeline.after.warnings, 1);
+  assert.equal(receipt.career_ops_pipeline.after.raw_warnings, 1);
+  assert.deepEqual(receipt.career_ops_pipeline.after.unresolved, ['Schema drift without a posting identity']);
+  assert.match(receipt.system_errors.join('\n'), /pipeline has 1 warning/);
+  assert.equal(readdirSync(path.join(fx.career, 'jds')).length, 0);
+  assert.equal(readFileSync(path.join(fx.career, 'data/scan-history.tsv'), 'utf8').split('\n').filter(line => line.includes('daily-scan:')).length, 0);
+});
+
+test('baseline rejects warnings and missing health summaries before freezing a run', () => {
+  for (const output of ['Pipeline Health: 0 errors, 1 warning', 'Pipeline Health: 0 errors', '']) {
+    const fx = bulkRun(1);
+    write(path.join(fx.career, 'verify-pipeline.mjs'), `console.log(${JSON.stringify(output)})\n`);
+    assert.throws(() => captureBaseline({ runRoot: fx.run, careerRoot: fx.career }), /baseline must be clean/);
+    assert.equal(existsSync(path.join(fx.run, 'baseline.json')), false);
+  }
 });
 
 test('a nonzero pipeline verifier exit cannot close COMPLETE after printing zero errors', async () => {

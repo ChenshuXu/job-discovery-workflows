@@ -306,7 +306,9 @@ Disabled adapters do not require local config files. Google ATS and Post Scan ha
 their own example configs. An empty Google `title_exclusions` means no title exclusion
 rules; required location rules remain validated. Set the worker model to one
 available in your agent host. Review retention TTL: real Daily Scan can remove eligible
-old, untouched evaluations while protecting application/interview/manual activity.
+old `Evaluated`, `SKIP` (including `Skipped`) and `Discarded` records based on the
+tracker date, while protecting application/interview/manual activity. Status history
+is retained.
 
 [Examples](examples/README.md) include fictional CV content and an empty interview register.
 Use the register only for a new workspace; never overwrite an existing one. Candidate
@@ -361,10 +363,14 @@ be replaced with the exact reviewed run/posting identities, never guessed by tit
 
 ## Release validation and limitations
 
-All implementations are present, but this is a reviewable candidate, not a completed release.
-The following checks passed on macOS as of 2026-09-26:
+The initial code snapshot is published. Validation covers the checks listed here;
+it does not establish complete online workflow coverage.
+The 2026-10-02 update passed **303/303** isolated public tests and **306/306**
+development tests; the Daily Scan suite passed **197/197**. This update covers
+posting-identity health checks, retention and interview-research guidance. Online
+workflows were not rerun.
 
-- Public candidate tests: **295/295**; development repository tests: **298/298**.
+The following first-use checks passed on macOS as of 2026-09-26:
 - A fresh Career-Ops installation, including Chromium, succeeded. Onboarding with a
   fictional CV/profile, full doctor, profile/CV consistency, pipeline, writer-interface,
   statistics/collector and canonical-register checks passed; empty inputs produced zero counts.

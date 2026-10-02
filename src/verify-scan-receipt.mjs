@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { existsSync, linkSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { snapshotAdapterProfile } from './adapter-registry.mjs';
@@ -26,13 +25,8 @@ const createJson = (file, value) => {
   finally { unlinkSync(staged); }
 };
 
-export function runPipelineCheck(careerRoot, trackerFile = null) {
-  const env = trackerFile ? { ...process.env, CAREER_OPS_TRACKER: trackerFile } : process.env;
-  const result = spawnSync(process.execPath, ['verify-pipeline.mjs'], { cwd: careerRoot, encoding: 'utf8', env });
-  const output = `${result.stdout || ''}\n${result.stderr || ''}`;
-  const match = output.match(/Pipeline Health:\s*(\d+) errors?/i);
-  return { errors: match ? Number(match[1]) : result.status === 0 ? 0 : 1, exit_code: result.status };
-}
+export { checkCareerOpsHealth as runPipelineCheck } from './career-ops-health.mjs';
+import { checkCareerOpsHealth as runPipelineCheck } from './career-ops-health.mjs';
 
 export function captureBaseline({ runRoot, careerRoot, maintenance = null }) {
   const root = path.resolve(runRoot);
@@ -49,6 +43,9 @@ export function captureBaseline({ runRoot, careerRoot, maintenance = null }) {
     pipeline: runPipelineCheck(career),
     ...(maintenance ? { maintenance } : {}),
   };
+  if (baseline.pipeline.exit_code !== 0 || baseline.pipeline.errors || baseline.pipeline.warnings !== 0) {
+    throw new Error(`Career-Ops baseline must be clean: ${JSON.stringify(baseline.pipeline)}`);
+  }
   createJson(file, baseline);
   return { baseline, file };
 }
@@ -205,6 +202,7 @@ export async function auditScanReceipt({
   const afterPipeline = runPipelineCheck(career, resolvedTrackerFile);
   if (afterPipeline.exit_code !== 0) errors.push(`Career-Ops pipeline verifier exited ${afterPipeline.exit_code}`);
   if (afterPipeline.errors) errors.push(`Career-Ops pipeline has ${afterPipeline.errors} error(s)`);
+  if (afterPipeline.warnings !== 0) errors.push(`Career-Ops pipeline has ${afterPipeline.warnings ?? 'unknown'} warning(s)`);
 
   const reportThreshold = Number(results.plan.runtime.reporting.full_report_threshold);
   const belowThresholdKeys = committedResults.filter(item => !item.hard_exclusion && Number(item.score) < reportThreshold).map(item => item.posting_key);

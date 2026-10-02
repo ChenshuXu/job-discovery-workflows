@@ -42,13 +42,13 @@ function fixture() {
   return { root, career, run, tracker: path.join(career, 'data/applications.md'), history: path.join(career, 'data/scan-history.tsv') };
 }
 
-function addJob(fx, { number, date, id, runId = `run-${id}`, noteSuffix = '' }) {
+function addJob(fx, { number, date, id, runId = `run-${id}`, noteSuffix = '', status = 'Evaluated' }) {
   const key = `greenhouse:acme:${id}`;
   const url = `https://boards.greenhouse.io/acme/jobs/${id}`;
   const reportPath = `reports/${String(number).padStart(3, '0')}-acme-role-${date}.md`;
   const jdPath = `jds/discovery-${runId}-${key.replace(/[^A-Za-z0-9._-]/g, '-')}.md`;
   const note = `${trackerIdentityNote({ primary_key: key })}${noteSuffix}`;
-  const row = `| ${number} | ${date} | Acme | Role | 4.2/5 | Evaluated | ❌ | [${number}](../${reportPath}) | ${note} |`;
+  const row = `| ${number} | ${date} | Acme | Role | 4.2/5 | ${status} | ❌ | [${number}](../${reportPath}) | ${note} |`;
   const report = `# Evaluation: Acme — Role\n\n**Report Number:** ${String(number).padStart(3, '0')}  \n**Date:** ${date}  \n**Score:** 4.2/5  \n**URL:** ${url}  \n**Posting Key:** ${key}  \n\n---\n\n## Machine Summary\n\`\`\`yaml\nrun_id: "${runId}"\nposting_key: "${key}"\nposting_url: "${url}"\n\`\`\`\n`;
   const jd = `# Acme - Role\n\n**URL:** ${url}\n**Discovery Run:** ${runId}\n`;
   writeFileSync(path.join(fx.career, reportPath), report);
@@ -61,7 +61,7 @@ function writeFixture(fx, jobs) {
   writeFileSync(fx.history, `${historyHeader}${jobs.map(job => job.history).join('\n')}\n`);
 }
 
-function fakeInterfaces(fx, { syncTracker = () => {}, pipelineCheck = () => ({ exit_code: 0, errors: 0 }) } = {}) {
+function fakeInterfaces(fx, { syncTracker = () => {}, pipelineCheck = () => ({ exit_code: 0, errors: 0, warnings: 0 }) } = {}) {
   return {
     parser,
     trackerFile: fx.tracker,
@@ -101,10 +101,44 @@ test('TTL uses local calendar days and protects manual/status-touched rows', () 
   assert.equal(plan.protected.some(item => item.tracker_number === 2), false);
 });
 
-test('cleanup removes the exact tracker/report/JD/history chain once', async () => {
+test('retention includes skipped/discarded evaluations but protects application history and references', () => {
   const fx = fixture();
-  const job = addJob(fx, { number: 1, date: '2026-08-28', id: '2001' });
-  writeFixture(fx, [job]);
+  const statuses = ['SKIP', 'Skipped', 'Discarded', 'Discarded', 'SKIP', 'Discarded', 'SKIP', 'Discarded', 'Applied'];
+  const jobs = statuses.map((status, index) => addJob(fx, {
+    number: index + 1, date: index === 6 ? '2026-08-29' : '2026-08-28', id: `400${index}`, status,
+  }));
+  writeFixture(fx, jobs);
+  const plan = buildEvaluatedRetentionPlan({
+    trackerText: readFileSync(fx.tracker, 'utf8'), scanHistoryText: readFileSync(fx.history, 'utf8'),
+    careerRoot: fx.career, parser, asOfDate: '2026-09-04', ttlDays: 7,
+    statusLogText: [
+      '1\t2026-08-29\tEvaluated\tSKIP\tweb',
+      '3\t2026-08-29\tEvaluated\tSKIP\tweb',
+      '3\t2026-08-30\tSKIP\tDiscarded\tweb',
+      '4\t2026-08-29\tApplied\tInterview\tweb',
+      '4\t2026-08-30\tInterview\tDiscarded\tweb',
+      '5\t2026-08-29\tUnknown\tSKIP\tweb',
+      '6\t2026-08-29\tEvaluated\tSKIP\tweb',
+    ].join('\n'),
+    activeInterviewsText: 'Archived interview for #8\n',
+  });
+  assert.deepEqual(plan.cleaned.map(item => item.tracker_number), [1, 2, 3]);
+  assert.deepEqual(plan.cleaned.map(item => item.status), ['SKIP', 'Skipped', 'Discarded']);
+  assert.deepEqual(plan.candidate_status_counts, { evaluated: 0, skip: 4, discarded: 4 });
+  assert.deepEqual(plan.protected.map(item => [item.tracker_number, item.reason]), [
+    [4, 'STATUS_HISTORY'], [5, 'STATUS_HISTORY'], [6, 'STATUS_HISTORY'], [8, 'ACTIVE_INTERVIEW'],
+  ]);
+});
+
+test('cleanup removes mixed-status tracker/report/JD/history chains once and retains the status ledger', async () => {
+  const fx = fixture();
+  const jobs = ['Evaluated', 'SKIP', 'Discarded'].map((status, index) => addJob(fx, {
+    number: index + 1, date: '2026-08-28', id: `200${index + 1}`, status,
+  }));
+  writeFixture(fx, jobs);
+  const statusLog = '2\t2026-08-29\tEvaluated\tSKIP\tweb\n3\t2026-08-30\tEvaluated\tDiscarded\tweb\n';
+  const statusFile = path.join(fx.career, 'data/status-log.tsv');
+  writeFileSync(statusFile, statusLog);
   let syncs = 0;
   const options = {
     runRoot: fx.run,
@@ -114,11 +148,15 @@ test('cleanup removes the exact tracker/report/JD/history chain once', async () 
     interfaces: fakeInterfaces(fx, { syncTracker: () => { syncs += 1; } }),
   };
   const first = await cleanupExpiredEvaluated(options);
-  assert.equal(first.audit.cleaned_count, 1);
-  assert.doesNotMatch(readFileSync(fx.tracker, 'utf8'), /\| 1 \|/);
-  assert.doesNotMatch(readFileSync(fx.history, 'utf8'), /daily-scan:run-2001/);
-  assert.equal(existsSync(path.join(fx.career, job.reportPath)), false);
-  assert.equal(existsSync(path.join(fx.career, job.jdPath)), false);
+  assert.equal(first.audit.cleaned_count, 3);
+  assert.deepEqual(first.audit.cleaned.map(item => item.status), ['Evaluated', 'SKIP', 'Discarded']);
+  assert.equal(readFileSync(fx.tracker, 'utf8'), trackerHeader);
+  assert.equal(readFileSync(fx.history, 'utf8'), historyHeader);
+  assert.equal(readFileSync(statusFile, 'utf8'), statusLog);
+  for (const job of jobs) {
+    assert.equal(existsSync(path.join(fx.career, job.reportPath)), false);
+    assert.equal(existsSync(path.join(fx.career, job.jdPath)), false);
+  }
   assert.equal(existsSync(first.auditFile), true);
   await cleanupExpiredEvaluated(options);
   assert.equal(syncs, 1);
@@ -140,7 +178,7 @@ test('cleanup protects interview references in the default Career Docs register'
 
 test('a failed sync restores every owned surface', async () => {
   const fx = fixture();
-  const job = addJob(fx, { number: 1, date: '2026-08-28', id: '3001' });
+  const job = addJob(fx, { number: 1, date: '2026-08-28', id: '3001', status: 'Discarded' });
   writeFixture(fx, [job]);
   const trackerBefore = readFileSync(fx.tracker, 'utf8');
   const historyBefore = readFileSync(fx.history, 'utf8');

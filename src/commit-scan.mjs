@@ -47,6 +47,7 @@ function assertBaselinePipeline(runRoot) {
   const pipeline = baseline.pipeline ?? {};
   if (pipeline.exit_code !== 0) throw new Error(`baseline Career-Ops pipeline verifier exited ${pipeline.exit_code}`);
   if (Number(pipeline.errors ?? 0) !== 0) throw new Error(`baseline Career-Ops pipeline has ${pipeline.errors} error(s)`);
+  if (Number(pipeline.warnings ?? 0) !== 0) throw new Error(`baseline Career-Ops pipeline has ${pipeline.warnings} warning(s)`);
 }
 
 function initialJobIssues(run, results, careerRoot, scopedContractErrors = []) {

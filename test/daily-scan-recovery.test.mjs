@@ -57,7 +57,7 @@ function fixture(t) {
   const candidateSources = Object.entries({ 'cv.md': '# CV\n', 'config/profile.yml': `location:\n  scan_policy: ${JSON.stringify(policy)}\n`, 'modes/_profile.md': '# Profile\n' }).map(([label, text]) => {
     const file = path.join(career, label); write(file, text); return { label, path: file, sha256: hash(text) };
   });
-  write(path.join(career, 'verify-pipeline.mjs'), "console.log('Pipeline Health: 0 errors')\n");
+  write(path.join(career, 'verify-pipeline.mjs'), "console.log('Pipeline Health: 0 errors, 0 warnings')\n");
   write(path.join(career, 'data/scan-history.tsv'), 'url\tdate\tsource\ttitle\tcompany\tstatus\tlocation\n');
   write(path.join(source, 'baseline.json'), { schema_version: 3, run_id: 'original', adapter_profile: profile, location_policy: policy, pipeline: { exit_code: 0, errors: 0 } });
   const assignments = { schema_version: 1, result_schema_version: 3, run_id: 'original', career_ops_root: career, runtime,

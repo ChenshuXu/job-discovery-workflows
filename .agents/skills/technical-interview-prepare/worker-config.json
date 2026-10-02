@@ -1,14 +1,14 @@
 {
   "worker-1": {
-    "model": "gpt-6-luna",
-    "reasoning_effort": "max"
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "high"
   },
   "worker-2": {
-    "model": "gpt-6-luna",
-    "reasoning_effort": "max"
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "high"
   },
   "worker-3": {
-    "model": "gpt-6-luna",
-    "reasoning_effort": "max"
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "high"
   }
 }

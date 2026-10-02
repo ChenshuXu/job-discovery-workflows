@@ -220,7 +220,7 @@ async function applyPlan(value, interfaces, receiptFile) {
   const careerRoot = plan.career_ops_root;
   const backupRoot = path.join(careerRoot, 'data/daily-scan-repairs', plan.run_id, 'report-backups');
   const pipelineBefore = runPipelineCheck(careerRoot, trackerFile);
-  if (pipelineBefore.exit_code !== 0 || pipelineBefore.errors !== 0) throw new Error(`report repair preflight pipeline failed: exit=${pipelineBefore.exit_code}, errors=${pipelineBefore.errors}`);
+  if (pipelineBefore.exit_code !== 0 || pipelineBefore.errors !== 0 || pipelineBefore.warnings !== 0) throw new Error(`report repair preflight pipeline failed: exit=${pipelineBefore.exit_code}, errors=${pipelineBefore.errors}, warnings=${pipelineBefore.warnings}`);
   const journal = { schema_version: 1, status: 'APPLYING', plan, pipeline_before: pipelineBefore, completed: [], rollback_errors: [] };
   mkdirSync(path.dirname(receiptFile), { recursive: true });
   writeFileSync(receiptFile, `${JSON.stringify(journal, null, 2)}\n`, { flag: 'wx' });
@@ -276,7 +276,7 @@ async function applyPlan(value, interfaces, receiptFile) {
     journal.tracker_synced = true;
     journal.pipeline_after = runPipelineCheck(careerRoot, trackerFile);
     save();
-    if (journal.pipeline_after.exit_code !== 0 || journal.pipeline_after.errors !== 0) throw new Error(`report repair post-write pipeline failed: exit=${journal.pipeline_after.exit_code}, errors=${journal.pipeline_after.errors}`);
+    if (journal.pipeline_after.exit_code !== 0 || journal.pipeline_after.errors !== 0 || journal.pipeline_after.warnings !== 0) throw new Error(`report repair post-write pipeline failed: exit=${journal.pipeline_after.exit_code}, errors=${journal.pipeline_after.errors}, warnings=${journal.pipeline_after.warnings}`);
     verifySources(plan);
     const finalRows = parseTracker(read(trackerFile), interfaces.trackerParser);
     for (const item of journal.completed) if (fileHash(path.join(careerRoot, item.report_path)) !== item.new_report_sha256
@@ -315,7 +315,7 @@ async function applyPlan(value, interfaces, receiptFile) {
         runCareerCommand(careerRoot, 'tracker.mjs', ['sync'], { CAREER_OPS_TRACKER: trackerFile });
         journal.rollback_tracker_synced = true;
         journal.rollback_pipeline = runPipelineCheck(careerRoot, trackerFile);
-        if (journal.rollback_pipeline.exit_code !== 0 || journal.rollback_pipeline.errors !== 0) throw new Error(`pipeline exit=${journal.rollback_pipeline.exit_code}, errors=${journal.rollback_pipeline.errors}`);
+        if (journal.rollback_pipeline.exit_code !== 0 || journal.rollback_pipeline.errors !== 0 || journal.rollback_pipeline.warnings !== 0) throw new Error(`pipeline exit=${journal.rollback_pipeline.exit_code}, errors=${journal.rollback_pipeline.errors}, warnings=${journal.rollback_pipeline.warnings}`);
       } catch (syncError) { journal.rollback_errors.push(`compensated tracker synchronization/health failed: ${syncError.message}`); }
     }
     journal.status = 'FAILED'; journal.error = error.message; save();

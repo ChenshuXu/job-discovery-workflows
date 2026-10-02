@@ -181,7 +181,7 @@ cp -n config/jobspy-ego.example.json config/jobspy-ego.json
 
 Gmail 使用 `npm run setup -- --workflows gmail --apply`，从空白 `config/gmail-accounts.example.json` 创建缺失的 `.local/gmail-job-reply-review/accounts.json`，已有设置会保留。将 `primary`、`secondary` 填为用户确认的账号地址；读信前还须确认已连接 Gmail app 的主账号身份，以及 Chrome 中次账号的实时 Google Account。缺少某个账号只阻塞该邮箱。地址保存在被忽略的本地文件；登录、密码和验证码留在正常认证流程中处理。
 
-示例 registry 只启用 JobSpy。LinkedIn/Jobright 需先配置 Ego Lite 与登录；Jobright 的空 filter snapshot 必须替换为自己实际接受的筛选状态，不能直接授权扫描。已禁用来源不再要求本地配置文件。Google ATS 和 Post Scan 各有示例配置；Google 的空 `title_exclusions` 表示不排除职位标题，地点规则仍须通过校验。worker 模型须在宿主可用；实跑前审阅 retention TTL，扫描会清理符合条件的旧 Evaluated 记录，并保护申请/面试/人工活动。
+示例 registry 只启用 JobSpy。LinkedIn/Jobright 需先配置 Ego Lite 与登录；Jobright 的空 filter snapshot 必须替换为自己实际接受的筛选状态，不能直接授权扫描。已禁用来源不再要求本地配置文件。Google ATS 和 Post Scan 各有示例配置；Google 的空 `title_exclusions` 表示不排除职位标题，地点规则仍须通过校验。worker 模型须在宿主可用；实跑前审阅 retention TTL，扫描会按 tracker 日期清理符合条件的旧 `Evaluated`、`SKIP`（含 `Skipped`）与 `Discarded` 记录，并保护申请/面试/人工活动；状态变更日志保留。
 
 [虚构示例](examples/README.md)提供 CV 内容及空面试登记表，只能用于新工作区，不能覆盖已有登记表。示例不能作为申请答案。实际资料保存在 Career-Ops/Career Docs 与 `.local/`。简历构建需要自己的 `assets/cv-template.docx`。按[本人模板准备流程](assets/README.md)创建和核验，运行 `npm run resume:template`，再检查渲染页。缺失模板会明确报告，不能用空 DOCX 占位。编写简历计划前运行 `mkdir -p .tmp`。
 
@@ -215,9 +215,11 @@ npm test
 
 ## 发布验证与限制
 
-全部实现都已包含；这是可供审阅的候选版，尚未完成发布。截至 2026-09-26，已在 macOS 通过：
+初始代码快照已发布；验收仅覆盖下列检查，不代表完整线上工作流均已验证。
 
-- 公开候选测试 **295/295**，开发仓库测试 **298/298**。
+2026-10-02 更新通过公开隔离测试 **303/303**、开发仓库测试 **306/306** 和 Daily Scan 测试 **197/197**，覆盖 posting identity 健康检查、retention 和面试调研指导；本次未重跑线上工作流。
+
+截至 2026-09-26，已在 macOS 通过以下首次使用检查：
 - 全新 Career-Ops 安装成功，含 Chromium；使用虚构 CV/profile 的 onboarding、完整 doctor、profile/CV 一致性、pipeline、writer interface、统计/采集器及 canonical register 检查通过，空输入计数为零。上游仍提示无法自动检测 Codex Playwright MCP，以及默认 Vinted portal 无 provider；这些检查不代表 Job Discovery 来源就绪。
 - Codex CLI 实际读取八个内置 Skill，在候选本地及独立 Career Docs 的 Skill 链接中均解析到公开 checkout；用显式 Skill 路径区分其他 checkout 的同名 Skill。
 - Gmail 主账号连接器、次账号 Chrome 的身份匹配与只读搜索通过；LinkedIn、Jobright 登录读取通过。公开 JobSpy adapter 使用当前包真实采集到一个含 JD 的岗位，错误数为零。

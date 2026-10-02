@@ -14,6 +14,8 @@ import { runPipelineCheck } from './verify-scan-receipt.mjs';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RECOVERY_NAME = '.daily-scan-retention-recovery';
+const RETENTION_STATUSES = new Set(['evaluated', 'skip', 'discarded']);
+const retentionStatus = value => String(value ?? '').trim().toLowerCase().replace(/^skipped$/, 'skip');
 
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 const readOptional = file => existsSync(file) ? readFileSync(file, 'utf8') : '';
@@ -126,6 +128,7 @@ export function buildEvaluatedRetentionPlan({
   if (!Number.isInteger(ttlDays) || ttlDays < 1) throw new Error('evaluated retention TTL must be a positive integer');
 
   const rows = parseTracker(trackerText, parser);
+  const candidates = rows.filter(row => RETENTION_STATUSES.has(retentionStatus(row.status)));
   const historyLines = String(scanHistoryText).split(/\r?\n/);
   const historyCanonicalCounts = new Map();
   for (const line of historyLines) {
@@ -138,7 +141,7 @@ export function buildEvaluatedRetentionPlan({
   const cleaned = [];
   let expiredCount = 0;
 
-  for (const row of rows.filter(item => item.status === 'Evaluated')) {
+  for (const row of candidates) {
     const evaluated = dateOrdinal(row.parsed.date);
     if (evaluated == null || evaluated > asOf) {
       protectedRows.push(protectedItem(row, 'INVALID_OR_FUTURE_EVALUATED_DATE'));
@@ -162,7 +165,15 @@ export function buildEvaluatedRetentionPlan({
       protectedRows.push(protectedItem(row, 'MANUAL_NOTE'));
       continue;
     }
-    if (String(statusLogText).split(/\r?\n/).some(line => line.split('\t')[0] === String(row.number))) {
+    const history = String(statusLogText).split(/\r?\n/).map(line => line.split('\t'))
+      .filter(cells => cells[0] === String(row.number));
+    // Skipping/discarding an unsubmitted evaluation is now eligible. Any
+    // application-stage, unknown, or inconsistent history still protects it.
+    const terminalOnly = retentionStatus(row.status) !== 'evaluated' && history.every(cells =>
+      cells.length >= 5 && dateOrdinal(cells[1]) != null && dateOrdinal(cells[1]) <= asOf
+      && RETENTION_STATUSES.has(retentionStatus(cells[2])) && RETENTION_STATUSES.has(retentionStatus(cells[3])))
+      && (!history.length || retentionStatus(history.at(-1)[3]) === retentionStatus(row.status));
+    if (history.length && !terminalOnly) {
       protectedRows.push(protectedItem(row, 'STATUS_HISTORY'));
       continue;
     }
@@ -246,6 +257,7 @@ export function buildEvaluatedRetentionPlan({
 
     cleaned.push({
       tracker_number: row.number,
+      status: row.status,
       tracker_raw: row.raw,
       report_path: row.report_path,
       report_file: reportFile,
@@ -267,6 +279,8 @@ export function buildEvaluatedRetentionPlan({
     ttl_days: ttlDays,
     cutoff_date: ordinalDate(asOf - ttlDays),
     evaluated_count: rows.filter(item => item.status === 'Evaluated').length,
+    candidate_status_counts: Object.fromEntries([...RETENTION_STATUSES].map(status =>
+      [status, candidates.filter(row => retentionStatus(row.status) === status).length])),
     expired_count: expiredCount,
     cleaned,
     protected: protectedRows,
@@ -350,12 +364,14 @@ function auditValue(runRoot, plan) {
     ttl_days: plan.ttl_days,
     cutoff_date: plan.cutoff_date,
     evaluated_count: plan.evaluated_count,
+    candidate_status_counts: plan.candidate_status_counts,
     expired_count: plan.expired_count,
     cleaned_count: plan.cleaned.length,
     protected_count: plan.protected.length,
     protected_reason_counts: plan.protected_reason_counts,
     cleaned: plan.cleaned.map(item => ({
       tracker_number: item.tracker_number,
+      status: item.status,
       posting_key: item.posting_key,
       posting_url: item.posting_url,
       run_id: item.run_id,
@@ -426,7 +442,7 @@ async function reconcileRecovery({ recoveryRoot, auditFile, careerRoot, paths, i
       restoreFiles(manifest);
       interfaces.syncTracker();
       const check = interfaces.pipelineCheck();
-      if (check.exit_code !== 0 || check.errors) throw new Error('pipeline verification failed after evaluated-retention recovery');
+      if (check.exit_code !== 0 || check.errors || check.warnings !== 0) throw new Error('pipeline verification failed after evaluated-retention recovery');
     });
   } finally {
     transaction.close();
@@ -485,7 +501,7 @@ export async function cleanupExpiredEvaluated({
           api.writeFileAtomic(paths.scanHistory, nextHistory);
           api.syncTracker();
           const check = api.pipelineCheck();
-          if (check.exit_code !== 0 || check.errors) throw new Error('pipeline verification failed after evaluated-retention cleanup');
+          if (check.exit_code !== 0 || check.errors || check.warnings !== 0) throw new Error('pipeline verification failed after evaluated-retention cleanup');
           createJson(auditFile, audit);
         } catch (error) {
           try {
@@ -494,7 +510,7 @@ export async function cleanupExpiredEvaluated({
             restoreFiles(manifest);
             api.syncTracker();
             const check = api.pipelineCheck();
-            if (check.exit_code !== 0 || check.errors) throw new Error('pipeline verification failed after cleanup rollback');
+            if (check.exit_code !== 0 || check.errors || check.warnings !== 0) throw new Error('pipeline verification failed after cleanup rollback');
             rmSync(recoveryRoot, { recursive: true, force: true });
           } catch (rollbackError) {
             error.message += `; rollback failed: ${rollbackError.message}; recovery retained at ${recoveryRoot}`;
