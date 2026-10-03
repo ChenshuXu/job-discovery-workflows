@@ -4,6 +4,18 @@
 
 这是 [Job Discovery Workflows](https://github.com/ChenshuXu/job-discovery-workflows) 的本地发布候选，包含全部现有功能。使用 [MIT 许可证](LICENSE)，附[第三方声明](THIRD_PARTY_NOTICES.md)。已完成一定范围的安装、宿主、账户及 Word 检查，具体结果和剩余限制见下方。
 
+## 依赖与致谢
+
+Job Discovery 基于以下开源项目构建。感谢这些项目的维护者和贡献者，为本项目的工作流提供支持。
+
+| 项目 | 在 Job Discovery 中的作用 |
+| --- | --- |
+| [Career-Ops](https://github.com/career-ops-hq/career-ops) | 管理候选人资料、岗位评估、报告和申请状态，并提供工作流使用的数据与写入接口。 |
+| [JobSpy](https://github.com/speedyapply/JobSpy) | 提供职位网站采集能力，用于 JobSpy 采集来源。 |
+| [Ego Lite](https://github.com/citrolabs/ego-lite) | 提供浏览器及 `ego-browser` 集成，支持需要登录的岗位发现、面试研究和申请流程。 |
+
+这些依赖需要单独安装。安装说明见[外部依赖](#外部依赖是什么)，许可证信息见[第三方声明](THIRD_PARTY_NOTICES.md)。
+
 ## 功能与依赖
 
 | 功能 | 依赖 |

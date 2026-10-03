@@ -7,6 +7,20 @@ All existing workflows are included. Licensed under [MIT](LICENSE), with
 [third-party notices](THIRD_PARTY_NOTICES.md). Bounded installation, host, account and
 Word checks are recorded below, together with the remaining release limitations.
 
+## Built with
+
+Job Discovery builds on these open-source projects. Thanks to their maintainers and
+contributors for the tools that make these workflows possible.
+
+| Project | Role in Job Discovery |
+| --- | --- |
+| [Career-Ops](https://github.com/career-ops-hq/career-ops) | Manages candidate profiles, evaluations, reports and application status; provides the data and writer interfaces used by our workflows. |
+| [JobSpy](https://github.com/speedyapply/JobSpy) | Provides job-board scraping for the JobSpy acquisition source. |
+| [Ego Lite](https://github.com/citrolabs/ego-lite) | Provides the browser and `ego-browser` integration for authenticated job discovery, research and application workflows. |
+
+These dependencies are installed separately. See [dependency setup](#external-dependencies)
+and [third-party notices](THIRD_PARTY_NOTICES.md) for installation details and licenses.
+
 ## Features
 
 | Workflow | Dependencies |
