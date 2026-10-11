@@ -276,7 +276,20 @@ agreement between report/tracker URL, posting key and report link. Failed proofs
 that candidate's report without changing the live tracker. The key appears only in
 `receipt.json.job_issues`, never in persisted JD/history or a placeholder/recovery queue.
 Concurrent tracker changes stop commit; there is no automatic rebase. The derived SQLite
-index synchronizes once after the canonical Markdown set succeeds.
+index synchronizes once on the normal successful path after the canonical Markdown
+set succeeds. If compensation removes owned rows or follows an attempted index
+sync, the committer runs official `tracker.mjs sync` again against the compensated
+Markdown. It never restores a whole SQLite snapshot over other writers' changes.
+An unsuccessful compensating sync remains a system error even when the later
+pipeline health check passes; health alone does not verify SQLite contents.
+
+On a handled commit failure, `commit-failure.json` preserves the original failed
+closeout audit before compensation, its exact warnings and identity evidence,
+each compensation stage and index-sync result, and the post-compensation audit.
+The FAILED receipt links that artifact and retains pre-rollback health; if saving
+the artifact fails, available evidence is embedded in the emergency receipt.
+Inspect these records before recovering an interrupted or failed run. A killed
+process may still require manual recovery; an absent record is not rollback proof.
 
 At baseline and closeout, Job Discovery checks Career-Ops health. Its title-only
 duplicate warnings are resolved only when every reported member has a distinct

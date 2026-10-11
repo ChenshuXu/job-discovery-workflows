@@ -397,31 +397,83 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
   const ownedTrackerRows = [];
   let historyWritten = false;
   let mappingWritten = false;
+  let trackerSyncAttempted = false;
   let finalizationStarted = false;
   let run;
   let results;
   let issues = [];
   let eligible = [];
+  const failureFile = path.join(runRoot, 'commit-failure.json');
+  let failureEvidenceSaved = false;
+  const failureEvidence = {
+    schema_version: 1, run_id: path.basename(runRoot),
+    trigger_errors: [], before_rollback: null, rollback_attempts: [], after_rollback: null,
+  };
+
+  const saveFailureEvidence = errors => {
+    try { atomicJson(failureFile, failureEvidence); failureEvidenceSaved = true; }
+    catch (error) {
+      failureEvidenceSaved = false;
+      const message = `commit failure diagnostics could not be saved: ${error.message}`;
+      if (!errors.includes(message)) errors.push(message);
+    }
+  };
+
+  const attachFailureEvidence = receipt => {
+    if (failureEvidence.before_rollback?.career_ops_pipeline?.after) {
+      receipt.career_ops_pipeline = { ...receipt.career_ops_pipeline,
+        before_rollback: failureEvidence.before_rollback.career_ops_pipeline.after };
+    }
+    receipt.commit_failure = {
+      artifact: existsSync(failureFile) ? 'commit-failure.json' : null,
+      rollback_attempts: failureEvidence.rollback_attempts,
+      // The emergency path must retain the original audit even if the separate
+      // diagnostic artifact or the post-compensation audit cannot be written.
+      ...(failureEvidenceSaved ? {} : { evidence: failureEvidence }),
+    };
+    return receipt;
+  };
 
   const restoreTransaction = async () => {
+    const attempt = { status: 'IN_PROGRESS', tracker_rows: ownedTrackerRows.length,
+      tracker_compensation: 'NOT_STARTED', history_compensation: 'NOT_STARTED',
+      files_compensation: 'NOT_STARTED', tracker_index_sync: 'NOT_REQUIRED', errors: [] };
+    failureEvidence.rollback_attempts.push(attempt);
+    const syncRequired = trackerSyncAttempted || ownedTrackerRows.length > 0;
     try {
       await removeOwnedTrackerRows(trackerFile, ownedTrackerRows, trackerUtils.openTrackerTransaction);
-    } catch (error) {
-      throw new Error(`tracker compensation failed: ${error.message}`);
-    }
-    ownedTrackerRows.length = 0;
-    if (historyWritten) {
-      try {
+      attempt.tracker_compensation = 'COMPLETE';
+      ownedTrackerRows.length = 0;
+      if (historyWritten) {
         await compensateHistory(scanHistoryFile, path.basename(runRoot), pipelineLock, trackerUtils.writeFileAtomic);
-      } catch (error) {
-        throw new Error(`scan-history compensation failed: ${error.message}`);
       }
+      attempt.history_compensation = 'COMPLETE';
+      historyWritten = false;
+      for (const file of createdPaths) rmSync(file, { recursive: true, force: true });
+      createdPaths.clear();
+      if (mappingWritten) rmSync(mappingFile, { force: true });
+      mappingWritten = false;
+      attempt.files_compensation = 'COMPLETE';
+      if (syncRequired) {
+        attempt.tracker_index_sync = 'IN_PROGRESS';
+        trackerSyncAttempted = true;
+        // SQLite is derived state: rebuild it through the canonical writer from
+        // the compensated tracker, never restore a whole index snapshot.
+        runCareerCommand(careerRoot, 'tracker.mjs', ['sync'], { CAREER_OPS_TRACKER: trackerFile });
+        attempt.tracker_index_sync = 'COMPLETE';
+        trackerSyncAttempted = false;
+      }
+      attempt.status = 'COMPLETE';
+    } catch (error) {
+      const stage = attempt.tracker_compensation !== 'COMPLETE' ? 'tracker compensation'
+        : attempt.history_compensation !== 'COMPLETE' ? 'scan-history compensation'
+          : attempt.files_compensation !== 'COMPLETE' ? 'file compensation' : 'rollback tracker index sync';
+      attempt.status = 'FAILED';
+      if (attempt.tracker_index_sync === 'IN_PROGRESS') attempt.tracker_index_sync = 'FAILED';
+      const message = `${stage} failed: ${error.message}`;
+      attempt.errors.push(message);
+      throw new Error(message);
     }
-    historyWritten = false;
-    for (const file of createdPaths) rmSync(file, { recursive: true, force: true });
-    createdPaths.clear();
-    if (mappingWritten) rmSync(mappingFile, { force: true });
-    mappingWritten = false;
   };
 
   const emergencyFailedReceipt = systemErrors => {
@@ -446,13 +498,18 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
       system_errors: systemErrors.map(String),
       errors: systemErrors.map(String),
     };
-    return writeReceiptCreateOnly(receiptFile, receipt);
+    return writeReceiptCreateOnly(receiptFile, attachFailureEvidence(receipt));
   };
 
   const failedReceipt = async (systemErrors = []) => {
     const errors = [...systemErrors];
+    failureEvidence.trigger_errors = [...systemErrors];
+    // Preserve the failing observation before compensation can remove the
+    // warning's source or a second verifier call can replace the evidence.
+    saveFailureEvidence(errors);
     try { await restoreTransaction(); }
     catch (error) { errors.push(error.message); }
+    saveFailureEvidence(errors);
     try {
       const audited = await auditScanReceipt({
         runRoot,
@@ -465,9 +522,17 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
         systemErrors: errors,
         requirePersistence: false,
       });
-      return writeReceiptCreateOnly(audited.receiptFile, audited.receipt);
+      failureEvidence.after_rollback = { career_ops_pipeline: audited.receipt.career_ops_pipeline,
+        errors: audited.receipt.errors };
+      saveFailureEvidence(errors);
+      audited.receipt.system_errors = [...errors];
+      audited.receipt.errors = [...new Set([...audited.receipt.errors, ...errors])].sort();
+      audited.receipt.status = 'FAILED';
+      return writeReceiptCreateOnly(audited.receiptFile, attachFailureEvidence(audited.receipt));
     } catch (error) {
       if (existsSync(receiptFile)) throw error;
+      failureEvidence.after_rollback = { error: error.message };
+      saveFailureEvidence(errors);
       return emergencyFailedReceipt([...errors, `receipt verification failed: ${error.message}`]);
     }
   };
@@ -600,6 +665,7 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
         }
         throw error;
       }
+      trackerSyncAttempted = true;
       runCareerCommand(careerRoot, 'tracker.mjs', ['sync'], { CAREER_OPS_TRACKER: trackerFile });
       atomicJson(mappingFile, { schema_version: 1, run_id: path.basename(runRoot), reports: rendered });
       mappingWritten = true;
@@ -618,6 +684,7 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
         scanWriter.appendScanRunSummary(persisted.scan_run_summary, resolveCareerPaths(careerRoot).scanRunsFile);
         return writeReceiptCreateOnly(audited.receiptFile, audited.receipt);
       }
+      failureEvidence.before_rollback = audited.receipt;
       throw new Error(`closeout verification failed: ${audited.receipt.errors.join('; ')}`);
     }
     throw new Error('candidate isolation retry bound exceeded');
