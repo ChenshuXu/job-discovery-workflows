@@ -2,7 +2,7 @@
 
 [中文](README.zh-CN.md)
 
-Local release candidate for [Job Discovery Workflows](https://github.com/ChenshuXu/job-discovery-workflows).
+[Job Discovery Workflows](https://github.com/ChenshuXu/job-discovery-workflows).
 All existing workflows are included. Licensed under [MIT](LICENSE), with
 [third-party notices](THIRD_PARTY_NOTICES.md). Bounded installation, host, account and
 Word checks are recorded below, together with the remaining release limitations.
@@ -267,7 +267,7 @@ Use sibling repositories under any local workspace:
 
 ```text
 workspace/
-  job-discovery/       this candidate (you may rename job-discovery-public)
+  job-discovery/       clone of the public repository
   career-ops/          code and your private profile/data
   JobSpy/.venv/        dedicated Python environment
   career-docs/           private interview workspace
@@ -390,6 +390,16 @@ be replaced with the exact reviewed run/posting identities, never guessed by tit
 
 The initial code snapshot is published. Validation covers the checks listed here;
 it does not establish complete online workflow coverage.
+The 2026-10-11 update passed **306/306** isolated public tests and the full
+Career-Ops integration E2E: **374 assertions across 151 CLI calls** with fictional
+data and installed upstream writers. It includes code/data-root separation,
+blacklist holds, v6 reports with canonical reason forecasts and fixed-term JD
+evidence, immutable report expansion, archive compatibility and failure compensation.
+The E2E fixtures work in both the development and public layouts. Reproduce with
+`npm run test:career-ops:e2e -- --out <fresh-absolute-directory>` after installing
+Career-Ops dependencies and configuring the local runtime. Live source coverage,
+model judgment quality and application submission were not tested for this update.
+
 The 2026-10-02 update passed **303/303** isolated public tests and **306/306**
 development tests; the Daily Scan suite passed **197/197**. This update covers
 posting-identity health checks, retention and interview-research guidance. Online

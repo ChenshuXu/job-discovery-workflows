@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-这是 [Job Discovery Workflows](https://github.com/ChenshuXu/job-discovery-workflows) 的本地发布候选，包含全部现有功能。使用 [MIT 许可证](LICENSE)，附[第三方声明](THIRD_PARTY_NOTICES.md)。已完成一定范围的安装、宿主、账户及 Word 检查，具体结果和剩余限制见下方。
+这是 [Job Discovery Workflows](https://github.com/ChenshuXu/job-discovery-workflows)，包含全部现有功能。使用 [MIT 许可证](LICENSE)，附[第三方声明](THIRD_PARTY_NOTICES.md)。已完成一定范围的安装、宿主、账户及 Word 检查，具体结果和剩余限制见下方。
 
 ## 依赖与致谢
 
@@ -160,7 +160,7 @@ career-docs/
 
 ```text
 workspace/
-  job-discovery/       本候选目录，可将 job-discovery-public 改名
+  job-discovery/       从公开仓库 clone 的目录
   career-ops/          代码和个人资料/数据
   JobSpy/.venv/        独立 Python 环境
   career-docs/           私有面试工作区
@@ -230,6 +230,8 @@ npm test
 ## 发布验证与限制
 
 初始代码快照已发布；验收仅覆盖下列检查，不代表完整线上工作流均已验证。
+
+2026-10-11 更新通过公开隔离测试 **306/306**，以及使用虚构数据和已安装上游 writer 的完整 Career-Ops 集成 E2E：**151 次 CLI、374 项断言**。包含代码/数据根分离、黑名单 hold、标准原因与固定期限 JD 证据的 v6 报告、展开时的不可变字段保护、归档兼容和失败补偿。E2E 示例兼容开发版与公开版布局；安装 Career-Ops 依赖并配置本地 runtime 后，可用 `npm run test:career-ops:e2e -- --out <新的绝对路径目录>` 复跑。本次未验证真实来源覆盖、模型判断质量或申请提交。
 
 2026-10-02 更新通过公开隔离测试 **303/303**、开发仓库测试 **306/306** 和 Daily Scan 测试 **197/197**，覆盖 posting identity 健康检查、retention 和面试调研指导；本次未重跑线上工作流。
 
