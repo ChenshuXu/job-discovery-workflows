@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { careerOpsCodeRoot } from '../src/career-ops-paths.mjs';
 
 export const DISCOVERY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+export const PUBLIC_FIXTURE_ROOT = existsSync(path.join(DISCOVERY_ROOT, 'release/overrides/examples'))
+  ? path.join(DISCOVERY_ROOT, 'release/overrides') : DISCOVERY_ROOT;
 export const sha256 = value => createHash('sha256').update(value).digest('hex');
 export const EMPTY_TRACKER = '# Applications\n\n| # | Company | Role | Location | Salary | Score | Status | Date | CV | Report | Via | Contact | Notes |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|\n';
 

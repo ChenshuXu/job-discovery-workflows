@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { createCareerFixture, DISCOVERY_ROOT, sha256, treeManifest } from './e2e-career-fixture.mjs';
+import { createCareerFixture, DISCOVERY_ROOT, PUBLIC_FIXTURE_ROOT, sha256, treeManifest } from './e2e-career-fixture.mjs';
 import { SCAN_DATE, seedCandidate, seedScan, writeScoreParts, mergeAll } from './e2e-scan-inputs.mjs';
 
 const at = process.argv.indexOf('--out');
@@ -67,7 +67,7 @@ try {
   const tracker = readFileSync(path.join(fx.dataRoot, 'data/applications.md'), 'utf8');
   fx.check('tracker preserves scores with no blocked row', !tracker.includes('89000001') && tracker.includes('4.2'));
 
-  const active = fx.write(path.join(fx.root, 'active-interviews.md'), readFileSync(path.join(DISCOVERY_ROOT, 'release/overrides/examples/active-interviews.md'), 'utf8'));
+  const active = fx.write(path.join(fx.root, 'active-interviews.md'), readFileSync(path.join(PUBLIC_FIXTURE_ROOT, 'examples/active-interviews.md'), 'utf8'));
   const batch = path.join(DISCOVERY_ROOT, '.agents/skills/career-ops-ego-apply/scripts/application-batch.mjs');
   const batchArgs = ['--career-ops', fx.codeRoot, '--active-interviews', active, '--runs-root', path.dirname(runRoot), '--run', path.basename(runRoot), '--json'];
   fx.write(blacklistFile, initial + '| Allowed Co | 2026-10-03 | company | Added before application |\n');

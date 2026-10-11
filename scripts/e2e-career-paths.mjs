@@ -1,7 +1,7 @@
 import { cpSync, existsSync, readFileSync, readdirSync, realpathSync, symlinkSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createCareerFixture, DISCOVERY_ROOT, EMPTY_TRACKER, treeManifest } from './e2e-career-fixture.mjs';
+import { createCareerFixture, DISCOVERY_ROOT, PUBLIC_FIXTURE_ROOT, EMPTY_TRACKER, treeManifest } from './e2e-career-fixture.mjs';
 import { seedCandidate } from './e2e-scan-inputs.mjs';
 
 const moduleUrl = file => pathToFileURL(path.join(DISCOVERY_ROOT, file)).href;
@@ -114,7 +114,7 @@ export function runPathsE2E({ outRoot, sourceRoot } = {}) {
     check('setup diagnoses candidate files in data root', ['candidate:cv','candidate:profile','candidate:profile-summary'].every(id=>setup.checks.find(item=>item.id===id)?.status==='present'));
     if (scenario === 'external-tracker') {
       const docs = path.join(root,'career-docs');
-      const register = write(path.join(docs,'context/Interview/active-interviews.md'),readFileSync(path.join(DISCOVERY_ROOT,'release/overrides/examples/active-interviews.md'),'utf8'));
+      const register = write(path.join(docs,'context/Interview/active-interviews.md'),readFileSync(path.join(PUBLIC_FIXTURE_ROOT,'examples/active-interviews.md'),'utf8'));
       write(path.join(root,'runs/path-e2e/receipt.json'),{status:'COMPLETE',run_id:'path-e2e',reports:[
         {posting_key:key,report_number:result.numbers[0],report_path:result.reportPath},
         {posting_key:key.replace('9001','9002'),report_number:secondResult.numbers[0],report_path:secondResult.reportPath},
@@ -155,7 +155,7 @@ export function runPathsE2E({ outRoot, sourceRoot } = {}) {
   cpSync(path.join(DISCOVERY_ROOT,'test/fixtures/config'),path.join(discovery,'config'),{recursive:true});
   for(const name of readdirSync(path.join(DISCOVERY_ROOT,'config')).filter(name=>name.endsWith('.md')))
     cpSync(path.join(DISCOVERY_ROOT,'config',name),path.join(discovery,'config',name));
-  const config=JSON.parse(readFileSync(path.join(DISCOVERY_ROOT,'release/overrides/linkedin-post-scan/config/post-scan.example.json'),'utf8'));
+  const config=JSON.parse(readFileSync(path.join(PUBLIC_FIXTURE_ROOT,'linkedin-post-scan/config/post-scan.example.json'),'utf8'));
   config.paths={career_ops_root:post.codeRoot,cv:path.join(post.codeRoot,'cv.md'),profile:path.join(post.codeRoot,'config/profile.yml'),
     employer_exclusions:path.join(discovery,'config/jobspy-ego.json'),daily_scan_runtime:path.join(discovery,'config/daily-scan-runtime.json')};
   const configFile=post.write(path.join(discovery,'linkedin-post-scan/config/post-scan.json'),config);
