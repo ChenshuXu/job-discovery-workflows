@@ -1,9 +1,10 @@
+import { resolveCareerPaths, careerOpsCodeRoot } from '../career-ops-paths.mjs';
 import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 
-export const CAREER_OPS_ROOT = resolve(process.env.CAREER_OPS_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), '../../../career-ops'));
-export const DEFAULT_CV_PATH = resolve(CAREER_OPS_ROOT, 'cv.md');
+// Kept as a code-root export for existing resume callers.
+export const CAREER_OPS_ROOT = careerOpsCodeRoot();
+export const DEFAULT_CV_PATH = resolveCareerPaths(CAREER_OPS_ROOT).cvFile;
 
 export function normalizeSpace(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim();

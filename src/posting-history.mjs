@@ -1,3 +1,4 @@
+import { resolveCareerPaths } from './career-ops-paths.mjs';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { extractPostingIdentity, postingKey } from './posting-identity.mjs';
@@ -10,20 +11,10 @@ function filesBelow(root) {
   return readdirSync(root, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? filesBelow(path.join(root, entry.name)) : [path.join(root, entry.name)]);
 }
 
-function configuredPath(root, value, fallback) {
-  const selected = value || fallback;
-  return path.isAbsolute(selected) ? path.normalize(selected) : path.resolve(root, selected);
-}
-
-function trackerPath(root) {
-  if (process.env.CAREER_OPS_TRACKER) return configuredPath(root, process.env.CAREER_OPS_TRACKER, 'data/applications.md');
-  const dataLayout = path.join(root, 'data/applications.md');
-  return existsSync(dataLayout) ? dataLayout : path.join(root, 'applications.md');
-}
-
 /** Only committed Career-Ops state is history. Failed Job Discovery runs never suppress a retry. */
 export function collectHistoricalPostingKeys({ careerRoot, greenhouseKeys = [] }) {
-  const root = path.resolve(careerRoot);
+  const paths = resolveCareerPaths(careerRoot);
+  const root = paths.dataRoot;
   const found = new Map();
   const concreteGreenhouse = [...new Set(greenhouseKeys)].flatMap(key => {
     const match = String(key).match(/^greenhouse:([a-z0-9][a-z0-9_-]*):(\d+)$/i);
@@ -36,9 +27,9 @@ export function collectHistoricalPostingKeys({ careerRoot, greenhouseKeys = [] }
     found.get(key).push(artifact);
   };
   const surfaces = [
-    configuredPath(root, process.env.CAREER_OPS_PIPELINE, 'data/pipeline.md'),
-    configuredPath(root, process.env.CAREER_OPS_SCAN_HISTORY, 'data/scan-history.tsv'),
-    trackerPath(root),
+    paths.pipelineFile,
+    paths.scanHistoryFile,
+    paths.trackerFile,
     path.join(root, 'reports'),
   ];
   for (const surface of [...new Set(surfaces)]) {
@@ -79,8 +70,7 @@ export function collectHistoricalPostingKeys({ careerRoot, greenhouseKeys = [] }
 
 const markdownField = (text, name) => String(text).match(new RegExp(`^\\*\\*${name}:\\*\\*[ \\t]*([^\\r\\n]*)\\r?$`, 'mi'))?.[1]?.trim() ?? '';
 
-function committedDailyScanKeys(root) {
-  const file = configuredPath(root, process.env.CAREER_OPS_SCAN_HISTORY, 'data/scan-history.tsv');
+function committedDailyScanKeys(file) {
   if (!existsSync(file)) return new Map();
   const found = new Map();
   for (const line of readFileSync(file, 'utf8').split(/\r?\n/).slice(1)) {
@@ -96,8 +86,9 @@ function committedDailyScanKeys(root) {
 
 /** Rebuild semantic/context history only from a Daily Scan row that also has its committed JD. */
 export function collectHistoricalSemanticContexts({ careerRoot, locationPolicy }) {
-  const root = path.resolve(careerRoot);
-  const committed = committedDailyScanKeys(root);
+  const paths = resolveCareerPaths(careerRoot);
+  const root = paths.dataRoot;
+  const committed = committedDailyScanKeys(paths.scanHistoryFile);
   const found = new Map();
   for (const file of filesBelow(path.join(root, 'jds')).filter(item => /\/discovery-[^/]+\.md$/i.test(item)).sort()) {
     const text = readFileSync(file, 'utf8');

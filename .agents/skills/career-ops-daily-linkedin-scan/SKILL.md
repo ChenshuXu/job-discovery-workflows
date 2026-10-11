@@ -75,12 +75,17 @@ path in place of `../career-ops` if the repositories are not siblings.
    node src/plan-scan-evaluations.mjs --run runs/$RUN_ID --career-ops ../career-ops
    ```
 
-   The planner owns location/history/semantic partitions and candidate-source hashes.
+   The planner owns location/history/semantic partitions and separately locks candidate facts and scoring rules.
+   It checks Career-Ops `data/blacklist.md` through the canonical matcher before
+   assignments and records holds/reasons in `triage/blacklist.json`. Continue
+   unmatched jobs. Only explicit user exceptions for exact keys authorize
+   `--allow-blacklisted key1,key2`; never use it merely to finish a scan. The list
+   is hash-locked and rechecked before persistence.
    A changed policy or locked candidate source invalidates the run; do not rewrite its snapshot.
 5. Read `assignments.json`. Treat the `assignments.json.runtime` snapshot as the sole source of truth.
    Create `results/`, then dispatch non-empty assignments under the contract's worker
    delegation rules. Workers follow `config/worker-prompt.md` and own JD review,
-   structured v4 parts, validation, and deterministic merge. Use that merger for empty
+   structured v6 parts, validation, and deterministic merge. Use that merger for empty
    assignments too; the coordinator inspects completion and targeted failures.
    Bind actual worker UUIDs immediately using the delegation contract; empty assignments
    need no model binding. Send paths and ownership, not copied scoring rules or parent history.

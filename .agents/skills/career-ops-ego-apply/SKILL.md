@@ -36,6 +36,22 @@ Keep only current-task state for each frozen ID: `preparing`, `waiting_for_answe
 
 ## Resolve application answers
 
+Before form preparation and immediately before each final submission, run:
+
+```bash
+node src/career-ops-blacklist.mjs --career-ops ../career-ops \
+  --company "Exact company" --url "https://official.example/job" --posting-key "exact:posting:key"
+```
+
+`REQUIRES_USER_OVERRIDE` holds that item: show the matched entry and recorded
+reason and ask whether the user explicitly wants this exact posting. Selecting
+a job or a batch does not waive a blacklist entry. Only after that exception,
+add `--allow-blacklisted` with the exact key; the batch planner accepts a
+comma-separated list of individually authorized keys. Recheck the current list
+and destination before Submit. Holds never change fit scores or application
+status, and never edit the blacklist. The batch planner applies the same gate
+before returning selectable waves.
+
 Before filling visible questions, read [application-answers.md](references/application-answers.md).
 It owns `resolve` → optional `search` → `lookup`, approved aliases, narrow deductions,
 and verified writes. Only `exact` or permitted `deduced` resolves a material field;

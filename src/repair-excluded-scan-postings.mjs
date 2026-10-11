@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { resolveCareerPaths } from './career-ops-paths.mjs';
 // A bounded correction of persisted acquisition exclusions. Original runs are immutable.
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -58,7 +59,7 @@ function identityReferenced(text, record) {
 }
 
 function configured(careerRoot, environment, fallback) {
-  return path.resolve(careerRoot, process.env[environment] || fallback);
+  return process.env[environment] ? path.resolve(careerRoot, process.env[environment]) : path.resolve(resolveCareerPaths(careerRoot).dataRoot, fallback);
 }
 
 function buildPlan({ runRoot, careerRoot, manifest, interfaces, trackerText }) {
@@ -71,18 +72,18 @@ function buildPlan({ runRoot, careerRoot, manifest, interfaces, trackerText }) {
   if (receipt.status !== 'COMPLETE' || receipt.run_id !== manifest.run_id || receipt.terminal_equation?.valid !== true
       || assignments.run_id !== manifest.run_id || path.resolve(assignments.career_ops_root) !== careerRoot
       || acquisition.run_id !== manifest.run_id) throw new Error('completed run/Career-Ops identity is not reconciled');
-  const archiveRoot = path.join(careerRoot, 'data/daily-scan-corrections', manifest.run_id, 'excluded-employers');
+  const archiveRoot = path.join(resolveCareerPaths(careerRoot).dataRoot, 'data/daily-scan-corrections', manifest.run_id, 'excluded-employers');
   safePath(archiveRoot, { missing: true, directory: true });
   if (existsSync(archiveRoot)) throw new Error('preexisting correction archive requires review; correction is create-only');
-  const trackerFile = safePath(interfaces.trackerUtils.resolveTrackerPath(careerRoot));
+  const trackerFile = safePath(resolveCareerPaths(careerRoot).trackerFile);
   if (trackerText !== undefined && trackerText !== read(trackerFile)) throw new Error('tracker changed during locked read');
-  const historyFile = containedFile(careerRoot, path.relative(careerRoot, configured(careerRoot, 'CAREER_OPS_SCAN_HISTORY', 'data/scan-history.tsv')));
+  const historyFile = safePath(resolveCareerPaths(careerRoot).scanHistoryFile);
   const historyText = read(historyFile), historySegments = historyText.match(/[^\n]*\n|[^\n]+$/g) ?? [];
   const history = historySegments.map((segment, index) => ({ segment, index, line: segment.replace(/\r?\n$/, ''), cells: segment.replace(/\r?\n$/, '').split('\t') }));
   const support = [trackerFile, configured(careerRoot, 'CAREER_OPS_PIPELINE', 'data/pipeline.md'),
     configured(careerRoot, 'CAREER_OPS_FOLLOWUPS', 'data/follow-ups.md'), path.join(path.dirname(trackerFile), 'status-log.tsv'),
-    configured(careerRoot, 'CAREER_OPS_ACTIVE_INTERVIEWS', '../career-docs/context/Interview/active-interviews.md')];
-  const reports = referenceFiles(path.join(careerRoot, 'reports')), jds = referenceFiles(path.join(careerRoot, 'jds'));
+    path.resolve(careerRoot, process.env.CAREER_OPS_ACTIVE_INTERVIEWS || '../career-docs/context/Interview/active-interviews.md')];
+  const reports = referenceFiles(resolveCareerPaths(careerRoot).reportsRoot), jds = referenceFiles(resolveCareerPaths(careerRoot).jdsRoot);
   const configs = ['jobspy-ego.json', 'jobright.json'].map(name => safePath(path.join(moduleRoot, '../config', name)));
   const rules = configs.map(file => json(file).employer_exclusions.filter(rule => rule.id !== 'jobright-ai'));
   if (JSON.stringify(rules[0]) !== JSON.stringify(rules[1])) throw new Error('shared employer exclusion configs have drifted');
@@ -92,7 +93,7 @@ function buildPlan({ runRoot, careerRoot, manifest, interfaces, trackerText }) {
     if (receipt.committed_evaluated_keys?.filter(value => value === key).length !== 1 || receipt.job_issue_keys?.includes(key)
         || receipt.reports?.some(item => item.posting_key === key)) throw new Error(`${key}: not an unreported committed posting`);
     const record = exact(acquisition.acquired.filter(item => item.primary_key === key), `${key}: acquisition`);
-    const sourceFile = containedFile(runRoot, record.jd_path), jdFile = containedFile(careerRoot, `jds/discovery-${manifest.run_id}-${safeKey(key)}.md`);
+    const sourceFile = containedFile(runRoot, record.jd_path), jdFile = containedFile(resolveCareerPaths(careerRoot).dataRoot, `jds/discovery-${manifest.run_id}-${safeKey(key)}.md`);
     const sourceText = read(sourceFile), jdText = read(jdFile);
     if (sourceText !== jdText || field(jdText, 'Posting Key') !== key || field(jdText, 'URL') !== record.primary_url
         || field(jdText, 'Discovery Run') !== manifest.run_id || canonical(record.primary_url) !== key) throw new Error(`${key}: frozen/persisted JD identity or bytes changed`);
@@ -127,7 +128,7 @@ function buildPlan({ runRoot, careerRoot, manifest, interfaces, trackerText }) {
 
 function verifyInputs(plan, changed = new Set()) {
   for (const [name, expected] of [['reports', plan.reports_catalog], ['jds', plan.jds_catalog.filter(file => !changed.has(file))]]) {
-    if (JSON.stringify(referenceFiles(path.join(plan.career_ops_root, name))) !== JSON.stringify(expected)) throw new Error(`correction ${name} catalog changed`);
+    if (JSON.stringify(referenceFiles(path.join(resolveCareerPaths(plan.career_ops_root).dataRoot, name))) !== JSON.stringify(expected)) throw new Error(`correction ${name} catalog changed`);
   }
   for (const input of plan.input_hashes.filter(input => !changed.has(input.path))) {
     safePath(input.path, { missing: true });
@@ -140,9 +141,9 @@ export async function repairExcludedScanPostings({ runRoot, careerRoot, manifest
   const api = interfaces ?? await loadCareerInterfaces(careerRoot);
   if (!apply) return { applied: false, ...buildPlan({ runRoot, careerRoot, manifest, interfaces: api }).plan };
   if (!/^[a-f0-9]{64}$/.test(expectedPlanHash ?? '')) throw new Error('apply requires the reviewed --expected-plan-hash');
-  const commitLock = await api.pipelineLock.acquirePipelineLock(path.join(careerRoot, '.daily-scan-commit'), { timeoutMs: 60_000, staleMs: 10 * 60_000 });
+  const commitLock = await api.pipelineLock.acquirePipelineLock(resolveCareerPaths(careerRoot).commitLockFile, { timeoutMs: 60_000, staleMs: 10 * 60_000 });
   try {
-    const transaction = await api.trackerUtils.openTrackerTransaction(api.trackerUtils.resolveTrackerPath(careerRoot));
+    const transaction = await api.trackerUtils.openTrackerTransaction(resolveCareerPaths(careerRoot).trackerFile);
     try {
       const historyFile = configured(careerRoot, 'CAREER_OPS_SCAN_HISTORY', 'data/scan-history.tsv');
       return await api.pipelineLock.withPipelineLock(historyFile, async () => {

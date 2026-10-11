@@ -1,3 +1,4 @@
+import { resolveCareerPaths, careerOpsEnv } from './career-ops-paths.mjs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import {
@@ -305,7 +306,7 @@ function runTrackerSync(careerRoot, trackerFile) {
   const result = spawnSync(process.execPath, ['tracker.mjs', 'sync'], {
     cwd: careerRoot,
     encoding: 'utf8',
-    env: { ...process.env, CAREER_OPS_TRACKER: trackerFile },
+    env: careerOpsEnv(careerRoot, { CAREER_OPS_TRACKER: trackerFile }),
   });
   if (result.status !== 0) throw new Error(`Career-Ops tracker sync failed: ${(result.stderr || result.stdout).trim()}`);
 }
@@ -322,7 +323,7 @@ async function loadCareerInterfaces(careerRoot) {
   const previous = process.cwd();
   process.chdir(careerRoot);
   let trackerFile;
-  try { trackerFile = trackerUtils.resolveTrackerPath(careerRoot); }
+  try { trackerFile = resolveCareerPaths(careerRoot).trackerFile; }
   finally { process.chdir(previous); }
   return {
     parser,
@@ -330,7 +331,7 @@ async function loadCareerInterfaces(careerRoot) {
     resolvePdfIndexPath: trackerUtils.resolvePdfIndexPath,
     openTrackerTransaction: trackerUtils.openTrackerTransaction,
     writeFileAtomic: trackerUtils.writeFileAtomic,
-    acquireCommitLock: () => pipelineLock.acquirePipelineLock(path.join(careerRoot, '.daily-scan-commit'), { timeoutMs: 60_000, staleMs: 10 * 60_000 }),
+    acquireCommitLock: () => pipelineLock.acquirePipelineLock(resolveCareerPaths(careerRoot).commitLockFile, { timeoutMs: 60_000, staleMs: 10 * 60_000 }),
     withHistoryLock: (file, fn) => pipelineLock.withPipelineLock(file, fn),
     syncTracker: () => runTrackerSync(careerRoot, trackerFile),
     pipelineCheck: () => runPipelineCheck(careerRoot, trackerFile),
@@ -338,19 +339,20 @@ async function loadCareerInterfaces(careerRoot) {
 }
 
 function supportPaths(careerRoot, trackerFile, resolvePdfIndexPath, overrides = {}) {
+  const paths = resolveCareerPaths(careerRoot);
   const workspace = path.dirname(careerRoot);
   const configured = (value, fallback) => path.isAbsolute(value || fallback)
     ? path.normalize(value || fallback)
     : path.resolve(careerRoot, value || fallback);
   return {
-    scanHistory: configured(process.env.CAREER_OPS_SCAN_HISTORY, 'data/scan-history.tsv'),
+    scanHistory: paths.scanHistoryFile,
     statusLog: path.join(path.dirname(trackerFile), 'status-log.tsv'),
-    followups: configured(process.env.CAREER_OPS_FOLLOWUPS, 'data/follow-ups.md'),
+    followups: paths.followupsFile,
     pdfIndex: resolvePdfIndexPath(trackerFile),
     activeInterviews: process.env.CAREER_OPS_ACTIVE_INTERVIEWS
       ? configured(process.env.CAREER_OPS_ACTIVE_INTERVIEWS, '')
       : path.join(workspace, 'career-docs/context/Interview/active-interviews.md'),
-    pipeline: configured(process.env.CAREER_OPS_PIPELINE, 'data/pipeline.md'),
+    pipeline: paths.pipelineFile,
     ...overrides,
   };
 }
@@ -454,11 +456,12 @@ export async function cleanupExpiredEvaluated({
   runRoot, careerRoot, asOfDate = localCalendarDate(), runtime = loadDailyScanRuntime(), interfaces = null, pathOverrides = {},
 }) {
   const run = path.resolve(runRoot);
-  const career = path.resolve(careerRoot);
+  const codeRoot = path.resolve(careerRoot);
+  const career = resolveCareerPaths(codeRoot).dataRoot;
   const auditFile = path.join(run, 'maintenance/evaluated-retention.json');
   mkdirSync(run, { recursive: true });
-  const api = interfaces ?? await loadCareerInterfaces(career);
-  const paths = supportPaths(career, api.trackerFile, api.resolvePdfIndexPath, pathOverrides);
+  const api = interfaces ?? await loadCareerInterfaces(codeRoot);
+  const paths = supportPaths(codeRoot, api.trackerFile, api.resolvePdfIndexPath, pathOverrides);
   const recoveryRoot = path.join(career, RECOVERY_NAME);
   const lock = await api.acquireCommitLock();
   try {

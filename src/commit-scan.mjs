@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { resolveCareerPaths, careerOpsEnv } from './career-ops-paths.mjs';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
@@ -14,6 +15,7 @@ import {
 import { evaluatePersistence, jobIssue, normalizeJobIssues } from './job-issue-policy.mjs';
 import { validateRun } from './run-contract.mjs';
 import { loadScanResults } from './scan-results.mjs';
+import { validateScoringInputs } from './scoring-inputs.mjs';
 import { renderScanReports } from './render-scan-reports.mjs';
 import { collectHistoricalSemanticContexts } from './posting-history.mjs';
 import {
@@ -148,7 +150,7 @@ export function runCareerCommand(careerRoot, script, args = [], env = {}) {
   const result = spawnSync(process.execPath, [script, ...args], {
     cwd: careerRoot,
     encoding: 'utf8',
-    env: { ...process.env, ...env },
+    env: careerOpsEnv(careerRoot, env),
   });
   if (result.status !== 0) throw new Error(`${script} failed: ${(result.stderr || result.stdout).trim()}`);
 }
@@ -189,23 +191,18 @@ async function loadScanWriter(careerRoot) {
   }
 }
 
-function resolveConfiguredCareerPath(careerRoot, configured, fallback) {
-  const value = configured || fallback;
-  return path.isAbsolute(value) ? path.normalize(value) : path.resolve(careerRoot, value);
-}
-
 function resolveOfficialTrackerPath(careerRoot, trackerUtils) {
   const previous = process.cwd();
   process.chdir(careerRoot);
   try {
-    return trackerUtils.resolveTrackerPath(careerRoot);
+    return resolveCareerPaths(careerRoot).trackerFile;
   } finally {
     process.chdir(previous);
   }
 }
 
-function copyCandidateWorkspace({ careerRoot, trackerText, report, additionFile, workspace }) {
-  const trackerFile = path.join(workspace, 'data/applications.md');
+function copyCandidateWorkspace({ careerRoot, actualTrackerFile, trackerText, report, additionFile, workspace }) {
+  const trackerFile = path.join(workspace, path.basename(path.dirname(actualTrackerFile)) === 'data' ? 'data/applications.md' : 'applications.md');
   const additionsDir = path.join(workspace, 'tracker-additions');
   const reportFile = path.resolve(workspace, report.report_path);
   if (!reportFile.startsWith(`${path.resolve(workspace)}${path.sep}`)) throw new Error('rendered report path escapes temporary workspace');
@@ -213,7 +210,7 @@ function copyCandidateWorkspace({ careerRoot, trackerText, report, additionFile,
   mkdirSync(additionsDir, { recursive: true });
   mkdirSync(path.dirname(reportFile), { recursive: true });
   writeFileSync(trackerFile, trackerText);
-  copyFileSync(path.join(careerRoot, report.report_path), reportFile);
+  copyFileSync(path.join(resolveCareerPaths(careerRoot).dataRoot, report.report_path), reportFile);
   copyFileSync(additionFile, path.join(additionsDir, path.basename(additionFile)));
   return { trackerFile, additionsDir };
 }
@@ -225,9 +222,11 @@ export async function appendCandidateTracker({
   const beforeText = readFileSync(trackerFile, 'utf8');
   const workspace = mkdtempSync(path.join(os.tmpdir(), 'daily-scan-merge-preview-'));
   try {
-    const preview = copyCandidateWorkspace({ careerRoot, trackerText: beforeText, report, additionFile, workspace });
+    const preview = copyCandidateWorkspace({ careerRoot, actualTrackerFile: trackerFile, trackerText: beforeText, report, additionFile, workspace });
     try {
       runCareerCommand(careerRoot, 'merge-tracker.mjs', [], {
+        CAREER_OPS_ROOT: workspace,
+        CAREER_OPS_DATA_DIR: workspace,
         CAREER_OPS_TRACKER: preview.trackerFile,
         CAREER_OPS_ADDITIONS: preview.additionsDir,
         CAREER_OPS_PDF_INDEX: path.join(workspace, 'data/disabled-pdf-index.tsv'),
@@ -236,8 +235,22 @@ export async function appendCandidateTracker({
     } catch (error) {
       throw new JobScopedCommitError(postingKey, 'TRACKER_MERGE_FAILED', error.message, { report_path: report.report_path });
     }
-    const afterText = readFileSync(preview.trackerFile, 'utf8');
-    const addedRow = validateTrackerAppend({ postingKey, record, report, beforeText, afterText, trackerParser });
+    let afterText = readFileSync(preview.trackerFile, 'utf8');
+    let addedRow = validateTrackerAppend({ postingKey, record, report, beforeText, afterText, trackerParser });
+    // The canonical writer renders links for its isolated preview location.
+    // Rebind only the new report link to the real tracker location before the
+    // canonical transaction; every pre-existing cell remains byte-identical.
+    const target = path.join(resolveCareerPaths(careerRoot).dataRoot, report.report_path);
+    const actualLink = path.relative(path.dirname(trackerFile), target).split(path.sep).join('/');
+    const reportField = addedRow.parsed.report.replace(/\]\([^)]+\)/, `](${actualLink})`);
+    if (reportField !== addedRow.parsed.report) {
+      const columns = trackerParser.resolveColumns(beforeText.split(/\r?\n/));
+      const cells = addedRow.raw.split('|');
+      if (cells[columns.report]?.trim() !== addedRow.parsed.report) throw new Error('new tracker report column cannot be rebound safely');
+      cells[columns.report] = cells[columns.report].replace(addedRow.parsed.report, reportField);
+      afterText = afterText.replace(addedRow.raw, cells.join('|'));
+      addedRow = validateTrackerAppend({ postingKey, record, report, beforeText, afterText, trackerParser });
+    }
     const transaction = await openTrackerTransaction(trackerFile);
     try {
       if (transaction.read() !== beforeText) {
@@ -313,7 +326,8 @@ async function persistEvaluatedJobs({
   const records = new Map(run.records.map(record => [record.primary_key, record]));
   const included = new Set(includeKeys);
   const accepted = results.evaluated.filter(result => included.has(result.posting_key));
-  const jdRoot = path.join(careerRoot, 'jds');
+  const dataRoot = resolveCareerPaths(careerRoot).dataRoot;
+  const jdRoot = path.join(dataRoot, 'jds');
   mkdirSync(jdRoot, { recursive: true });
   const touched = [];
   const offers = [];
@@ -355,7 +369,7 @@ async function persistEvaluatedJobs({
     }
     return {
       evaluated_keys: accepted.map(item => item.posting_key).sort(),
-      jd_files: touched.map(item => path.relative(careerRoot, item)),
+      jd_files: touched.map(item => path.relative(dataRoot, item)),
       scan_run_summary: buildScanRunSummary(run, offers),
     };
   } catch (error) {
@@ -377,11 +391,7 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
 
   const { trackerUtils, pipelineLock, trackerParser } = interfaces;
   const trackerFile = resolveOfficialTrackerPath(careerRoot, trackerUtils);
-  const scanHistoryFile = resolveConfiguredCareerPath(
-    careerRoot,
-    process.env.CAREER_OPS_SCAN_HISTORY,
-    'data/scan-history.tsv',
-  );
+  const scanHistoryFile = resolveCareerPaths(careerRoot).scanHistoryFile;
   const scanWriter = await loadScanWriter(careerRoot);
   const createdPaths = new Set();
   const ownedTrackerRows = [];
@@ -495,6 +505,7 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const rendered = [];
       for (const candidate of results.candidates.filter(item => eligible.includes(item.posting_key))) {
+        validateScoringInputs(results.plan);
         const itemRoot = mkdtempSync(path.join(os.tmpdir(), 'daily-scan-savepoint-'));
         const additionsDir = path.join(itemRoot, 'tracker-additions');
         mkdirSync(additionsDir, { recursive: true });
@@ -516,7 +527,7 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
             throw new JobScopedCommitError(candidate.posting_key, 'REPORT_RENDER_FAILED', error.message);
           }
           report = reportResult.reports[0];
-          const reportFile = path.join(careerRoot, report.report_path);
+          const reportFile = path.join(resolveCareerPaths(careerRoot).dataRoot, report.report_path);
           createdPaths.add(reportFile);
           const additions = readdirSync(additionsDir).filter(name => name.endsWith('.tsv'));
           if (additions.length !== 1) throw new JobScopedCommitError(candidate.posting_key, 'TRACKER_APPEND_COUNT_INVALID', `renderer must create exactly one tracker addition; found ${additions.length}`);
@@ -540,7 +551,7 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
         } catch (error) {
           if (!(error instanceof JobScopedCommitError)) throw error;
           if (report) {
-            const reportFile = path.join(careerRoot, report.report_path);
+            const reportFile = path.join(resolveCareerPaths(careerRoot).dataRoot, report.report_path);
             rmSync(reportFile, { force: true });
             createdPaths.delete(reportFile);
           }
@@ -560,6 +571,7 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
       if (!persistence.allowed) return await failedReceipt();
       let persisted;
       try {
+        validateScoringInputs(results.plan);
         persisted = await persistEvaluatedJobs({
           run,
           results,
@@ -571,7 +583,7 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
           writeFileAtomic: trackerUtils.writeFileAtomic,
         });
         historyWritten = true;
-        for (const relative of persisted.jd_files) createdPaths.add(path.join(careerRoot, relative));
+        for (const relative of persisted.jd_files) createdPaths.add(path.join(resolveCareerPaths(careerRoot).dataRoot, relative));
       } catch (error) {
         if (error instanceof JobScopedCommitError) {
           await restoreTransaction();
@@ -601,8 +613,9 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
         eligibleEvaluatedKeys: eligible,
       });
       if (audited.receipt.status === 'COMPLETE') {
+        validateScoringInputs(results.plan);
         finalizationStarted = true;
-        scanWriter.appendScanRunSummary(persisted.scan_run_summary, path.join(careerRoot, 'data/scan-runs.tsv'));
+        scanWriter.appendScanRunSummary(persisted.scan_run_summary, resolveCareerPaths(careerRoot).scanRunsFile);
         return writeReceiptCreateOnly(audited.receiptFile, audited.receipt);
       }
       throw new Error(`closeout verification failed: ${audited.receipt.errors.join('; ')}`);
@@ -624,7 +637,7 @@ export async function commitScan(runDir, careerDir, date) {
     throw new Error('assignments Career-Ops root does not match commit target');
   }
   const interfaces = await loadCareerInterfaces(careerRoot);
-  const lock = await interfaces.pipelineLock.acquirePipelineLock(path.join(careerRoot, '.daily-scan-commit'), {
+  const lock = await interfaces.pipelineLock.acquirePipelineLock(resolveCareerPaths(careerRoot).commitLockFile, {
     timeoutMs: 60_000,
     staleMs: 10 * 60_000,
   });

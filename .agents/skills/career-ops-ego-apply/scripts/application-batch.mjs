@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { resolveCareerPaths, resolveCareerReportLink } from '../../../../src/career-ops-paths.mjs';
+import { applyCareerBlacklist } from '../../../../src/career-ops-blacklist.mjs';
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
@@ -9,7 +11,7 @@ import { validateActiveInterviews } from '../../gmail-job-reply-review/scripts/a
 const DISCOVERY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const VALUE_FLAGS = new Set(['--career-ops', '--active-interviews', '--run', '--dates', '--status', '--limit', '--exclude']);
+const VALUE_FLAGS = new Set(['--career-ops', '--active-interviews', '--run', '--runs-root', '--dates', '--status', '--limit', '--exclude', '--allow-blacklisted']);
 const BOOLEAN_FLAGS = new Set(['--latest-complete', '--json']);
 const SELECTABLE_STATUS = 'Evaluated';
 const LOCAL_TIME_ZONE = 'America/Los_Angeles';
@@ -22,7 +24,7 @@ const PRIORITY = new Map([
 function usage() {
   return [
     'Usage:',
-    '  node application-batch.mjs --career-ops <path> --active-interviews <path> (--run <run-id> | --latest-complete) [--dates YYYY-MM-DD[,YYYY-MM-DD]] [--status Evaluated] [--limit 1..10] [--exclude report-id,...] [--json]',
+    '  node application-batch.mjs --career-ops <code-root> --active-interviews <path> (--run <run-id> | --latest-complete) [--runs-root <path>] [--dates YYYY-MM-DD[,YYYY-MM-DD]] [--status Evaluated] [--limit 1..10] [--exclude report-id,...] [--allow-blacklisted exact-posting-key,...] [--json]',
   ].join('\n');
 }
 
@@ -159,8 +161,9 @@ export function selectReceipt(runsRoot, { run, latestComplete = false }) {
 
 function safeReportPath(careerOpsRoot, reportPath) {
   if (!reportPath) return null;
-  const file = resolve(careerOpsRoot, reportPath);
-  const rel = relative(careerOpsRoot, file);
+  const dataRoot = resolveCareerPaths(careerOpsRoot).dataRoot;
+  const file = resolve(dataRoot, reportPath);
+  const rel = relative(dataRoot, file);
   return rel.startsWith('..') || isAbsolute(rel) ? null : file;
 }
 
@@ -286,6 +289,7 @@ export function planBatch(rows, {
   limit = 5,
   excluded = new Set(),
   activeInterviewCompanies = new Map(),
+  allowBlacklisted = [],
   today = localDate(),
 }) {
   if (status !== SELECTABLE_STATUS) throw new Error(`--status must be ${SELECTABLE_STATUS}`);
@@ -296,7 +300,7 @@ export function planBatch(rows, {
   const dateSet = new Set(dates);
   const skipped = [];
   const unresolvedItems = [];
-  const selectable = [];
+  let selectable = [];
 
   for (const frozenReport of frozen) {
     const reportId = frozenReport.reportId;
@@ -367,6 +371,18 @@ export function planBatch(rows, {
     });
   }
 
+  const blacklist = applyCareerBlacklist({ careerRoot: careerOpsRoot, runId,
+    records: selectable.map(item => ({ primary_key: item.postingKey, primary_url: item.url, company: item.company })),
+    allowKeys: allowBlacklisted });
+  const held = new Map(blacklist.excluded.map(item => [item.posting_key, item]));
+  for (const item of selectable.filter(item => held.has(item.postingKey))) {
+    const match = held.get(item.postingKey);
+    skipped.push({ trackerId: item.trackerId, reportId: item.reportId, company: item.company, role: item.role,
+      reason: `blacklist hold: ${match.entry.company} (${match.entry.scope}, since ${match.entry.since || 'unstated'}): ${match.entry.reason}`,
+      blacklist_entry: match.entry });
+  }
+  selectable = selectable.filter(item => !held.has(item.postingKey));
+
   const laneCounts = {};
   for (const item of selectable) laneCounts[item.batchKey] = (laneCounts[item.batchKey] || 0) + 1;
 
@@ -398,6 +414,7 @@ export function planBatch(rows, {
 
   return {
     schemaVersion: 1,
+    blacklist: blacklist.audit,
     scope: {
       mode: 'receipt',
       runId,
@@ -438,7 +455,8 @@ function printHuman(result) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const careerOpsRoot = resolve(required(args['career-ops'], 'career-ops'));
-  const trackerPath = resolve(careerOpsRoot, 'data/applications.md');
+  const paths = resolveCareerPaths(careerOpsRoot);
+  const trackerPath = paths.trackerFile;
   const activeInterviewsPath = resolve(required(args['active-interviews'], 'active-interviews'));
   const findModule = resolve(careerOpsRoot, 'find.mjs');
   const trackerParseModule = resolve(careerOpsRoot, 'tracker-parse.mjs');
@@ -447,7 +465,7 @@ async function main() {
     throw new Error(`Invalid Career-Ops root or missing active-interview gate: ${careerOpsRoot}`);
   }
 
-  const selection = selectReceipt(resolve(DISCOVERY_ROOT, 'runs'), {
+  const selection = selectReceipt(args['runs-root'] ? resolve(args['runs-root']) : resolve(DISCOVERY_ROOT, 'runs'), {
     run: args.run,
     latestComplete: args.latestComplete,
   });
@@ -456,8 +474,12 @@ async function main() {
   const { parseTrackerRows } = await import(pathToFileURL(findModule).href);
   const { parseTrackerRow, resolveColumns } = await import(pathToFileURL(trackerParseModule).href);
   const columns = resolveColumns(trackerText.split('\n'));
-  const notesByTrackerId = new Map(trackerText.split('\n').map(line => parseTrackerRow(line, columns)).filter(Boolean).map(row => [row.num, row.notes]));
-  const rows = parseTrackerRows(trackerText).map(row => ({ ...row, notes: notesByTrackerId.get(row.trackerNum) || '' }));
+  const rawRowsByTrackerId = new Map(trackerText.split('\n').map(line => parseTrackerRow(line, columns)).filter(Boolean).map(row => [row.num, row]));
+  const rows = parseTrackerRows(trackerText).map(row => {
+    const raw = rawRowsByTrackerId.get(row.trackerNum);
+    return { ...row, notes: raw?.notes || '', reportPath: row.reportNum
+      ? resolveCareerReportLink(paths, raw?.report, row.reportNum).relative : row.reportPath };
+  });
   const processSchema = /^\s*##\s+(?:Active Processes|Current TODO|Archived Processes)\s*$/im.test(activeInterviewsText);
   let activeRows;
   if (processSchema) {
@@ -476,6 +498,7 @@ async function main() {
     limit: parseLimit(args.limit),
     excluded: parseExcluded(args.exclude),
     activeInterviewCompanies,
+    allowBlacklisted: args['allow-blacklisted'] ? args['allow-blacklisted'].split(',').filter(Boolean) : [],
   });
   if (args.json) console.log(JSON.stringify(result, null, 2));
   else printHuman(result);

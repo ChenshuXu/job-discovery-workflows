@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { checkCareerOpsHealth, resolveTitleWarnings } from '../src/career-ops-health.mjs';
@@ -9,7 +9,9 @@ function fixture(t, records) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'career-health-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(path.join(root, 'data')); mkdirSync(path.join(root, 'reports'));
-  writeFileSync(path.join(root, 'path-resolver.mjs'), `import path from 'node:path'; export const resolveTrackerPath = root => path.join(root, 'data/applications.md');`);
+  writeFileSync(path.join(root, 'path-resolver.mjs'), `import path from 'node:path'; import { fileURLToPath } from 'node:url';
+    export const getCareerOpsRoot = () => process.env.CAREER_OPS_ROOT || path.dirname(fileURLToPath(import.meta.url));
+    export const resolveTrackerPath = root => process.env.CAREER_OPS_TRACKER || path.join(root, 'data/applications.md');`);
   writeFileSync(path.join(root, 'tracker-parse.mjs'), `
     export const resolveColumns = () => ({});
     export const normalizeTextKey = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -62,6 +64,32 @@ test('old saved Workday and Jobright identity spellings reconcile only to their 
   assert.equal(resolveTitleWarnings({ careerRoot: root, messages: [trackerWarning] }).resolved.length, 1);
 });
 
+test('saved Google generic keys resolve to distinct exact official requisitions', t => {
+  const root = fixture(t, [
+    { url: 'https://www.google.com/about/careers/applications/jobs/results/79605303951139526-engineer?page=74', key: 'generic:google.com:79605303951139526' },
+    { url: 'https://www.google.com/about/careers/applications/jobs/results/92579968424256198-engineer', key: 'google-careers:google:92579968424256198' },
+  ]);
+  writeFileSync(path.join(root, 'verify-pipeline.mjs'), `console.log(${JSON.stringify(`⚠️ ${trackerWarning}\n⚠️ ${reportWarning}\nPipeline Health: 0 errors, 2 warnings`)})`);
+  const result = checkCareerOpsHealth(root);
+  assert.equal(result.warnings, 0);
+  assert.equal(result.raw_warnings, 2);
+  assert.deepEqual(result.resolved[0].members.map(member => member.key), [
+    'google-careers:google:79605303951139526', 'google-careers:google:92579968424256198',
+  ]);
+});
+
+test('Google legacy keys cannot hide the same requisition or contradict the saved URL', t => {
+  const old = { url: 'https://www.google.com/about/careers/applications/jobs/results/79605303951139526-engineer', key: 'generic:google.com:79605303951139526' };
+  for (const records of [
+    [old, { url: old.url + '?page=2', key: 'google-careers:google:79605303951139526' }],
+    [{ ...old, key: 'generic:google.com:11111111111111111' }, { url: 'https://www.google.com/about/careers/applications/jobs/results/92579968424256198-engineer', key: 'google-careers:google:92579968424256198' }],
+    [{ ...old, url: old.url.replace('www.google.com', 'www.google.com.example.org') }, { url: 'https://www.google.com/about/careers/applications/jobs/results/92579968424256198-engineer', key: 'google-careers:google:92579968424256198' }],
+  ]) {
+    const root = fixture(t, records);
+    assert.deepEqual(resolveTitleWarnings({ careerRoot: root, messages: [trackerWarning, reportWarning] }).unresolved, [trackerWarning, reportWarning]);
+  }
+});
+
 test('native errors, unknown warnings and incomplete summaries remain blocking', t => {
   const root = fixture(t, [posting(100), posting(200)]);
   for (const [text, expected] of [
@@ -81,4 +109,39 @@ test('health result retains native count and exact resolution evidence', t => {
   writeFileSync(path.join(root, 'verify-pipeline.mjs'), `console.log(${JSON.stringify(`⚠️ ${trackerWarning}\nPipeline Health: 0 errors, 1 warning`)})`);
   const result = checkCareerOpsHealth(root);
   assert.equal(result.warnings, 0); assert.equal(result.raw_warnings, 1); assert.equal(result.resolved.length, 1);
+});
+
+test('native archive warnings resolve only for complete captures with exact report/run/key/URL identity', t => {
+  const root = fixture(t, [posting(100)]);
+  const report = path.join(root, 'reports/001-acme-engineer-2026-10-01.md');
+  const warning = '001-acme-engineer-2026-10-01.md: no "## Job Description" section with archived JD text, and no jds/ capture found for report 1 (company slug "acme-engineer") — tracker row is still live (or unresolved), so this is a soft warning, not a blocker';
+  const url = posting(100).url, key = posting(100).key;
+  writeFileSync(report, `**URL:** ${url}\n**Posting Key:** ${key}\n\n## Machine Summary\n\n\`\`\`yaml\nrun_id: "acceptance-1"\nposting_key: "${key}"\nposting_url: "${url}"\n\`\`\`\n`);
+  mkdirSync(path.join(root, 'jds'));
+  const archive = path.join(root, 'jds/discovery-acceptance-1-greenhouse-acme-100.md');
+  const body = 'Build reliable backend APIs, databases, automated testing and production monitoring. '.repeat(4);
+  const capture = `**URL:** ${url}\n**Posting Key:** ${key}\n**Discovery Run:** acceptance-1\n\n## Job Description\n\n${body}\n`;
+  writeFileSync(archive, capture);
+  writeFileSync(path.join(root, 'verify-pipeline.mjs'), `console.log(${JSON.stringify(`⚠️ ${warning}\nPipeline Health: 0 errors, 1 warning`)})`);
+  const before = readFileSync(archive, 'utf8');
+  const result = checkCareerOpsHealth(root);
+  assert.equal(result.warnings, 0);
+  assert.equal(result.raw_warnings, 1);
+  assert.equal(result.resolved[0].reason, 'exact_discovery_jd_archive');
+  assert.equal(result.resolved[0].members[0].archive_file, realpathSync(archive));
+  assert.match(result.verifier_output, /no jds\/ capture found/);
+  assert.equal(readFileSync(archive, 'utf8'), before);
+  for (const corrupted of [
+    capture.replace('Discovery Run:** acceptance-1', 'Discovery Run:** other-run'),
+    capture.replace(`Posting Key:** ${key}`, 'Posting Key:** greenhouse:acme:999'),
+    capture.replace(`URL:** ${url}`, 'URL:** https://boards.greenhouse.io/acme/jobs/999'),
+    capture.replace(body, 'Content unavailable.'),
+    capture.replace(body, `Sign in to view this job ${'x'.repeat(250)}`),
+    capture.replace('## Job Description', '## Missing body heading'),
+  ]) {
+    writeFileSync(archive, corrupted);
+    assert.equal(checkCareerOpsHealth(root).warnings, 1);
+  }
+  rmSync(archive);
+  assert.equal(checkCareerOpsHealth(root).warnings, 1);
 });

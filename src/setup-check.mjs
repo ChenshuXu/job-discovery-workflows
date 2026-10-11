@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { resolveCareerPaths } from './career-ops-paths.mjs';
 // Read-only setup inventory. Never installs tools, writes profiles or starts workflows.
 import { accessSync, constants, readFileSync, realpathSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -17,25 +18,26 @@ const SKILLS = ['career-ops-daily-linkedin-scan', 'career-ops-expand-report', 'c
 const nonempty = file => { if (!statSync(file).isFile() || !readFileSync(file, 'utf8').trim()) throw new Error('missing'); };
 const executable = file => accessSync(file, constants.X_OK);
 
-export function checkSetup({ root = ROOT, careerOps = process.env.CAREER_OPS_ROOT || path.resolve(root, '../career-ops'), careerDocs = path.resolve(root, '../career-docs'), jobspy = path.resolve(root, '../JobSpy'), envPath = process.env.PATH ?? '' } = {}) {
+export function checkSetup({ root = ROOT, careerOps = process.env.CAREER_OPS_CODE_ROOT || path.resolve(root, '../career-ops'), careerDocs = path.resolve(root, '../career-docs'), jobspy = path.resolve(root, '../JobSpy'), envPath = process.env.PATH ?? '' } = {}) {
+  const paths = resolveCareerPaths(careerOps);
   const checks = [];
   const check = (id, scope, file, action, fn = () => nonempty(file)) => {
     try { fn(); checks.push({ id, scope, status: 'present', path: file }); }
     catch { checks.push({ id, scope, status: 'missing_or_invalid', path: file, action }); }
   };
   for (const name of SKILLS) check(`skill:${name}`, 'all', path.join(root, '.agents/skills', name, 'SKILL.md'), 'Restore this bundled Skill; ask the host to load it.');
-  for (const name of ['AGENTS.md', 'package.json', 'tracker-parse.mjs', 'tracker-utils.mjs', 'pipeline-lock.mjs', 'scan.mjs', 'merge-tracker.mjs', 'verify-pipeline.mjs', 'doctor.mjs', 'cv-sync-check.mjs']) {
+  for (const name of ['AGENTS.md', 'package.json', 'path-resolver.mjs', 'tracker-parse.mjs', 'tracker-utils.mjs', 'pipeline-lock.mjs', 'scan.mjs', 'merge-tracker.mjs', 'verify-pipeline.mjs', 'doctor.mjs', 'cv-sync-check.mjs']) {
     check(`career-ops:${name}`, 'career-ops', path.join(careerOps, name), 'Install the Career-Ops source checkout here; do not fabricate missing implementation files.');
   }
   for (const name of ['AGENTS.md', 'package.json', 'path-resolver.mjs', 'tracker-parse.mjs', 'stats.mjs']) {
     check(`infographic:${name}`, 'process-infographic', path.join(careerOps, name), 'Install the Career-Ops source and npm dependencies, then verify the canonical tracker and statistics interfaces before collecting.');
   }
   check('infographic:npm-dependencies', 'process-infographic', path.join(careerOps, 'package.json'), 'Run npm install in Career-Ops; its statistics interface imports js-yaml. Verify the interface import after installation.', () => createRequire(path.join(path.resolve(careerOps), 'stats.mjs')).resolve('js-yaml'));
-  const cv = path.join(careerOps, 'cv.md');
+  const cv = paths.cvFile;
   check('candidate:cv', 'career-ops', cv, 'Use Career-Ops onboarding with the user CV; resume code needs PROFESSIONAL EXPERIENCE and TECHNICAL SKILLS sections.', () => loadCvSource(cv));
-  check('candidate:profile', 'career-ops', path.join(careerOps, 'config/profile.yml'), 'Complete Career-Ops onboarding with confirmed candidate facts.');
-  check('candidate:profile-summary', 'career-ops', path.join(careerOps, 'modes/_profile.md'), 'Use Career-Ops onboarding to generate the profile summary from the same confirmed facts.');
-  const profile = path.join(careerOps, 'config/profile.yml');
+  check('candidate:profile', 'career-ops', paths.profileFile, 'Complete Career-Ops onboarding with confirmed candidate facts.');
+  check('candidate:profile-summary', 'career-ops', paths.profileSummaryFile, 'Use Career-Ops onboarding to generate the profile summary from the same confirmed facts.');
+  const profile = paths.profileFile;
   check('location:scan-policy', 'daily-scan', profile, 'Add location.scan_policy as two-space-indented inline JSON; see README. Do not silently substitute a supported region.', () => loadLocationPolicy(profile));
   for (const name of ['AGENTS.md', 'context/00 Knowledge Base Hub.md']) check(`career-docs:${name}`, 'interviews', path.join(careerDocs, name), 'Create only missing files from examples/career-docs; preserve existing workspace instructions and notes.');
   const register = path.join(careerDocs, 'context/Interview/active-interviews.md');

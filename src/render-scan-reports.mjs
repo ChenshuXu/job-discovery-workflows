@@ -1,3 +1,4 @@
+import { resolveCareerPaths, careerOpsEnv } from './career-ops-paths.mjs';
 import { existsSync, mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -25,7 +26,7 @@ export function trackerIdentityNote(record) {
 }
 
 export function reserveScanReportNumbers(careerRoot, count) {
-  const result = spawnSync(process.execPath, ['reserve-report-num.mjs', '--count', String(count)], { cwd: careerRoot, encoding: 'utf8' });
+  const result = spawnSync(process.execPath, ['reserve-report-num.mjs', '--count', String(count)], { cwd: careerRoot, encoding: 'utf8', env: careerOpsEnv(careerRoot) });
   if (result.status !== 0) throw new Error(`report-number reservation failed: ${(result.stderr || result.stdout).trim()}`);
   const match = result.stdout.trim().match(/^(\d+)(?:-(\d+))?$/);
   if (!match) throw new Error(`unexpected reservation output: ${result.stdout.trim()}`);
@@ -40,7 +41,7 @@ export function releaseScanReportNumbers(careerRoot, numbers) {
   for (let index = 0; index < ordered.length; index += MAX_BATCH) {
     const batch = ordered.slice(index, index + MAX_BATCH);
     const value = batch.length === 1 ? String(batch[0]) : `${batch[0]}-${batch.at(-1)}`;
-    const result = spawnSync(process.execPath, ['reserve-report-num.mjs', '--release', value], { cwd: careerRoot, encoding: 'utf8' });
+    const result = spawnSync(process.execPath, ['reserve-report-num.mjs', '--release', value], { cwd: careerRoot, encoding: 'utf8', env: careerOpsEnv(careerRoot) });
     if (result.status !== 0) throw new Error(`report-number release failed: ${(result.stderr || result.stdout).trim()}`);
   }
 }
@@ -109,7 +110,7 @@ export function renderScanReports({
   const assignments = candidates.map((item, index) => ({ posting_key: item.result.posting_key, report_number: numbers[index] }));
   const reports = [];
   const created = [];
-  const trackerAdditionsRoot = additionsDir ? path.resolve(additionsDir) : path.join(careerRoot, 'batch/tracker-additions');
+  const trackerAdditionsRoot = additionsDir ? path.resolve(additionsDir) : resolveCareerPaths(careerRoot).additionsRoot;
   try {
     for (const assignment of assignments) {
       const item = candidates.find(candidate => candidate.result.posting_key === assignment.posting_key);
@@ -121,9 +122,9 @@ export function renderScanReports({
       const note = trackerIdentityNote(item.record);
       const tsv = 'num\tdate\tcompany\trole\tstatus\tscore\tpdf\treport\tnotes\n'
         + `${[Number(number), date, oneLine(item.report.company), oneLine(item.report.role), 'Evaluated', `${Number(item.result.score).toFixed(1)}/5`, '❌', `[${Number(number)}](${reportPath})`, note].join('\t')}\n`;
-      const reportFile = path.join(careerRoot, reportPath);
+      const reportFile = path.join(resolveCareerPaths(careerRoot).dataRoot, reportPath);
       const tsvFile = tsvPath;
-      const sentinel = path.join(careerRoot, 'reports', `${number}-RESERVED.md`);
+      const sentinel = path.join(resolveCareerPaths(careerRoot).reportsRoot, `${number}-RESERVED.md`);
       if (existsSync(reportFile) || existsSync(tsvFile)) throw new Error(`${assignment.posting_key}: report or tracker addition already exists`);
       if (!existsSync(sentinel)) throw new Error(`${assignment.posting_key}: reservation sentinel missing`);
       atomicWrite(reportFile, reportText);

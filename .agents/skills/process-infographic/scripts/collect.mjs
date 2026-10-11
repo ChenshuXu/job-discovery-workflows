@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { resolveCareerPaths } from '../../../../src/career-ops-paths.mjs';
 // Read-only source collection. Personal records belong in the caller's private output.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -74,10 +75,10 @@ export async function collect({ careerOps = path.resolve(ROOT, '../career-ops'),
     });
   };
   const load = name => import(pathToFileURL(path.join(careerOps, name)).href);
-  const [resolver, stats, parser] = await Promise.all([
-    load('path-resolver.mjs'), load('stats.mjs'), loadCareerTrackerParser(careerOps),
+  const [stats, parser] = await Promise.all([
+    load('stats.mjs'), loadCareerTrackerParser(careerOps),
   ]);
-  const trackerFile = resolver.resolveTrackerPath(resolver.getCareerOpsRoot());
+  const trackerFile = resolveCareerPaths(careerOps).trackerFile;
   const trackerText = read(trackerFile), rows = parseTracker(trackerText, parser);
   const statusByNum = stats.trackerStatusByNum(trackerText);
   assert.equal(new Set(rows.map(row => row.number)).size, rows.length, 'Duplicate Career-Ops tracker IDs');

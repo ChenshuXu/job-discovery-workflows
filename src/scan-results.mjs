@@ -4,11 +4,11 @@ import { validateDailyScanRuntime, workerIdsForRuntime } from './daily-scan-runt
 import { validateWorkerParts } from './merge-worker-results.mjs';
 import { RESULT_SCHEMA_VERSION } from './scoring-safety.mjs';
 
-export function loadScanResults(runDir) {
+export function loadScanResults(runDir, { allowLegacy = false } = {}) {
   const root = path.resolve(runDir);
   const plan = JSON.parse(readFileSync(path.join(root, 'assignments.json'), 'utf8'));
   plan.runtime = validateDailyScanRuntime(plan.runtime, `${path.join(root, 'assignments.json')} runtime`);
-  if (plan.result_schema_version !== RESULT_SCHEMA_VERSION) throw new Error(`assignments result_schema_version must be ${RESULT_SCHEMA_VERSION}`);
+  if (plan.result_schema_version !== RESULT_SCHEMA_VERSION && !(allowLegacy && [4, 5].includes(plan.result_schema_version))) throw new Error(`assignments result_schema_version must be ${RESULT_SCHEMA_VERSION}`);
   const workers = workerIdsForRuntime(plan.runtime);
   const byKey = new Map();
   const validatedKeys = new Set();
@@ -18,9 +18,9 @@ export function loadScanResults(runDir) {
     if (!existsSync(file)) { errors.push(`missing results/${worker}.json`); continue; }
     const artifact = JSON.parse(readFileSync(file, 'utf8'));
     const results = Array.isArray(artifact.results) ? artifact.results : [];
-    if (artifact.result_schema_version !== RESULT_SCHEMA_VERSION || artifact.worker !== worker || !Array.isArray(artifact.results)) errors.push(`${worker}: invalid result schema`);
+    if (artifact.result_schema_version !== plan.result_schema_version || artifact.worker !== worker || !Array.isArray(artifact.results)) errors.push(`${worker}: invalid result schema`);
     try {
-      const parts = validateWorkerParts(root, worker, { collectItemErrors: true });
+      const parts = validateWorkerParts(root, worker, { collectItemErrors: true, allowLegacy });
       errors.push(...parts.itemErrors);
       if (!parts.itemErrors.length) {
         if (JSON.stringify(parts.results) === JSON.stringify(results)) {
@@ -52,5 +52,5 @@ export function loadScanResults(runDir) {
   const candidates = evaluated.filter(item => validatedKeys.has(item.posting_key)
     && Number(item.score) >= plan.runtime.reporting.full_report_threshold && item.hard_exclusion === false);
   if (candidates.some(item => item.report_allowed !== true || !item.report)) errors.push('candidate set contains a result blocked by scoring safety');
-  return { root, plan, byKey, evaluated, failed, candidates, errors };
+  return { root, plan, historical_rule_hashes_verified: !(allowLegacy && [4, 5].includes(plan.result_schema_version)), byKey, evaluated, failed, candidates, errors };
 }

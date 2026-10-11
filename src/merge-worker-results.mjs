@@ -7,6 +7,7 @@ import { validateDailyScanRuntime, workerIdsForRuntime } from './daily-scan-runt
 import { isAllowedLocationDecision } from './location-scope.mjs';
 import { validateStructuredReport, renderCompactReport } from './scan-report-contract.mjs';
 import { applyScoringSafety, deriveReportWorkAuthorization, RESULT_SCHEMA_VERSION } from './scoring-safety.mjs';
+import { validateScoringInputs } from './scoring-inputs.mjs';
 
 function readJson(file) {
   try { return JSON.parse(readFileSync(file, 'utf8')); }
@@ -25,7 +26,7 @@ function validationContext(root, worker, plan) {
     schema_version: 1, run_id: plan.run_id, worker,
     assignments_sha256: digest(readFileSync(path.join(root, 'assignments.json'))),
     acquisition_sha256: digest(readFileSync(path.join(root, 'acquisition.json'))),
-    validator_sha256: digest(Buffer.concat(['merge-worker-results.mjs', 'scoring-safety.mjs', 'scan-report-contract.mjs']
+    validator_sha256: digest(Buffer.concat(['merge-worker-results.mjs', 'scoring-safety.mjs', 'scan-report-contract.mjs', 'scoring-inputs.mjs']
       .map(name => readFileSync(path.join(moduleRoot, name))))),
   };
 }
@@ -95,28 +96,15 @@ function validateForCli(runDir, worker, options = {}) {
   return value;
 }
 
-function validateCandidateSources(plan) {
-  const expected = ['cv.md', 'config/profile.yml', 'modes/_profile.md'];
-  if (!path.isAbsolute(plan.career_ops_root ?? '')) throw new Error('assignments career_ops_root must be absolute');
-  if (!Array.isArray(plan.candidate_sources) || JSON.stringify(plan.candidate_sources.map(item => item.label)) !== JSON.stringify(expected)) {
-    throw new Error('assignments candidate_sources must contain the three approved sources in order');
-  }
-  return plan.candidate_sources.map(source => {
-    if (source.path !== path.join(plan.career_ops_root, source.label) || !existsSync(source.path)) throw new Error(`approved candidate source missing or outside Career-Ops: ${source.path}`);
-    const content = readFileSync(source.path);
-    const digest = createHash('sha256').update(content).digest('hex');
-    if (digest !== source.sha256) throw new Error(`approved candidate source hash changed: ${source.label}`);
-    return `\n--- ${source.label} ---\n${content.toString('utf8')}`;
-  }).join('');
-}
-
 export function validateWorkerParts(runDir, worker, options = {}) {
   const root = path.resolve(runDir);
   const planFile = path.join(root, 'assignments.json');
   const plan = readJson(planFile);
   plan.runtime = validateDailyScanRuntime(plan.runtime, `${planFile} runtime`);
-  if (plan.result_schema_version !== RESULT_SCHEMA_VERSION) throw new Error(`${planFile}: result_schema_version must be ${RESULT_SCHEMA_VERSION}`);
-  const candidateText = validateCandidateSources(plan);
+  const historical = options.allowLegacy === true && [4, 5].includes(plan.result_schema_version);
+  const legacy = historical && plan.result_schema_version === 4;
+  if (plan.result_schema_version !== RESULT_SCHEMA_VERSION && !historical) throw new Error(`${planFile}: result_schema_version must be ${RESULT_SCHEMA_VERSION}; historical v4/v5 requires explicit read-only inspection`);
+  const candidateText = validateScoringInputs(plan, { allowLegacy: historical });
   if (!workerIdsForRuntime(plan.runtime).includes(worker)) throw new Error(`invalid worker id: ${worker}`);
   const assigned = (plan.assignments?.[worker] ?? []).map(String);
   const acquisition = readJson(path.join(root, 'acquisition.json'));
@@ -136,7 +124,7 @@ export function validateWorkerParts(runDir, worker, options = {}) {
     const file = path.join(root, 'results', `${worker}.part-${index + 1}.json`);
     if (!existsSync(file)) throw new Error(`${worker}: missing part ${index + 1}`);
     const artifact = readJson(file);
-    if (artifact.result_schema_version !== RESULT_SCHEMA_VERSION || artifact.worker !== worker || artifact.part !== index + 1 || !Array.isArray(artifact.results)) throw new Error(`${worker}: invalid part ${index + 1} schema`);
+    if (artifact.result_schema_version !== plan.result_schema_version || artifact.worker !== worker || artifact.part !== index + 1 || !Array.isArray(artifact.results)) throw new Error(`${worker}: invalid part ${index + 1} schema`);
     const expectedKeys = assigned.slice(index * batchSize, (index + 1) * batchSize);
     const returnedKeys = artifact.results.map(item => String(item.posting_key ?? ''));
     rawResultKeys.push(...returnedKeys);
@@ -208,7 +196,7 @@ export function validateWorkerParts(runDir, worker, options = {}) {
         const result = { ...derived, semantic_job_key: identity.semantic_job_key, posting_context_key: identity.posting_context_key };
         if (result.report_allowed !== Boolean(result.report)) throw new Error(`${key}: report payload must exist exactly for report candidates`);
         if (result.report_allowed) {
-          validateStructuredReport(result.report, { jdText, label: `${key}: report` });
+          validateStructuredReport(result.report, { jdText, eligibilityStatus: item.eligibility_status, schemaVersion: plan.result_schema_version, decision: result.report_decision, label: `${key}: report` });
           result.work_authorization = deriveReportWorkAuthorization({ item, jdText, candidateText });
           renderCompactReport({ result, record, runId: plan.run_id });
         }

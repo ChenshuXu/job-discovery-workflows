@@ -1,3 +1,5 @@
+import { resolveCareerPaths, careerOpsEnv, resolveCareerReportLink } from '../career-ops-paths.mjs';
+import { createRequire } from 'node:module';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { resolve, basename, dirname } from 'node:path';
@@ -6,6 +8,7 @@ import { CAREER_OPS_ROOT } from './cv-source.mjs';
 
 export { CAREER_OPS_ROOT };
 const DISCOVERY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const require = createRequire(import.meta.url);
 
 function reportStem(reportPath) {
   return basename(reportPath, '.md').replace(/-\d{4}-\d{2}-\d{2}$/, '').replace(/-\d{8,}$/, '');
@@ -67,13 +70,14 @@ function candidateBundles(result, careerOpsRoot) {
 
 export function resolveReport(query, options = {}) {
   const careerOpsRoot = options.careerOpsRoot ?? CAREER_OPS_ROOT;
+  const paths = resolveCareerPaths(careerOpsRoot);
   const discoveryRoot = options.discoveryRoot ?? DISCOVERY_ROOT;
   const queryText = String(query);
   const exactBundleQuery = /^\d+-[a-z0-9-]+$/.test(queryText) ? queryText : undefined;
   const findQuery = exactBundleQuery ? queryText.match(/^\d+/)[0] : queryText;
   let results;
   try {
-    results = options.results ?? JSON.parse(execFileSync(process.execPath, [resolve(careerOpsRoot, 'find.mjs'), findQuery, '--json'], { encoding: 'utf8' }));
+    results = options.results ?? JSON.parse(execFileSync(process.execPath, [resolve(careerOpsRoot, 'find.mjs'), findQuery, '--json'], { encoding: 'utf8', cwd: paths.codeRoot, env: careerOpsEnv(paths) }));
   } catch (error) {
     throw new Error(`IDENTITY_BLOCKER find.mjs failed: ${error.message}`);
   }
@@ -81,15 +85,25 @@ export function resolveReport(query, options = {}) {
     throw new Error(`IDENTITY_BLOCKER expected one report, found ${Array.isArray(results) ? results.length : 'invalid'}: ${JSON.stringify(results)}`);
   }
   const result = results[0];
-  const reportPath = resolve(careerOpsRoot, result.reportPath);
+  let reportPath;
+  if (!options.results) {
+    const parser = require(resolve(paths.codeRoot, 'tracker-parse.mjs'));
+    const lines = readFileSync(paths.trackerFile, 'utf8').split(/\r?\n/);
+    const columns = parser.resolveColumns(lines);
+    const rows = lines.map(line => parser.parseTrackerRow(line, columns)).filter(row => row && Number(row.num) === Number(result.trackerNum));
+    if (rows.length !== 1) throw new Error('IDENTITY_BLOCKER tracker row changed during report lookup');
+    const link = resolveCareerReportLink(paths, rows[0].report, result.reportNum);
+    reportPath = link.file;
+    result.reportPath = link.relative;
+  } else reportPath = resolve(paths.dataRoot, result.reportPath);
   if (!existsSync(reportPath)) throw new Error(`IDENTITY_BLOCKER missing report: ${reportPath}`);
   const identity = reportIdentity(reportPath);
-  const boundJd = boundPersistedJd(identity, careerOpsRoot) ?? boundDiscoveryJd(identity, discoveryRoot);
-  const bundles = candidateBundles(result, careerOpsRoot);
+  const boundJd = boundPersistedJd(identity, paths.dataRoot) ?? boundDiscoveryJd(identity, discoveryRoot);
+  const bundles = candidateBundles(result, paths.dataRoot);
   if (bundles.length > 1) throw new Error(`IDENTITY_BLOCKER expected at most one current JD bundle for report ${result.reportNum}, found ${bundles.length}: ${bundles.join(', ')}`);
   const bundle = bundles[0] ?? reportStem(result.reportPath);
   if (exactBundleQuery && bundle !== exactBundleQuery) throw new Error(`IDENTITY_BLOCKER bundle mismatch: ${bundle} ← ${exactBundleQuery}`);
-  const bundlePath = resolve(careerOpsRoot, 'output', bundle);
+  const bundlePath = resolve(paths.outputRoot, bundle);
   const outputJd = resolve(bundlePath, 'jd/current.md');
   const jdPath = existsSync(outputJd) ? outputJd : boundJd;
   if (!jdPath) throw new Error(`IDENTITY_BLOCKER missing current JD for report ${result.reportNum}: ${outputJd}`);

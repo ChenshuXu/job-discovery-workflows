@@ -6,15 +6,11 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadDailyScanRuntime } from './daily-scan-runtime.mjs';
 import { loadLocationPolicy } from './location-scope.mjs';
+import { snapshotScoringInputs } from './scoring-inputs.mjs';
+import { careerOpsCodeRoot } from './career-ops-paths.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURE_FILE = path.join(ROOT, 'test/fixtures/worker-calibration-cases.json');
-const CANDIDATE_FILES = [
-  path.resolve(ROOT, '../career-ops/cv.md'),
-  path.resolve(ROOT, '../career-ops/config/profile.yml'),
-  path.resolve(ROOT, '../career-ops/modes/_profile.md'),
-];
-
 function readJson(file) {
   return JSON.parse(readFileSync(file, 'utf8'));
 }
@@ -50,7 +46,11 @@ function outputSchema(caseIds) {
   };
 }
 
-export function buildCalibrationPrompt(fixture, runtime, candidateFiles = CANDIDATE_FILES) {
+export function buildCalibrationPrompt(fixture, runtime, candidateFiles, { careerRoot = careerOpsCodeRoot() } = {}) {
+  const inputs = snapshotScoringInputs(careerRoot);
+  candidateFiles ??= inputs.candidate_sources.map(source => source.path);
+  const rules = inputs.rule_sources.filter(source => !source.label.startsWith('job-discovery/') && source.sha256 !== null)
+    .map(source => `\n--- RULE SOURCE (not candidate evidence): ${source.label} ---\n${readFileSync(source.path, 'utf8')}`).join('\n');
   const scoring = readFileSync(path.join(ROOT, 'config/worker-scoring.md'), 'utf8');
   const locationPolicy = loadLocationPolicy(candidateFiles[1]);
   const candidateSources = candidateFiles.map(file => `\n--- CANDIDATE SOURCE: ${path.basename(file)} ---\n${readFileSync(file, 'utf8')}`).join('\n');
@@ -58,7 +58,7 @@ export function buildCalibrationPrompt(fixture, runtime, candidateFiles = CANDID
     const jd = readFileSync(path.join(ROOT, 'test/fixtures', item.jd_path), 'utf8');
     return `\n--- CASE ${item.id} | ${item.company} | ${item.role} ---\n${jd}`;
   }).join('\n');
-  return `You are running an isolated scoring diagnostic, not a Daily Scan or launch gate. Do not use tools, browse, or write files. The supplied candidate sources are locked for this diagnostic. Runtime: ${JSON.stringify(runtime)}. Location policy: ${JSON.stringify(locationPolicy)}.\n\nApply the v4 scoring judgment below to each supplied case in order. Return only the diagnostic output schema: one result per case with a concise rationale and exact JD evidence. Do not return reports, work_authorization or derived legacy fields.\n\n--- SCORING JUDGMENT ---\n${scoring}\n${candidateSources}\n${cases}`;
+  return `You are running an isolated scoring diagnostic, not a Daily Scan or launch gate. Do not use tools, browse, or write files. The supplied candidate sources are locked for this diagnostic. Runtime: ${JSON.stringify(runtime)}. Location policy: ${JSON.stringify(locationPolicy)}.\n\nApply the canonical Global Score judgment below to each supplied case in order. Return only the diagnostic output schema: one result per case with a concise rationale and exact JD evidence. Do not return reports, work_authorization or derived legacy fields.\n\n--- SCORING JUDGMENT ---\n${rules}\n${scoring}\n${candidateSources}\n${cases}`;
 }
 
 function validate(fixture, payload) {

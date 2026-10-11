@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { resolveCareerPaths } from './career-ops-paths.mjs';
 // An explicit, hash-bound repair of reports from one already completed scan.
 // Raw parts and the original run's receipt/mapping/results are never rewritten.
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -24,7 +25,7 @@ const fileHash = file => hash(readFileSync(file));
 const reportDate = header => header.match(/^\*\*Date:\*\*\s*(\d{4}-\d{2}-\d{2})/m)?.[1];
 const exact = (values, label) => { if (values.length !== 1) throw new Error(`${label}: expected exactly one match, found ${values.length}`); return values[0]; };
 const manifestHash = manifest => hash(JSON.stringify(manifest));
-const repairFile = (careerRoot, runId) => path.join(careerRoot, 'data/daily-scan-repairs', `${runId}-reports.json`);
+const repairFile = (careerRoot, runId) => path.join(resolveCareerPaths(careerRoot).dataRoot, 'data/daily-scan-repairs', `${runId}-reports.json`);
 
 function validateManifest(manifest, runRoot) {
   if (!manifest || manifest.run_id !== path.basename(runRoot) || !Array.isArray(manifest.entries) || !manifest.entries.length || manifest.entries.length > 20) throw new Error('explicit bounded manifest must name this run and 1-20 exact keys');
@@ -42,7 +43,7 @@ function validateManifest(manifest, runRoot) {
 }
 
 function nextNumbers(careerRoot, rows, count) {
-  const occupied = readdirSync(path.join(careerRoot, 'reports')).filter(name => !/^\d{4}-\d{2}-\d{2}\.md$/.test(name))
+  const occupied = readdirSync(path.join(resolveCareerPaths(careerRoot).dataRoot, 'reports')).filter(name => !/^\d{4}-\d{2}-\d{2}\.md$/.test(name))
     .map(name => Number(name.match(/^(\d+)-/)?.[1])).filter(Number.isFinite);
   for (const row of rows) occupied.push(row.number, ...[...String(row.parsed.report).matchAll(/\[(\d+)\]/g)].map(match => Number(match[1])));
   const first = Math.max(0, ...occupied) + 1;
@@ -72,7 +73,7 @@ async function buildPlan({ runRoot, careerRoot, manifest, interfaces }) {
   if (receipt.status !== 'COMPLETE' || receipt.run_id !== manifest.run_id || receipt.terminal_equation?.valid !== true) throw new Error('report repair requires a completed, reconciled original run');
   const acquisition = json(path.join(runRoot, 'acquisition.json'));
   const mappings = json(path.join(runRoot, 'rendered-reports.json')).reports;
-  const trackerFile = interfaces.trackerUtils.resolveTrackerPath(careerRoot);
+  const trackerFile = resolveCareerPaths(careerRoot).trackerFile;
   if (!path.isAbsolute(trackerFile)) throw new Error('canonical tracker path must be absolute');
   const trackerText = read(trackerFile);
   const rows = parseTracker(trackerText, interfaces.trackerParser);
@@ -82,7 +83,7 @@ async function buildPlan({ runRoot, careerRoot, manifest, interfaces }) {
   const reserveNumbers = nextNumbers(careerRoot, rows, manifest.entries.filter(entry => entry.report_number === null).length);
   const selected = [];
   const candidateText = plan.candidate_sources.map(source => `\n--- ${source.label} ---\n${read(source.path)}`).join('');
-  const reportFiles = readdirSync(path.join(careerRoot, 'reports')).filter(name => name.endsWith('.md') && !name.endsWith('-RESERVED.md'));
+  const reportFiles = readdirSync(path.join(resolveCareerPaths(careerRoot).dataRoot, 'reports')).filter(name => name.endsWith('.md') && !name.endsWith('-RESERVED.md'));
   for (const entry of manifest.entries) {
     const key = entry.posting_key;
     if (!receipt.committed_evaluated_keys?.includes(key)) throw new Error(`${key}: original run did not persist a successful evaluation`);
@@ -101,13 +102,13 @@ async function buildPlan({ runRoot, careerRoot, manifest, interfaces }) {
     if (!jdFile.startsWith(`${runRoot}${path.sep}`)) throw new Error(`${key}: source JD escapes run`);
     const jdText = read(jdFile);
     sources.add(jdFile); sources.add(part.file); sources.add(path.join(runRoot, 'results', `${worker}.json`));
-    const persistedJd = path.join(careerRoot, 'jds', `discovery-${manifest.run_id}-${key.replace(/[^A-Za-z0-9._-]/g, '-')}.md`);
+    const persistedJd = path.join(resolveCareerPaths(careerRoot).dataRoot, 'jds', `discovery-${manifest.run_id}-${key.replace(/[^A-Za-z0-9._-]/g, '-')}.md`);
     if (!existsSync(persistedJd) || read(persistedJd) !== jdText) throw new Error(`${key}: persisted source JD differs from the original run`);
     sources.add(persistedJd);
     const originalResult = exact(json(path.join(runRoot, 'results', `${worker}.json`)).results.filter(item => item.posting_key === key), `${key}: original final result`);
     if (result.report_decision === 'Skip') {
       if (entry.report_number === null || !result.hard_exclusion || !originalResult.report) throw new Error(`${key}: only an existing evidenced hard-stop report may be retired`);
-      result.report = { ...structuredClone(originalResult.report), reason: result.rationale };
+      result.report = { ...structuredClone(originalResult.report), reason: result.rationale, discard_reasons: [result.rationale] };
     }
     if (!result.report) throw new Error(`${key}: original raw report payload is required; repair never rescores or invents one`);
     if (entry.remove_gap) {
@@ -115,10 +116,10 @@ async function buildPlan({ runRoot, careerRoot, manifest, interfaces }) {
       if (index < 0 || result.report.gaps.filter(gap => JSON.stringify(gap) === JSON.stringify(entry.remove_gap)).length !== 1) throw new Error(`${key}: approved raw gap no longer matches exactly`);
       result.report.gaps.splice(index, 1);
     }
-    validateStructuredReport(result.report, { jdText, label: `${key}: repaired report` });
+    validateStructuredReport(result.report, { jdText, eligibilityStatus: result.eligibility_status, schemaVersion: plan.result_schema_version, decision: result.report_decision, label: `${key}: repaired report` });
     result.work_authorization = deriveReportWorkAuthorization({ item: raw, jdText, candidateText });
     const existingMatches = reportFiles.filter(name => {
-      const identity = readReportIdentity(read(path.join(careerRoot, 'reports', name)));
+      const identity = readReportIdentity(read(path.join(resolveCareerPaths(careerRoot).dataRoot, 'reports', name)));
       return identity.posting_key === key || identity.posting_url === record.primary_url;
     });
     let number = entry.report_number;
@@ -127,9 +128,9 @@ async function buildPlan({ runRoot, careerRoot, manifest, interfaces }) {
       const mapping = exact(mappings.filter(mapping => mapping.posting_key === key && mapping.report_number === number), `${key}: original report mapping`);
       const resolved = resolveCompactReport(number, careerRoot, path.dirname(path.dirname(runRoot)));
       if (resolved.postingKey !== key || resolved.postingUrl !== record.primary_url || resolved.runId !== manifest.run_id
-          || path.relative(careerRoot, resolved.reportFile) !== mapping.report_path || existingMatches.length !== 1) throw new Error(`${key}: report exact identity mismatch`);
+          || path.relative(resolveCareerPaths(careerRoot).dataRoot, resolved.reportFile) !== mapping.report_path || existingMatches.length !== 1) throw new Error(`${key}: report exact identity mismatch`);
       reportPath = mapping.report_path;
-      if (existsSync(path.join(careerRoot, 'data/daily-scan-repairs', manifest.run_id, 'report-backups', path.basename(reportPath)))) throw new Error(`${key}: preexisting repair backup requires review`);
+      if (existsSync(path.join(resolveCareerPaths(careerRoot).dataRoot, 'data/daily-scan-repairs', manifest.run_id, 'report-backups', path.basename(reportPath)))) throw new Error(`${key}: preexisting repair backup requires review`);
       oldText = resolved.original;
       const date = reportDate(resolved.header);
       if (!date || oldText !== renderScanReportDocument({ result: originalResult, record, number: String(number).padStart(3, '0'), date, runId: manifest.run_id })) throw new Error(`${key}: existing report changed from original rendered evidence`);
@@ -168,7 +169,7 @@ async function buildPlan({ runRoot, careerRoot, manifest, interfaces }) {
   const output = {
     schema_version: 1, run_id: manifest.run_id, run_root: runRoot, career_ops_root: careerRoot,
     manifest_sha256: manifestHash(manifest), tracker_path: trackerFile, tracker_sha256: hash(trackerText),
-    reports_catalog_sha256: hash(JSON.stringify(readdirSync(path.join(careerRoot, 'reports')).sort())),
+    reports_catalog_sha256: hash(JSON.stringify(readdirSync(path.join(resolveCareerPaths(careerRoot).dataRoot, 'reports')).sort())),
     source_hashes: sourceHashes, effects: selected.map(item => item.effect), original_run_untouched: true,
   };
   output.plan_sha256 = hash(JSON.stringify(output));
@@ -218,7 +219,7 @@ function previewRow({ careerRoot, trackerFile, row, score, status, note, interfa
 async function applyPlan(value, interfaces, receiptFile) {
   const { output: plan, selected, trackerFile } = value;
   const careerRoot = plan.career_ops_root;
-  const backupRoot = path.join(careerRoot, 'data/daily-scan-repairs', plan.run_id, 'report-backups');
+  const backupRoot = path.join(resolveCareerPaths(careerRoot).dataRoot, 'data/daily-scan-repairs', plan.run_id, 'report-backups');
   const pipelineBefore = runPipelineCheck(careerRoot, trackerFile);
   if (pipelineBefore.exit_code !== 0 || pipelineBefore.errors !== 0 || pipelineBefore.warnings !== 0) throw new Error(`report repair preflight pipeline failed: exit=${pipelineBefore.exit_code}, errors=${pipelineBefore.errors}, warnings=${pipelineBefore.warnings}`);
   const journal = { schema_version: 1, status: 'APPLYING', plan, pipeline_before: pipelineBefore, completed: [], rollback_errors: [] };
@@ -229,7 +230,7 @@ async function applyPlan(value, interfaces, receiptFile) {
     for (const item of selected) {
       verifySources(plan);
       const { effect, record, result } = item;
-      const target = path.join(careerRoot, effect.report_path);
+      const target = path.join(resolveCareerPaths(careerRoot).dataRoot, effect.report_path);
       const completed = { ...effect, report_written: false, row_written: false, backup: null, row_after: null };
       journal.completed.push(completed); save();
       if (effect.operation === 'correct') {
@@ -279,7 +280,7 @@ async function applyPlan(value, interfaces, receiptFile) {
     if (journal.pipeline_after.exit_code !== 0 || journal.pipeline_after.errors !== 0 || journal.pipeline_after.warnings !== 0) throw new Error(`report repair post-write pipeline failed: exit=${journal.pipeline_after.exit_code}, errors=${journal.pipeline_after.errors}, warnings=${journal.pipeline_after.warnings}`);
     verifySources(plan);
     const finalRows = parseTracker(read(trackerFile), interfaces.trackerParser);
-    for (const item of journal.completed) if (fileHash(path.join(careerRoot, item.report_path)) !== item.new_report_sha256
+    for (const item of journal.completed) if (fileHash(path.join(resolveCareerPaths(careerRoot).dataRoot, item.report_path)) !== item.new_report_sha256
       || finalRows.filter(row => row.raw === item.row_after).length !== 1) throw new Error(`${item.posting_key}: final report/row hash mismatch`);
     journal.status = 'COMPLETE'; save();
     return journal;
@@ -287,7 +288,7 @@ async function applyPlan(value, interfaces, receiptFile) {
     for (const completed of [...journal.completed].reverse()) {
       try {
         const item = selected.find(item => item.effect.posting_key === completed.posting_key);
-        const target = path.join(careerRoot, completed.report_path);
+        const target = path.join(resolveCareerPaths(careerRoot).dataRoot, completed.report_path);
         // Check the whole owned savepoint before compensating either surface.
         // A user edit to its report must not silently roll its row back first.
         if (completed.report_written && fileHash(target) !== completed.new_report_sha256) throw new Error('report changed after repair; refusing rollback overwrite');
@@ -333,12 +334,12 @@ export async function repairScanReports({ runRoot, careerRoot, manifest, apply =
     const prior = json(receiptFile);
     if (prior.status !== 'COMPLETE' || prior.plan.manifest_sha256 !== manifestHash(manifest)) throw new Error(`existing report repair journal needs review: ${receiptFile}`);
     const rows = parseTracker(read(prior.plan.tracker_path), interfaces.trackerParser);
-    for (const item of prior.completed) if (fileHash(path.join(careerRoot, item.report_path)) !== item.new_report_sha256 || !rows.some(row => row.raw === item.row_after)) throw new Error('completed report repair state changed; refusing automatic reapply');
+    for (const item of prior.completed) if (fileHash(path.join(resolveCareerPaths(careerRoot).dataRoot, item.report_path)) !== item.new_report_sha256 || !rows.some(row => row.raw === item.row_after)) throw new Error('completed report repair state changed; refusing automatic reapply');
     return { status: 'ALREADY_APPLIED', receipt_file: receiptFile, plan: prior.plan };
   }
   if (!apply) return { status: 'DRY_RUN', plan: (await buildPlan({ runRoot, careerRoot, manifest, interfaces })).output };
   if (!expectedPlanHash) throw new Error('--apply requires the reviewed --plan-sha256 from a dry run');
-  const lock = await interfaces.pipelineLock.acquirePipelineLock(path.join(careerRoot, '.daily-scan-commit'), { timeoutMs: 60_000, staleMs: 10 * 60_000 });
+  const lock = await interfaces.pipelineLock.acquirePipelineLock(path.join(resolveCareerPaths(careerRoot).dataRoot, '.daily-scan-commit'), { timeoutMs: 60_000, staleMs: 10 * 60_000 });
   try {
     const value = await buildPlan({ runRoot, careerRoot, manifest, interfaces });
     if (value.output.plan_sha256 !== expectedPlanHash) throw new Error('repair plan changed; dry-run and review again');

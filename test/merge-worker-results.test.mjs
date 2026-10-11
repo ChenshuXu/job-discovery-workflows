@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { loadDailyScanRuntime, workerIdsForRuntime } from '../src/daily-scan-runtime.mjs';
 import { failWorkerResult, mergeWorkerResults, validateWorkerParts } from '../src/merge-worker-results.mjs';
 import { loadScanResults } from '../src/scan-results.mjs';
+import { snapshotScoringInputs } from '../src/scoring-inputs.mjs';
 
 function fixture() {
   const run = mkdtempSync(path.join(os.tmpdir(), 'worker-parts-'));
@@ -18,7 +19,7 @@ function fixture() {
   runtime.scheduler = { ...runtime.scheduler, batch_size: 2, max_active_workers: 2 };
   const assignments = {
     schema_version: 1,
-    result_schema_version: 4,
+    result_schema_version: 6,
     run_id: 'test-run',
     runtime,
     location_policy: { local_metros: ['Seattle', 'Bellevue', 'Redmond', 'Kirkland', 'Bothell', 'Renton', 'Issaquah', 'SeaTac', 'Tacoma', 'Everett'] },
@@ -38,6 +39,10 @@ function fixture() {
     return { label, path: file, sha256: createHash('sha256').update(content).digest('hex') };
   });
   assignments.career_ops_root = candidateRoot;
+  writeFileSync(path.join(candidateRoot, 'modes/_shared.md'), '# Canonical scoring guidance fixture\n');
+  mkdirSync(path.join(candidateRoot, 'templates'), { recursive: true });
+  writeFileSync(path.join(candidateRoot, 'templates/discard-reasons.yml'), '{"reasons":[{"id":"tech_stack_mismatch","when":"Core stack does not fit."}]}');
+  Object.assign(assignments, snapshotScoringInputs(candidateRoot));
   assignments.semantic_identities = Object.fromEntries(['a:1', 'b:2', 'c:3'].map(key => [key, {
     semantic_job_key: `semantic:${key}`, posting_context_key: `context:${key}`,
   }]));
@@ -53,8 +58,8 @@ function fixture() {
   writeFileSync(path.join(run, 'acquisition.json'), JSON.stringify({ acquired }));
   const result = posting_key => rawResult(posting_key);
   writeFileSync(path.join(run, 'assignments.json'), JSON.stringify(assignments));
-  writeFileSync(path.join(run, 'results/worker-1.part-1.json'), JSON.stringify({ result_schema_version: 4, worker: 'worker-1', part: 1, results: [result('a:1'), result('b:2')] }));
-  writeFileSync(path.join(run, 'results/worker-1.part-2.json'), JSON.stringify({ result_schema_version: 4, worker: 'worker-1', part: 2, results: [result('c:3')] }));
+  writeFileSync(path.join(run, 'results/worker-1.part-1.json'), JSON.stringify({ result_schema_version: 6, worker: 'worker-1', part: 1, results: [result('a:1'), result('b:2')] }));
+  writeFileSync(path.join(run, 'results/worker-1.part-2.json'), JSON.stringify({ result_schema_version: 6, worker: 'worker-1', part: 2, results: [result('c:3')] }));
   return run;
 }
 
@@ -71,9 +76,14 @@ function structuredReport(overrides = {}) {
   return {
     archetype: 'Backend platform', reason: 'Direct backend alignment.',
     evidence: [{ source: 'jd', quote: 'Build backend systems', explanation: 'Relevant backend scope.' }],
-    gaps: [], risk_level: 'Low', confidence: 'High',
+    gaps: [], risk_level: 'Low', confidence: 'Low',
+    score_evidence: Object.fromEntries(['cv_match', 'north_star', 'compensation', 'culture', 'red_flags'].map(key => [key,
+      ['compensation', 'culture'].includes(key)
+        ? { status: 'unknown', source: null, observation: 'Evidence is absent.', question: `Confirm ${key}.` }
+        : { status: 'supported', source: 'cv.md/CV', observation: 'Fixture evidence.', question: null }])),
+    confidence_gaps: ['Confirm compensation.', 'Confirm culture.'],
     risk_summary: { classification: 'clear', culture: 'not_evaluated', interview_redflags: 'not_evaluated', ai_infra: 'consistent' },
-    advertised_comp: null, company_confidential_evidence: null,
+    discard_reasons: [], fixed_term_evidence: null, advertised_comp: null, company_confidential_evidence: null,
     ...overrides,
   };
 }
@@ -476,7 +486,7 @@ test('merger preserves model exclusions and prevents reports for them', () => {
 
 test('deterministic merger rejects an omitted or misplaced assigned key', () => {
   const run = fixture();
-  writeFileSync(path.join(run, 'results/worker-1.part-2.json'), JSON.stringify({ result_schema_version: 4, worker: 'worker-1', part: 2, results: [{ posting_key: 'b:2' }] }));
+  writeFileSync(path.join(run, 'results/worker-1.part-2.json'), JSON.stringify({ result_schema_version: 6, worker: 'worker-1', part: 2, results: [{ posting_key: 'b:2' }] }));
   assert.throws(() => validateWorkerParts(run, 'worker-1'), /keys do not match assigned batch/);
 });
 
@@ -504,7 +514,7 @@ test('new runs reject missing result schema versions and candidate-source drift'
   writeFileSync(partFile, JSON.stringify(part));
   assert.throws(() => validateWorkerParts(run, 'worker-1'), /invalid part 1 schema/);
 
-  part.result_schema_version = 4;
+  part.result_schema_version = 6;
   writeFileSync(partFile, JSON.stringify(part));
   const plan = JSON.parse(readFileSync(path.join(run, 'assignments.json'), 'utf8'));
   writeFileSync(plan.candidate_sources[0].path, 'changed');
@@ -546,7 +556,7 @@ test('real failed JDs flow through merger and loader without leaking excluded ca
 });
 
 
-test('v4 renders authoritative fields once from structured evidence with zero gaps', () => {
+test('v6 renders authoritative fields once from structured evidence with zero gaps', () => {
   const run = fixture();
   candidate(run, structuredReport({ evidence: [
     { source: 'jd', quote: 'Build backend systems', explanation: 'Direct backend scope.' },
@@ -567,7 +577,7 @@ test('v4 renders authoritative fields once from structured evidence with zero ga
   assert.deepEqual(loadScanResults(run).errors, []);
 });
 
-test('v4 rejects duplicate derived fields and invalid structured evidence before commit', () => {
+test('v6 rejects duplicate derived fields and invalid structured evidence before commit', () => {
   const cases = [
     [r => { r.markdown = 'old payload'; }, /unsupported field markdown/],
     [r => { r.company = 'Wrong employer'; }, /unsupported field company/],
@@ -599,7 +609,7 @@ test('v4 rejects duplicate derived fields and invalid structured evidence before
   assert.throws(() => validateWorkerParts(run, 'worker-1'), /work_authorization requires/);
 });
 
-test('v4 escapes quotes, line breaks and Markdown without changing exact source data', () => {
+test('v6 escapes quotes, line breaks and Markdown without changing exact source data', () => {
   const run = fixture();
   const quote = 'Build "backend"\nsystems with `tools`.';
   const comp = 'USD 150,000–200,000\nplus "bonus"';
@@ -615,13 +625,13 @@ test('v4 escapes quotes, line breaks and Markdown without changing exact source 
   assert.equal(result.report.evidence[0].quote, quote);
   assert.equal(summary.advertised_comp, comp);
   assert.equal(summary.company_confidential, true);
-  assert.equal((markdown.match(/^## /gm) ?? []).length, 5);
+  assert.equal((markdown.match(/^## /gm) ?? []).length, 6);
   assert.equal((markdown.match(/^```/gm) ?? []).length, 2);
   assert.doesNotMatch(markdown.split('## Evidence')[1], /<script>/);
   assert.deepEqual(summary.soft_gaps, ['Tool-specific experience is not documented.']);
 });
 
-test('v4 renders model sponsorship and uncertain-eligibility actions from supplied evidence', () => {
+test('v6 renders model sponsorship and uncertain-eligibility actions from supplied evidence', () => {
   for (const [jd, expectedDecision, auth] of [
     ['Visa sponsorship is available.', 'Apply', 'sponsors'],
     ['**Employment Type:** Full-Time / Contract', 'Research first', 'unstated'],
@@ -646,17 +656,17 @@ test('v4 renders model sponsorship and uncertain-eligibility actions from suppli
   }
 });
 
-test('v4 checks the rendered total budget including immutable acquisition fields', () => {
+test('v6 checks the rendered total budget including immutable acquisition fields', () => {
   const run = fixture();
   const acquisitionFile = path.join(run, 'acquisition.json');
   const acquisition = JSON.parse(readFileSync(acquisitionFile));
-  acquisition.acquired[0].company = 'x'.repeat(2500);
+  acquisition.acquired[0].company = 'x'.repeat(6000);
   writeFileSync(acquisitionFile, JSON.stringify(acquisition));
   candidate(run);
-  assert.throws(() => validateWorkerParts(run, 'worker-1', { throughPart: 1 }), /report exceeds 2500 characters/);
+  assert.throws(() => validateWorkerParts(run, 'worker-1', { throughPart: 1 }), /report exceeds 6000 characters/);
 });
 
-test('v4 refuses v2/v3 assignments, parts, and finals without migrating artifacts', () => {
+test('v6 refuses v2/v3 assignments, parts, and finals without migrating artifacts', () => {
   for (const version of [2, 3]) for (const target of ['assignments.json', 'results/worker-1.part-1.json', 'results/worker-1.json']) {
     const run = fixture();
     mergeWorkerResults(run, 'worker-1');
@@ -666,7 +676,7 @@ test('v4 refuses v2/v3 assignments, parts, and finals without migrating artifact
     artifact.result_schema_version = version;
     const original = JSON.stringify(artifact);
     writeFileSync(file, original);
-    if (target === 'assignments.json') assert.throws(() => loadScanResults(run), /result_schema_version must be 4/);
+    if (target === 'assignments.json') assert.throws(() => loadScanResults(run), /result_schema_version must be 6/);
     else assert.ok(loadScanResults(run).errors.some(error => /invalid .*schema/.test(error)));
     assert.equal(readFileSync(file, 'utf8'), original);
   }

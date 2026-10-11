@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { resolveCareerPaths } from './career-ops-paths.mjs';
 import { existsSync, linkSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -39,7 +40,7 @@ export function captureBaseline({ runRoot, careerRoot, maintenance = null }) {
     run_id: path.basename(root),
     captured_at: new Date().toISOString(),
     adapter_profile: snapshotAdapterProfile(),
-    location_policy: loadLocationPolicy(path.join(career, 'config/profile.yml')),
+    location_policy: loadLocationPolicy(resolveCareerPaths(career).profileFile),
     pipeline: runPipelineCheck(career),
     ...(maintenance ? { maintenance } : {}),
   };
@@ -58,11 +59,6 @@ function historyKeys(file, runId) {
   });
 }
 
-function resolveConfiguredCareerPath(careerRoot, configured, fallback) {
-  const value = configured || fallback;
-  return path.isAbsolute(value) ? path.normalize(value) : path.resolve(careerRoot, value);
-}
-
 async function resolveOfficialTrackerPath(careerRoot, requested) {
   if (requested) return path.resolve(requested);
   const trackerUtilsFile = path.join(careerRoot, 'tracker-utils.mjs');
@@ -72,7 +68,7 @@ async function resolveOfficialTrackerPath(careerRoot, requested) {
   const previous = process.cwd();
   process.chdir(careerRoot);
   try {
-    return trackerUtils.resolveTrackerPath(careerRoot);
+    return resolveCareerPaths(careerRoot).trackerFile;
   } finally {
     process.chdir(previous);
   }
@@ -96,11 +92,9 @@ export async function auditScanReceipt({
   const root = path.resolve(runRoot);
   const career = path.resolve(careerRoot);
   const resolvedTrackerFile = await resolveOfficialTrackerPath(career, trackerFile);
-  const resolvedScanHistoryFile = scanHistoryFile
-    ? resolveConfiguredCareerPath(career, scanHistoryFile, 'data/scan-history.tsv')
-    : resolveConfiguredCareerPath(career, process.env.CAREER_OPS_SCAN_HISTORY, 'data/scan-history.tsv');
+  const resolvedScanHistoryFile = scanHistoryFile ? path.resolve(career, scanHistoryFile) : resolveCareerPaths(career).scanHistoryFile;
   const run = validateRun(root);
-  const results = loadScanResults(root);
+  const results = loadScanResults(root, { allowLegacy: existsSync(path.join(root, 'receipt.json')) });
   const baselineFile = path.join(root, 'baseline.json');
   if (!existsSync(baselineFile)) throw new Error(`baseline missing: ${baselineFile}`);
   const baseline = JSON.parse(readFileSync(baselineFile, 'utf8'));
@@ -125,13 +119,14 @@ export async function auditScanReceipt({
     if (!semantic || !Array.isArray(semantic.results) || !location?.results) errors.push('semantic deduplication audit missing or invalid');
     else {
       const accepted = unique(location.results.filter(item => item.allowed === true).map(item => item.posting_key));
+      const held = unique((run.acquisition.blacklist_exclusions ?? []).map(item => item.posting_key));
       const semanticKeys = unique(semantic.results.map(item => item.primary_key));
-      if (!same(accepted, semanticKeys)) errors.push('location accepted keys != semantic audit keys');
+      if (held.some(key => semanticKeys.includes(key)) || !same(accepted, [...held, ...semanticKeys])) errors.push('location accepted keys != blacklist holds + semantic audit keys');
       const exact = semantic.results.filter(item => item.disposition === 'EXACT_HISTORY_DUPLICATE').map(item => item.primary_key);
       const aliases = semantic.results.filter(item => item.disposition === 'SAME_CONTEXT_SEMANTIC_ALIAS').map(item => item.primary_key);
       const planned = semantic.results.filter(item => item.disposition === 'ASSIGNMENT').map(item => item.primary_key);
       if (!same(planned, assignments)) errors.push('semantic audit assignment keys != assignments union');
-      if (!same([...exact, ...aliases, ...planned], accepted)) errors.push('semantic identity partitions do not conserve location-accepted keys');
+      if (!same([...held, ...exact, ...aliases, ...planned], accepted)) errors.push('blacklist and semantic identity partitions do not conserve location-accepted keys');
       const pairs = assignments.map(key => results.plan.semantic_identities?.[key]).map(item => `${item?.semantic_job_key ?? ''}\0${item?.posting_context_key ?? ''}`);
       if (pairs.some(pair => pair === '\0') || (results.plan.runtime.semantic_dedup_mode === 'enforce' && new Set(pairs).size !== pairs.length)) {
         errors.push('assignments are not unique by semantic/context identity');
@@ -184,7 +179,7 @@ export async function auditScanReceipt({
     if (!same(reportKeys, candidateKeys)) errors.push('report keys != committed candidate keys');
     for (const report of reports) {
       const record = records.get(report.posting_key);
-      const reportFile = path.join(career, report.report_path);
+      const reportFile = path.join(resolveCareerPaths(career).dataRoot, report.report_path);
       if (!record || !existsSync(reportFile)) { errors.push(`${report.posting_key}: report missing`); continue; }
       const reportIdentity = readReportIdentity(readFileSync(reportFile, 'utf8'));
       if (reportIdentity.posting_url !== record.primary_url || reportIdentity.posting_key !== record.primary_key) errors.push(`${report.posting_key}: report lacks exact primary identity URL/key`);
@@ -231,6 +226,10 @@ export async function auditScanReceipt({
     location_exclusion_count: Number(run.acquisition.location_exclusion_count ?? 0),
     location_ambiguous_count: Number(run.acquisition.location_ambiguous_count ?? 0),
     location_scope_audit: hasLocationScopeAudit ? 'triage/location-scope.json' : null,
+    blacklist_exclusion_count: Number(run.acquisition.blacklist_exclusion_count ?? 0),
+    blacklist_exclusion_keys: unique((run.acquisition.blacklist_exclusions ?? []).map(item => item.posting_key)),
+    blacklist_audit: results.plan.blacklist_audit ?? null,
+    blacklist_overrides: results.plan.blacklist_overrides ?? [],
     candidate_keys: unique(candidateKeys),
     reports,
     tracker_keys: unique(trackerKeys),

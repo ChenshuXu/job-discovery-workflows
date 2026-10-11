@@ -1,6 +1,6 @@
 // The worker owns JD interpretation. Code checks evidence and result consistency,
 // then derives mechanical caps, decisions and presentation from that judgment.
-export const RESULT_SCHEMA_VERSION = 4;
+export { RESULT_SCHEMA_VERSION } from './scan-report-contract.mjs';
 const LEVEL_SIGNALS = new Set(['target', 'staff_equivalent', 'unclear']);
 const ELIGIBILITY_STATUSES = new Set(['eligible', 'ineligible', 'needs_verification']);
 const ELIGIBILITY_CATEGORIES = new Set(['no_sponsorship', 'work_authorization', 'citizenship', 'export_control',
@@ -17,7 +17,7 @@ const quoteFromEvidence = value => typeof value === 'string' ? value.trim().matc
 
 function requireQuote(evidence, jdText, label) {
   const quote = quoteFromEvidence(evidence);
-  if (!quote?.trim() || !jdText.includes(quote)) throw new Error(`${label} is not an exact JD substring`);
+  if (!quote?.trim() || !jdText.includes(quote)) throw new Error(`${label} is not an exact JD substring; use one JD: "<continuous exact passage>" value, not joined quotations. Preserve the evidence-backed judgment when repairing the quote.`);
 }
 
 export function deriveReportWorkAuthorization({ item, jdText, candidateText }) {

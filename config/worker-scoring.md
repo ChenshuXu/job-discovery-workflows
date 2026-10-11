@@ -1,4 +1,4 @@
-# Daily Scan scoring judgment (v4)
+# Daily Scan scoring judgment (v6)
 
 Interpret the supplied complete JDs, locked candidate sources and location policy.
 This reference defines judgment only; the caller owns input loading and output delivery.
@@ -57,7 +57,15 @@ Use the JD as a second, contradiction-detection gate. If it explicitly requires 
 
 ## Scoring rules
 
-Use five dimensions plus a global judgment, not an arithmetic average: CV match, technical fit, level/growth, culture signals, and red flags.
+Use Career-Ops `modes/_shared.md` and current `_custom.md` Scoring Rules from the
+locked `rule_sources`. The five dimensions are **CV match, North Star alignment,
+compensation, cultural signals, and red flags**. Integrate them into one holistic
+Global Score, never an arithmetic average. Technical depth belongs in CV match;
+level/growth and target archetypes belong in North Star alignment. Compensation
+is a required dimension: distinguish advertised range, guaranteed base, conditional
+pay and missing market context. Do not turn missing compensation evidence into a
+supported finding or substitute a technical-fit dimension. The same final score
+must appear in the report header, Machine Summary, and tracker.
 
 **Target level: Mid-level through Senior.**
 
@@ -74,17 +82,38 @@ Use five dimensions plus a global judgment, not an arithmetic average: CV match,
 <3.5       Recommend against applying
 ```
 
-For culture, use only the JD text. Lack of company-research evidence is not counterevidence and must not trigger the 2/5 culture cap. Apply that cap only when the JD contains actual counterevidence.
+For culture, apply the canonical culture-screen rules and any locked user override. Daily Scan uses the complete JD and locked profile; it does no new company research. Missing evidence remains partial or unknown. Absence is not counterevidence; respect the explicit profile setting `culture_screen.deprioritize_if_absent` when present.
 
 Treat specialized stack depth as a scoring gap, not a hard exclusion. Do not bulk-exclude target-adjacent backend, platform, distributed-systems, data-platform, developer-infrastructure, or AI-infrastructure roles. Distinguish baseline requirements from preferred/contextual technologies.
 
-Use hypothetical calibration examples only when the current locked candidate facts support
-all stated strengths and gaps; these examples do not describe the user:
+For each gap, compare the explanation with its quoted requirement in context.
+Preserve the JD's scope, modality and required/preferred status. Do not infer an
+opposite requirement from a candidate limitation: a read-only agent project does
+not make an autonomous-agent JD require write access. Likewise, do not turn
+technology exposure into required ownership or an undocumented skill into a
+confirmed inability. Remove unsupported qualifiers while keeping evidenced gaps;
+put a consequential unknown in `confidence_gaps` instead of inventing a requirement.
 
-- **3.8 — Fictional backend role:** core backend requirements match, but a mandatory language lacks candidate evidence and platform ownership is limited.
-- **4.0 — Fictional platform role:** backend workflows, reliability and ownership match; a required domain and language remain gaps.
-- **4.3 — Fictional infrastructure role:** strong supported control-plane, API and automation experience; specialized hardware requirements remain a gap.
-- **3.4 — Fictional Staff+ role:** technical requirements match, but the role exceeds this release's supported target level; place the deduction in level/growth.
+Treat previously recorded scores as historical observations, not replacement
+scoring rules. A prior technical/level-only score is not a canonical Global Score
+anchor: evaluate all five dimensions against the current locked evidence.
+
+For every report candidate, classify the five evidence statuses and provide a
+concrete source/observation and unresolved question in `report.score_evidence`.
+Use `unknown` with a null source when evidence is missing; never invent a quote.
+A JD advertised salary alone can leave market position or components unverified.
+Evidence confidence is independent of score and posting legitimacy:
+
+- **Low** when CV match or North Star is unknown, at least two dimensions are
+  unknown, or a material eligibility/work-model contradiction remains unresolved
+  (`needs_verification`). Incomplete/inaccessible JDs fail acquisition before scoring.
+- **Medium** when no Low condition holds but any dimension is partial/unknown or
+  another material question remains.
+- **High** only when all five dimensions are supported and no material question remains.
+
+List up to three concrete decision-changing checks in `confidence_gaps`; use an
+empty list only when none remain. Code validates these relationships, while you
+own whether the cited evidence supports the conclusion.
 
 When evidence is genuinely ambiguous, keep the fit score evidence-bound and use `eligibility_status=needs_verification` for eligibility uncertainty. Do not raise the score to hide uncertainty.
 
@@ -123,3 +152,13 @@ For every report candidate include top-level `work_authorization` with exactly
 
 Example: `"work_authorization":{"value":"sponsors","quote":"We offer visa sponsorship for this role."}`.
 Outside report candidates this field may be omitted. Do not supply its generated `label`.
+
+## Report signal alignment
+
+For report candidates follow `report-contract.md`: classify Consider forecasts
+using the locked Career-Ops `templates/discard-reasons.yml` definitions, retaining
+free text when no id fits. Apply/Research first have no discard forecasts.
+Record finite-term employment using one continuous JD quote, without guessing a
+duration or mistaking customer contracts/contractor status for a finite term.
+This descriptive signal does not alter score or legitimacy. The existing
+permanent-full-time eligibility gate still applies to finite employment terms.

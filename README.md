@@ -56,9 +56,11 @@ Do not start a scan, retention cleanup, schedule, application or message during 
    from Job Discovery and use its `checks` and `action` fields as the initial inventory.
    Exit 1 means missing/invalid setup items, not a reason to discard existing files.
    Alternative dependency locations can be passed with `--career-ops PATH`,
-   `--career-docs PATH`, `--jobspy PATH` for setup-check. For resume commands, export
-   `CAREER_OPS_ROOT=/absolute/path/to/career-ops` in the same shell; setup-check also
-   uses it unless `--career-ops` overrides it. Other workflows take their existing
+   `--career-docs PATH`, `--jobspy PATH` for setup-check. `--career-ops` and
+   `CAREER_OPS_CODE_ROOT` select the executable Career-Ops checkout. Candidate files,
+   reports and application data resolve through its official resolver:
+   `CAREER_OPS_ROOT` / `CAREER_OPS_DATA_DIR`, then `.career-ops-data`, then the checkout.
+   `CAREER_OPS_TRACKER` selects an alternate tracker. Other workflows take their existing
    path flags/config fields; these setup-check flags do not configure them automatically.
 2. **Collect missing facts in one short exchange.** Ask for the user's CV or its local
    path, which workflows/sources to enable, target role terms and seniority, desired
@@ -78,7 +80,8 @@ Do not start a scan, retention cleanup, schedule, application or message during 
    Create or update `cv.md`, `config/profile.yml` and `modes/_profile.md` consistently through
    that workflow. Do not fabricate titles, dates, experience, metrics or work authorization.
    Run `node doctor.mjs --json --cli codex` (use your actual CLI) and inspect `missing`
-   and `unpersonalized` even when it exits 0. Doctor can copy missing templates; personalize
+   and `unpersonalized` even when it exits 0. Current upstream copies missing templates
+   only with `--init-templates`; personalize
    the new upstream `modes/_brief.md` from the same CV and confirmed choices as well.
    An automatically copied template is not completed onboarding.
    Keep all unrelated profile fields and documents. The resume parser needs the headings
@@ -364,6 +367,14 @@ end-to-end compatibility. `npm test` uses disposable synthetic fixtures and does
 need a private Career-Ops checkout. Production use requires Career-Ops, your profile and
 source configuration. Career-Ops `doctor.mjs` may bootstrap missing files.
 
+With recent Career-Ops versions, use `node src/career-ops-health.mjs --career-ops ../career-ops`
+for the Discovery compatibility check. Upstream's verifier may warn that a compact
+report has no report-number-named JD archive. Discovery retains that original warning
+and resolves it only when the complete captured JD passes its content contract and
+matches the report's exact run, posting key and URL. Missing or mismatched archives and
+all unrelated warnings remain blocking. This check reads a temporary copy; it does not
+clean reservations or change the source workspace.
+
 For the first real scan, invoke `$career-ops-daily-linkedin-scan` in your agent and ask it
 to run enabled sources with your configured profile. It owns phase order and verification;
 a successful run returns reports and `runs/<run-id>/receipt.json`. A scan writes evaluations
@@ -422,8 +433,9 @@ npm run setup -- --workflows daily-scan --sources jobspy --apply
 Workflows: `daily-scan,expand,resume,apply,gmail,interview,post-scan,google-ats,process-infographic`.
 No arguments displays choices; default mode previews. `--apply` creates missing files only,
 preserves existing values and links, and stops on link conflicts. `--install` can clone
-missing Career-Ops and JobSpy main and prepare/verify JobSpy's venv. `CAREER_OPS_ROOT`
-also selects the Career-Ops installation target. Run `npm install` in a newly cloned
+missing Career-Ops and JobSpy main and prepare/verify JobSpy's venv. `CAREER_OPS_CODE_ROOT`
+selects the Career-Ops installation target; `CAREER_OPS_ROOT` selects its private data.
+Run `npm install` in a newly cloned
 Career-Ops checkout, then complete its onboarding, Ego/host connections, the unique
 Career Docs register and your template using the instructions above.
 Examples and file presence never count as confirmed candidate facts or workflow readiness.

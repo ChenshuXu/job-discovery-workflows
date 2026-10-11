@@ -41,10 +41,10 @@ Job Discovery 基于以下开源项目构建。感谢这些项目的维护者和
 
 ### Agent 执行步骤
 
-1. **先定位再修改。** 找到 Job Discovery、Career-Ops、JobSpy 和 Career Docs，优先同级布局，但复用用户已有安装与登记表。读取各工作区已有的 AGENTS.md。从 Job Discovery 运行 `node src/setup-check.mjs --json`，按 `checks` 和 `action` 建立缺项清单。退出码 1 表示设置缺失或无效，不能据此删除旧文件。这些自定义路径可用 `--career-ops PATH`、`--career-docs PATH`、`--jobspy PATH` 传给 setup-check。简历命令须在同一 shell 中设置 `export CAREER_OPS_ROOT=/绝对路径/career-ops`；setup-check 也读取此值，显式 `--career-ops` 优先。其他流程使用各自已有的参数或配置路径，setup-check 参数不会自动修改它们。
+1. **先定位再修改。** 找到 Job Discovery、Career-Ops、JobSpy 和 Career Docs，优先同级布局，但复用用户已有安装与登记表。读取各工作区已有的 AGENTS.md。从 Job Discovery 运行 `node src/setup-check.mjs --json`，按 `checks` 和 `action` 建立缺项清单。退出码 1 表示设置缺失或无效，不能据此删除旧文件。这些自定义路径可用 `--career-ops PATH`、`--career-docs PATH`、`--jobspy PATH` 传给 setup-check。`--career-ops` 和 `CAREER_OPS_CODE_ROOT` 选择可执行的 Career-Ops checkout，简历命令也使用后者。资料、报告与申请数据按上游规则定位：`CAREER_OPS_ROOT` / `CAREER_OPS_DATA_DIR`，其次 `.career-ops-data`，最后才是 checkout；`CAREER_OPS_TRACKER` 可指定独立 tracker。其他流程使用各自已有的参数或配置路径，setup-check 参数不会自动修改它们。
 2. **集中询问缺少的信息。** 收集用户的 CV 或本地路径、要启用的流程/来源、目标岗位关键词与级别、城市/远程范围、雇佣类型、雇主排除项、时区、匹配所需的工作许可/赞助事实，以及已有面试登记表。只有选用相关流程时才询问 Gmail 账户和浏览器 profile。创建空登记表前确认是否已有活跃面试；缺文件不代表没有面试。复用本轮已提供的答案，等待时继续独立设置；不索取密码、cookie 或一次性验证码。
 3. **安装缺失工具。** 按下文安装依赖，JobSpy 使用 main。仅在缺少时安装 Career-Ops、Ego Lite，使 8 个内置 Skill 可用并加载所需外部 Skill。设置授权不意味着升级、重置或替换已有安装。登录/验证由用户通过正常浏览器流程完成，凭证不写入报告或 Git。
-4. **设置 Career-Ops。** 在其仓库读取自己的 Skill 和安装说明，使用 `interview` 模式进行资料/CV onboarding。依据真实 CV 和已确认回答，一致地创建或更新 `cv.md`、`config/profile.yml`、`modes/_profile.md`，保留其他字段和文档。不虚构职位、时间、经历、指标或工作许可。运行 `node doctor.mjs --json --cli codex`（换成实际 CLI），即使退出码为 0 也读取 `missing` 和 `unpersonalized`。Doctor 可能补缺失模板；新上游的 `modes/_brief.md` 也须依据同一 CV 和已确认选择个性化，自动复制模板不代表 onboarding 完成。简历解析器需要 `## PROFESSIONAL EXPERIENCE`、`### 职位, 公司 | 地点` 和 `-` 条目，以及 `## TECHNICAL SKILLS` 下的 `**类别:** 技能, 技能`；适配格式不能改动事实。缺 CV 或事实不明确时记录具体阻碍。
+4. **设置 Career-Ops。** 在其仓库读取自己的 Skill 和安装说明，使用 `interview` 模式进行资料/CV onboarding。依据真实 CV 和已确认回答，一致地创建或更新 `cv.md`、`config/profile.yml`、`modes/_profile.md`，保留其他字段和文档。不虚构职位、时间、经历、指标或工作许可。运行 `node doctor.mjs --json --cli codex`（换成实际 CLI），即使退出码为 0 也读取 `missing` 和 `unpersonalized`。当前上游仅在追加 `--init-templates` 时补缺失模板；`modes/_brief.md` 也须依据同一 CV 和已确认选择个性化，自动复制模板不代表 onboarding 完成。简历解析器需要 `## PROFESSIONAL EXPERIENCE`、`### 职位, 公司 | 地点` 和 `-` 条目，以及 `## TECHNICAL SKILLS` 下的 `**类别:** 技能, 技能`；适配格式不能改动事实。缺 CV 或事实不明确时记录具体阻碍。
 5. **配置搜索和 Career Docs。** 按下表和目录结构操作。只给缺失配置复制 example；已有文件先读取，再合并用户明确选择，不能用示例覆盖。搜索参数与 profile 地点政策要一致。只创建 Career Docs 缺失的骨架文件；已有面试登记通过 Gmail Skill 的 canonical writer 修改。
 6. **检查并修复。** 运行下文检查，修复常规设置错误后重跑受影响项。只对缺少的事实、账户或重要选择询问用户。不能为了检查通过而悄悄改变目标地区或关闭用户要求的功能；不支持的能力按流程标为阻碍。
 7. **逐流程交付。** 使用“可开始首次运行 / 需用户补充 / 暂不支持 / 验证失败”，列出具体文件/配置项、下一动作和实际检查结果。同时列出创建/修改的文件及未解问题。文件存在不等于就绪。设置到此结束，真实运行由用户另外发起。
@@ -221,6 +221,8 @@ npm test
 
 环境、导入、接口与 dry-run 检查不证明在线采集覆盖或端到端兼容。`npm test` 使用临时的虚构样例，不依赖私人 Career-Ops checkout。生产运行需要 Career-Ops、自己的资料和来源配置。Career-Ops `doctor.mjs` 可能创建缺失文件。
 
+较新的 Career-Ops 请用 `node src/career-ops-health.mjs --career-ops ../career-ops` 做 Discovery 兼容性健康检查。上游可能提示 compact report 没有按报告编号命名的 JD 归档；Discovery 保留原始 warning，仅在已保存 JD 正文通过内容契约、且与报告的 run、posting key 和 URL 精确一致时标为 resolved。归档缺失或错配以及其他 warning 仍然阻塞。检查在临时副本执行，不清理原工作区的 reservation 或修改资料。
+
 首次真实扫描在代理中调用 `$career-ops-daily-linkedin-scan`，要求按自己的配置运行已启用来源。Skill 负责阶段顺序和核验，成功后返回报告和 `runs/<run-id>/receipt.json`。扫描执行 retention 并写入评估，但不提交申请。申请需单独调用 `$career-ops-ego-apply` 并明确范围；其他流程使用对应 Skill。
 
 修复工具现在要求 `--manifest FILE`。先 dry-run，再应用：报告修复使用 `--plan-sha256 HASH`，排除岗位修复使用 `--expected-plan-hash HASH`。原始 run 不变。`examples/` 中的清单只用于说明结构，应换为审核过的准确 run/岗位身份，不能按标题猜测。
@@ -255,7 +257,7 @@ npm run setup -- --workflows daily-scan --sources jobspy --apply
 支持 `daily-scan,expand,resume,apply,gmail,interview,post-scan,google-ats,process-infographic`。
 无参数显示选择；默认预览，`--apply` 只初始化缺项，已有值和链接保留，冲突停止。
 `--install` 可 clone 缺失 Career-Ops、JobSpy main 并准备/验证 JobSpy venv；
-`CAREER_OPS_ROOT` 同时指定 Career-Ops 安装位置。新 clone 的 Career-Ops 还需在其目录
+`CAREER_OPS_CODE_ROOT` 指定 Career-Ops 安装位置；`CAREER_OPS_ROOT` 指定其私人数据目录。新 clone 的 Career-Ops 还需在其目录
 运行 `npm install`，再按上文完成 onboarding、Ego/宿主连接、Career Docs 唯一登记表与真实模板。
 安装程序不会把示例或文件存在当成已确认事实；每个所选功能列出缺项和下一步。
 当前只验收 Node 26.0.0/macOS；其他版本/平台尚未完成兼容验收。

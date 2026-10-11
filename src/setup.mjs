@@ -34,7 +34,7 @@ function noSymlinks(file) {
 }
 export function setup({ root = ROOT, workflows = [], sources = [], apply = false, links, install = false, python: pythonCommand = 'python3' } = {}) {
   root = realpathSync(root);
-  const careerOps = path.resolve(process.env.CAREER_OPS_ROOT || path.join(root, '../career-ops'));
+  const careerOps = path.resolve(process.env.CAREER_OPS_CODE_ROOT || path.join(root, '../career-ops'));
   if (!workflows.length) return { action: 'Choose --workflows ' + Object.keys(WORKFLOWS).join(','), writes: [] };
   if (workflows.some(x => !WORKFLOWS[x]) || sources.some(x => !['jobspy', 'ego-browser', 'jobright'].includes(x))) throw new Error('Unknown workflow or source');
   if (sources.length && !workflows.includes('daily-scan')) throw new Error('--sources requires daily-scan');

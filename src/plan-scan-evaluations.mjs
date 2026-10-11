@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadDailyScanRuntime, workerIdsForRuntime } from './daily-scan-runtime.mjs';
@@ -10,6 +9,9 @@ import { validateRun } from './run-contract.mjs';
 import { collectHistoricalSemanticContexts } from './posting-history.mjs';
 import { RESULT_SCHEMA_VERSION } from './scoring-safety.mjs';
 import { semanticIdentity } from './semantic-jd-identity.mjs';
+import { applyCareerBlacklist, assertCareerBlacklistUnchanged } from './career-ops-blacklist.mjs';
+import { snapshotScoringInputs, validateScoringInputs } from './scoring-inputs.mjs';
+import { resolveCareerPaths } from './career-ops-paths.mjs';
 
 function atomicJson(file, value) {
   const staged = `${file}.tmp-${process.pid}`;
@@ -99,14 +101,6 @@ export function assignKeys(keys, workerCount) {
 
 const semanticPair = identity => `${identity.semantic_job_key}\0${identity.posting_context_key}`;
 
-function candidateSources(careerRoot) {
-  return ['cv.md', 'config/profile.yml', 'modes/_profile.md'].map(label => {
-    const file = path.join(careerRoot, label);
-    if (!existsSync(file)) throw new Error(`approved candidate source missing: ${file}`);
-    return { label, path: file, sha256: createHash('sha256').update(readFileSync(file)).digest('hex') };
-  });
-}
-
 function buildSemanticDeduplicationAudit({ records, exactAudit, semanticHistory, runRoot, runId, mode }) {
   const exactDuplicates = new Set(exactAudit.results.filter(item => item.duplicate).map(item => item.primary_key));
   const representatives = new Map();
@@ -154,7 +148,7 @@ function buildSemanticDeduplicationAudit({ records, exactAudit, semanticHistory,
   };
 }
 
-export function planEvaluations(runDir, runtimeFile, careerDir) {
+export function planEvaluations(runDir, runtimeFile, careerDir, { allowBlacklisted = [] } = {}) {
   const root = path.resolve(runDir);
   if (!careerDir) throw new Error('Career-Ops path is required for exact historical deduplication');
   const careerRoot = path.resolve(careerDir);
@@ -165,22 +159,27 @@ export function planEvaluations(runDir, runtimeFile, careerDir) {
     const output = JSON.parse(readFileSync(file, 'utf8'));
     if (path.resolve(output.career_ops_root ?? '') !== careerRoot) throw new Error('existing assignments Career-Ops root does not match planner target');
     if (JSON.stringify(output.runtime) !== JSON.stringify(loadDailyScanRuntime(runtimeFile))) throw new Error('existing assignments runtime does not match requested runtime');
+    if (output.result_schema_version !== RESULT_SCHEMA_VERSION) throw new Error(`existing assignments result_schema_version must be ${RESULT_SCHEMA_VERSION}; historical runs are read-only`);
+    validateScoringInputs(output);
+    assertCareerBlacklistUnchanged(careerRoot, output.blacklist_snapshot);
+    if (JSON.stringify(output.blacklist_overrides ?? []) !== JSON.stringify([...new Set(allowBlacklisted)].sort())) throw new Error('existing assignments blacklist overrides do not match this request');
     return { file, output };
   }
   const baselineFile = path.join(root, 'baseline.json');
   if (!existsSync(baselineFile)) throw new Error(`baseline missing: ${baselineFile}`);
   const baseline = JSON.parse(readFileSync(baselineFile, 'utf8'));
-  const livePolicy = loadLocationPolicy(path.join(careerRoot, 'config/profile.yml'));
+  const livePolicy = loadLocationPolicy(resolveCareerPaths(careerRoot).profileFile);
   const policy = baseline.location_policy ?? livePolicy;
   if (JSON.stringify(policy) !== JSON.stringify(livePolicy)) throw new Error('Career-Ops location policy changed after baseline capture; start a new run');
-  const lockedCandidateSources = candidateSources(careerRoot);
+  const lockedInputs = snapshotScoringInputs(careerRoot);
   const locationScope = locationScopeForRun(run, policy);
-  const audit = buildCanonicalFingerprintAudit({ records: locationScope.accepted, careerRoot, runId: path.basename(root) });
+  const blacklist = applyCareerBlacklist({ careerRoot, records: locationScope.accepted, runId: path.basename(root), allowKeys: allowBlacklisted });
+  const audit = buildCanonicalFingerprintAudit({ records: blacklist.accepted, careerRoot, runId: path.basename(root) });
   const duplicateKeys = new Set(audit.results.filter(item => item.duplicate).map(item => item.primary_key));
   const runtime = loadDailyScanRuntime(runtimeFile);
   const semanticHistory = collectHistoricalSemanticContexts({ careerRoot, locationPolicy: policy });
   const semanticAudit = buildSemanticDeduplicationAudit({
-    records: locationScope.accepted,
+    records: blacklist.accepted,
     exactAudit: audit,
     semanticHistory,
     runRoot: root,
@@ -191,7 +190,7 @@ export function planEvaluations(runDir, runtimeFile, careerDir) {
   const priorDuplicates = Array.isArray(run.acquisition.historical_duplicates) ? run.acquisition.historical_duplicates : [];
   const duplicates = audit.results.filter(item => item.duplicate).map(item => ({ primary_key: item.primary_key, matched_keys: item.matched_keys }));
   const allDuplicates = [...new Map([...priorDuplicates, ...duplicates].map(item => [item.primary_key, item])).values()];
-  const freshRecords = locationScope.accepted
+  const freshRecords = blacklist.accepted
     .filter(record => !duplicateKeys.has(record.primary_key) && !semanticAliases.has(record.primary_key))
     .map(record => semanticAudit.enriched.get(record.primary_key));
   const acquisition = {
@@ -202,6 +201,8 @@ export function planEvaluations(runDir, runtimeFile, careerDir) {
     location_scope_policy: policy,
     historical_duplicate_count: allDuplicates.length,
     historical_duplicates: allDuplicates,
+    blacklist_exclusion_count: blacklist.excluded.length,
+    blacklist_exclusions: blacklist.excluded,
     keys: freshRecords.map(record => record.primary_key),
     acquired: freshRecords,
   };
@@ -227,22 +228,31 @@ export function planEvaluations(runDir, runtimeFile, careerDir) {
     location_scope_audit: path.relative(root, locationScope.file),
     location_exclusion_count: Number(locationScope.audit.excluded_count),
     location_ambiguous_count: Number(locationScope.audit.ambiguous_count),
+    blacklist_snapshot: blacklist.snapshot,
+    blacklist_overrides: blacklist.audit.overrides,
+    blacklist_audit: 'triage/blacklist.json',
     assignments,
     primary_urls: primaryUrls,
     semantic_identities: Object.fromEntries(keys.map(key => [key, {
       semantic_job_key: records.get(key).semantic_job_key,
       posting_context_key: records.get(key).posting_context_key,
     }])),
-    candidate_sources: lockedCandidateSources,
+    ...lockedInputs,
   };
+  // Recheck the initial snapshot before deleting any scoped JD or changing
+  // acquisition. A concurrent list edit must not create a mixed-policy plan.
+  validateScoringInputs(output);
+  if (JSON.stringify(lockedInputs.blacklist_snapshot) !== JSON.stringify(blacklist.snapshot)) throw new Error('Career-Ops blacklist changed during planning; start a new run');
   const removedKeys = new Set([
     ...locationScope.records.filter(record => !isAllowedLocationDecision(record.location_scope.decision)).map(record => record.primary_key),
     ...locationScope.accepted.filter(item => duplicateKeys.has(item.primary_key)).map(record => record.primary_key),
     ...locationScope.accepted.filter(item => semanticAliases.has(item.primary_key)).map(record => record.primary_key),
+    ...blacklist.excluded.map(item => item.posting_key),
   ]);
   for (const record of run.records.filter(item => removedKeys.has(item.primary_key))) rmSync(path.join(root, record.jd_path), { force: true });
   atomicJson(path.join(root, 'acquisition.json'), acquisition);
   mkdirSync(path.dirname(resolutionFile), { recursive: true });
+  atomicJson(path.join(root, 'triage/blacklist.json'), blacklist.audit);
   atomicJson(resolutionFile, { ...resolution, history_deduplication: audit, semantic_deduplication: semanticDeduplication });
   const staged = `${file}.tmp-${process.pid}`;
   writeFileSync(staged, `${JSON.stringify(output, null, 2)}\n`);
@@ -256,9 +266,12 @@ if (isCli) {
     const at = process.argv.indexOf('--run');
     const configAt = process.argv.indexOf('--runtime-config');
     const careerAt = process.argv.indexOf('--career-ops');
+    const allowAt = process.argv.indexOf('--allow-blacklisted');
     const run = at >= 0 ? process.argv[at + 1] : null;
     const career = careerAt >= 0 ? process.argv[careerAt + 1] : null;
     if (!run || !career) throw new Error('Usage: node src/plan-scan-evaluations.mjs --run runs/<run-id> --career-ops ../career-ops [--runtime-config <file>]');
-    console.log(JSON.stringify(planEvaluations(run, configAt >= 0 ? process.argv[configAt + 1] : undefined, career).output, null, 2));
+    const allowBlacklisted = allowAt >= 0 ? String(process.argv[allowAt + 1] ?? '').split(',').filter(Boolean) : [];
+    if (allowAt >= 0 && !allowBlacklisted.length) throw new Error('--allow-blacklisted requires exact posting keys authorized by the user');
+    console.log(JSON.stringify(planEvaluations(run, configAt >= 0 ? process.argv[configAt + 1] : undefined, career, { allowBlacklisted }).output, null, 2));
   } catch (error) { console.error(error.stack || error.message); process.exit(1); }
 }

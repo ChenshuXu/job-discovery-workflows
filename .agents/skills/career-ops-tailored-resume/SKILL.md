@@ -11,8 +11,10 @@ plan; code preserves the template, checks facts, counts pages, and reports keywo
 
 Run every command from the `job-discovery/` repository root. The default layout places
 `career-ops/` beside it; `../career-ops` is relative to this working directory.
-For a different Career-Ops location, set `CAREER_OPS_ROOT` to its absolute path for
-setup-check and all resume commands. Report lookup, CV reading and output use that root.
+For a different Career-Ops code location, set `CAREER_OPS_CODE_ROOT` to its absolute path.
+Candidate data follows the official `CAREER_OPS_ROOT` / `CAREER_OPS_DATA_DIR` or
+`.career-ops-data` marker; report lookup, CV reading and output use that data root.
+`CAREER_OPS_TRACKER` selects the canonical tracker when configured.
 See the repository README for the dependency layout.
 
 ## Decision criteria

@@ -27,7 +27,8 @@
     "report:expand:commit": "node src/expand-scan-report.mjs commit",
     "daily-scan:closeout": "node src/verify-scan-receipt.mjs",
     "daily-scan:usage": "node src/scan-usage.mjs",
-    "setup": "node src/setup.mjs"
+    "setup": "node src/setup.mjs",
+    "test:career-ops:e2e": "node scripts/e2e-career-ops.mjs"
   },
   "license": "MIT"
 }

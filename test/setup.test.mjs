@@ -28,15 +28,15 @@ test('setup is create-only, selection-aware and resolves all linked Skills outsi
   assert.ok(infographic.results[0].checks.some(x => x.id === 'infographic:stats.mjs'));
   assert.equal(infographic.results[0].checks.find(x => x.id === 'infographic:npm-dependencies').status, 'missing_or_invalid');
   assert.ok(infographic.results[0].checks.every(x => !x.id.startsWith('candidate:')));
-  const priorCareerOps = process.env.CAREER_OPS_ROOT;
-  process.env.CAREER_OPS_ROOT = path.join(dir, 'custom-career');
+  const priorCareerOps = process.env.CAREER_OPS_CODE_ROOT;
+  process.env.CAREER_OPS_CODE_ROOT = path.join(dir, 'custom-career');
   try {
     const custom = setup({ root, workflows: ['expand'] });
-    assert.equal(custom.dependencies[0].dir, process.env.CAREER_OPS_ROOT);
+    assert.equal(custom.dependencies[0].dir, process.env.CAREER_OPS_CODE_ROOT);
     assert.equal(custom.results[0].checks.find(x => x.id === 'career-ops:AGENTS.md').path, path.join(custom.dependencies[0].dir, 'AGENTS.md'));
   } finally {
-    if (priorCareerOps === undefined) delete process.env.CAREER_OPS_ROOT;
-    else process.env.CAREER_OPS_ROOT = priorCareerOps;
+    if (priorCareerOps === undefined) delete process.env.CAREER_OPS_CODE_ROOT;
+    else process.env.CAREER_OPS_CODE_ROOT = priorCareerOps;
   }
   const first = path.join(links, readdirSync(links)[0]); rmSync(first); mkdirSync(first);
   assert.throws(() => setup({ root, workflows: ['google-ats'], links, apply: true }), /conflict/);

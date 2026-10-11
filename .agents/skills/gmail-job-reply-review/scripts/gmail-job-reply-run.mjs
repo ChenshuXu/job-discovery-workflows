@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { resolveCareerPaths, careerOpsEnv } from '../../../../src/career-ops-paths.mjs';
 
 // Transaction coordinator for the scheduled Gmail job-reply review.
 //
@@ -129,8 +130,9 @@ async function configure(options) {
   FAILED_DIR = join(RUNS_DIR, 'failed');
   PRIMARY_STATE_PATH = join(STATE_ROOT, 'gmail-job-reply-state.json');
   SECONDARY_STATE_PATH = join(STATE_ROOT, 'gmail-job-reply-secondary-state.json');
-  APPLICATIONS_PATH = join(CAREER_OPS_ROOT, 'data', 'applications.md');
-  STATUS_LOG_PATH = join(CAREER_OPS_ROOT, 'data', 'status-log.tsv');
+  const careerPaths = resolveCareerPaths(CAREER_OPS_ROOT);
+  APPLICATIONS_PATH = careerPaths.trackerFile;
+  STATUS_LOG_PATH = careerPaths.statusLogFile;
 
   try {
     ({ withPipelineLock } = await import(pathToFileURL(
@@ -757,10 +759,7 @@ function runWorkspaceCommand(script) {
     encoding: 'utf8',
     maxBuffer: 20 * 1024 * 1024,
     timeout: 120_000,
-    env: {
-      ...process.env,
-      CAREER_OPS_ROOT,
-    },
+    env: careerOpsEnv(CAREER_OPS_ROOT),
   });
   if (result.error) {
     throw new CliError('COMMAND_FAILED', `${script} could not run`, {

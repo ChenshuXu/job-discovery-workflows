@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "purpose": "Failure modes recorded before implementation; verify through actual CLI workflows against disposable Career-Ops code and fictional data.",
+  "artifact_contract": [
+    "source revisions and hashes",
+    "fictional inputs",
+    "exact commands and environment overrides",
+    "exit codes and stdout/stderr",
+    "assertion results",
+    "output hashes",
+    "repeatable rerun command"
+  ],
+  "scenarios": [
+    {
+      "id": "report-expansion",
+      "failures": [
+        "wrong or missing posting identity, URL, run lineage, company or role",
+        "header and body scores disagree",
+        "work authorization or evidence silently changes",
+        "duplicate or malformed Machine Summary",
+        "existing backup overwritten",
+        "report changes after prepare",
+        "path traversal",
+        "historical compact report becomes unreadable"
+      ],
+      "proof": "Prepare and commit using actual CLI; valid expansion preserves immutable fields and exact backup; invalid drafts and concurrent changes leave the report tree unchanged."
+    },
+    {
+      "id": "score-contract",
+      "failures": [
+        "noncanonical scoring dimensions replace North Star or compensation",
+        "shared/custom rule sources omitted or stale",
+        "procedural rules become candidate facts",
+        "High confidence despite partial/unknown dimensions or unresolved eligibility",
+        "evidence fields disappear from persisted reports",
+        "truthful evidence truncated to fit an arbitrary cap",
+        "fresh legacy-schema results accepted",
+        "historical results mutated or unreadable"
+      ],
+      "proof": "Actual acquisition fixture, planner, part validation, merger, renderer, official writer and receipt; canonical evidence and derived confidence survive persistence; stale sources and inconsistent results are rejected before persistence."
+    },
+    {
+      "id": "data-paths",
+      "failures": [
+        "code/data roots conflated",
+        "environment and marker precedence diverge from official resolver",
+        "relative tracker override targets wrong directory",
+        "read and write paths or lock keys disagree",
+        "report links resolve against wrong root",
+        "preview overrides leak into real commit",
+        "resume, application, Gmail, infographic or LinkedIn consumers retain hardcoded paths"
+      ],
+      "proof": "Real CLI workflows under default, marker, environment and tracker-override layouts; all outputs and indexes resolve into declared data roots, with code and unrelated data unchanged."
+    },
+    {
+      "id": "read-only-health",
+      "failures": [
+        "verifier deletes stale reservation files",
+        "verifier creates directories in original workspace",
+        "symlinks or external overrides reach original files",
+        "snapshot loses warnings or rewrites report identity",
+        "missing canonical interface appears healthy"
+      ],
+      "proof": "Run actual official verifier through health CLI against fixtures containing stale reservations, warning cases and alternate paths; original byte/mtime/tree manifest remains identical and warnings remain visible."
+    },
+    {
+      "id": "blacklist",
+      "failures": [
+        "blacklisted company or domain is assigned, persisted or selected for application",
+        "punctuation/case or subdomain bypass",
+        "unrelated suffix or parent/subsidiary overmatched",
+        "absent list blocks normal work",
+        "list changes after planning without recheck",
+        "override applies to more than explicitly authorized posting keys",
+        "single application bypasses batch gate",
+        "blacklist changes score or existing application state",
+        "official parser import writes files or pins plugin state",
+        "posting key and URL mismatch releases an unapproved exception",
+        "blacklist changes between planner snapshots producing a partially mutated inconsistent run"
+      ],
+      "proof": "Actual scan planning/commit and application CLI preflight using official blacklist parser; matched records are held with reason, unrelated jobs continue, exact authorized exceptions remain bounded, and blacklist edits are detected before persistence/final application preparation."
+    },
+    {
+      "id": "rule-authority",
+      "failures": [
+        "Career-Ops custom rules still prescribe obsolete worker-pool/full-report workflow",
+        "native and Job Discovery entrypoints use conflicting scoring guidance",
+        "repair discards unrelated user preferences or changes existing candidate facts"
+      ],
+      "proof": "Diff and resolved rule-source artifacts show the current owning Skills as workflow authority and canonical scoring rules loaded; unrelated custom sections and candidate sources remain byte-identical."
+    },
+    {
+      "id": "career-report-v6",
+      "failures": [
+        "canonical reason misclassified or guessed from free text",
+        "missing malformed duplicate vocabulary or hash drift",
+        "fixed-term quote fabricated spliced or deleted in expansion",
+        "fixed-term prompt accidentally changes eligibility policy or score",
+        "v5 accepted for new writes or v4/v5 history implicitly migrated",
+        "new fields exceed compact budget or disappear after official persistence",
+        "healthy JD archive fixture lacks an archive while expecting success"
+      ],
+      "proof": "Frozen fixtures through actual planner, validator, merger, official writers, upstream reason analytics and expansion; negative cases preserve data and historical bytes."
+    }
+  ]
+}

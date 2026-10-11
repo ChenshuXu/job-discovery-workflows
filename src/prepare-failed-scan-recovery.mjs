@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { resolveCareerPaths } from './career-ops-paths.mjs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
@@ -86,7 +87,7 @@ export function prepareFailedScanRecovery({ sourceRun, runRoot, careerRoot, sour
   const candidateLabels = ['cv.md', 'config/profile.yml', 'modes/_profile.md'];
   if (JSON.stringify(original.candidate_sources?.map(item => item.label)) !== JSON.stringify(candidateLabels)) throw new Error('source candidate hash set is invalid');
   for (const item of original.candidate_sources) {
-    if (item.path !== path.join(career, item.label) || digest(readFileSync(item.path)) !== item.sha256) throw new Error(`approved candidate source hash changed: ${item.label}`);
+    if (item.path !== path.join(resolveCareerPaths(career).dataRoot, item.label) || digest(readFileSync(item.path)) !== item.sha256) throw new Error(`approved candidate source hash changed: ${item.label}`);
   }
 
   const currentProfile = snapshotAdapterProfile();

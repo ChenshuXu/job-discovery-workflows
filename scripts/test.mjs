@@ -31,6 +31,7 @@ try {
   git('add', 'config', 'src');
   git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'Synthetic test baseline');
   const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.startsWith('CAREER_OPS_')) delete env[key];
   for (const key of ['CAREER_OPS_ROOT', 'JOB_DISCOVERY_ADAPTER_REGISTRY', 'SERPAPI_API_KEY']) delete env[key];
   const result = spawnSync(process.execPath, ['--test', ...(process.argv.length > 2 ? process.argv.slice(2) : ['test/*.test.mjs'])], { cwd: root, env, stdio: 'inherit' });
   if (result.error) throw result.error;

@@ -57,6 +57,10 @@ function fixture(t) {
   const candidateSources = Object.entries({ 'cv.md': '# CV\n', 'config/profile.yml': `location:\n  scan_policy: ${JSON.stringify(policy)}\n`, 'modes/_profile.md': '# Profile\n' }).map(([label, text]) => {
     const file = path.join(career, label); write(file, text); return { label, path: file, sha256: hash(text) };
   });
+  write(path.join(career, 'path-resolver.mjs'), `import path from 'node:path';\nexport const getCareerOpsRoot = () => process.env.CAREER_OPS_ROOT || ${JSON.stringify(career)};\nexport const resolveTrackerPath = root => process.env.CAREER_OPS_TRACKER || path.join(root, 'data/applications.md');\nexport const resolveTrackerPathForWrite = resolveTrackerPath;\n`);
+  write(path.join(career, 'tracker-parse.mjs'), 'export const resolveColumns = () => ({}); export const parseTrackerRow = () => null;\n');
+  write(path.join(career, 'templates/discard-reasons.yml'), '{"reasons":[{"id":"tech_stack_mismatch","when":"Core stack does not fit."}]}');
+  write(path.join(career, 'modes/_shared.md'), '# Canonical scoring fixture\n');
   write(path.join(career, 'verify-pipeline.mjs'), "console.log('Pipeline Health: 0 errors, 0 warnings')\n");
   write(path.join(career, 'data/scan-history.tsv'), 'url\tdate\tsource\ttitle\tcompany\tstatus\tlocation\n');
   write(path.join(source, 'baseline.json'), { schema_version: 3, run_id: 'original', adapter_profile: profile, location_policy: policy, pipeline: { exit_code: 0, errors: 0 } });

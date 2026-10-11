@@ -11,6 +11,7 @@ import { loadDailyScanRuntime } from '../src/daily-scan-runtime.mjs';
 import { applyScoringSafety, deriveReportWorkAuthorization } from '../src/scoring-safety.mjs';
 import { loadCareerTrackerParser, parseTracker } from '../src/daily-scan-state.mjs';
 import { buildEvaluatedRetentionPlan } from '../src/evaluated-retention.mjs';
+import { snapshotScoringInputs } from '../src/scoring-inputs.mjs';
 
 const REPORT_MANIFEST = {
   run_id: '20000102-030405',
@@ -37,6 +38,7 @@ function snapshot(root) {
 }
 
 function careerWriters(career) {
+  write(path.join(career, 'path-resolver.mjs'), "import path from 'node:path'; import { fileURLToPath } from 'node:url';\nexport const getCareerOpsRoot = () => process.env.CAREER_OPS_ROOT || path.dirname(fileURLToPath(import.meta.url));\nexport const resolveTrackerPath = root => process.env.CAREER_OPS_TRACKER || path.join(root, 'data/applications.md');\nexport const resolveTrackerPathForWrite = resolveTrackerPath;\n");
   write(path.join(career, 'tracker.mjs'), `
 import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 if(process.argv[2]!=='sync')throw new Error('canonical sync expected');
@@ -130,6 +132,8 @@ function fixture(t) {
   careerWriters(careerRoot);
   const candidateFiles = { 'cv.md': 'Master of Science in Computer Science\nBachelor of Science in Computer Science\n', 'config/profile.yml': 'visa_status: "H-1B"\nneeds_sponsorship: true\n', 'modes/_profile.md': '# Profile\n' };
   const candidateSources = Object.entries(candidateFiles).map(([label, text]) => { const file = path.join(careerRoot, label); write(file, text); return { label, path: file, sha256: hash(text) }; });
+  write(path.join(careerRoot, 'templates/discard-reasons.yml'), '{"reasons":[{"id":"tech_stack_mismatch","when":"Core stack does not fit."}]}');
+  write(path.join(careerRoot, 'modes/_shared.md'), '# Canonical scoring fixture\n');
   const candidateText = Object.entries(candidateFiles).map(([label, text]) => `\n--- ${label} ---\n${text}`).join('');
   const runtime = loadDailyScanRuntime(); runtime.scheduler = { ...runtime.scheduler, batch_size: 7, max_active_workers: 1 };
   const locationPolicy = { local_metros: ['Seattle'], remote_country: 'United States', require_structured_remote: true, ambiguous_action: 'exclude' };
@@ -149,8 +153,13 @@ function fixture(t) {
     write(path.join(runRoot, record.jd_path), jdText);
     write(path.join(careerRoot, `jds/discovery-${manifest.run_id}-${key.replace(/[^A-Za-z0-9._-]/g, '-')}.md`), jdText);
     const report = { archetype: 'Backend', reason: 'Backend scope aligns.', evidence: [{ source: 'jd', quote: 'Build backend systems.', explanation: 'Relevant platform ownership.' }],
-      gaps: entry.remove_gap ? [entry.remove_gap] : [], risk_level: 'Low', confidence: 'High',
-      risk_summary: { classification: 'clear', culture: 'not_evaluated', interview_redflags: 'not_evaluated', ai_infra: 'consistent' }, advertised_comp: null, company_confidential_evidence: null };
+      gaps: entry.remove_gap ? [entry.remove_gap] : [], risk_level: 'Low', confidence: 'Low',
+      score_evidence: Object.fromEntries(['cv_match', 'north_star', 'compensation', 'culture', 'red_flags'].map(key => [key,
+        ['compensation', 'culture'].includes(key)
+          ? { status: 'unknown', source: null, observation: 'Evidence is absent.', question: `Confirm ${key}.` }
+          : { status: 'supported', source: 'cv.md/CV', observation: 'Fixture evidence.', question: null }])),
+      confidence_gaps: ['Confirm compensation.', 'Confirm culture.'],
+      risk_summary: { classification: 'clear', culture: 'not_evaluated', interview_redflags: 'not_evaluated', ai_infra: 'consistent' }, discard_reasons: [], fixed_term_evidence: null, advertised_comp: null, company_confidential_evidence: null };
     const item = { posting_key: key, work_authorization: { value: 'unstated', quote: null }, fit_score: index === 2 ? 4.4 : 4.2, level_signal: 'target', level_evidence: `JD: "**Role:** ${title}"`,
       eligibility_status: 'eligible', eligibility_category: null, eligibility_evidence: null, legitimacy_tier: 'High Confidence', rationale: 'Original baseline rationale.', report };
     if ([0, 1, 4].includes(index)) {
@@ -173,11 +182,11 @@ function fixture(t) {
     acquisition.acquired.push(record); raw.push(item); final.push(old);
   }
   write(path.join(runRoot, 'acquisition.json'), acquisition);
-  write(path.join(runRoot, 'assignments.json'), { run_id: manifest.run_id, result_schema_version: 4, career_ops_root: careerRoot, candidate_sources: candidateSources, runtime, location_policy: locationPolicy,
+  write(path.join(runRoot, 'assignments.json'), { run_id: manifest.run_id, result_schema_version: 6, career_ops_root: careerRoot, ...snapshotScoringInputs(careerRoot), runtime, location_policy: locationPolicy,
     assignments: { 'worker-1': raw.map(item => item.posting_key) }, primary_urls: Object.fromEntries(acquisition.acquired.map(record => [record.primary_key, record.primary_url])),
     semantic_identities: Object.fromEntries(acquisition.acquired.map(record => [record.primary_key, { semantic_job_key: record.semantic_job_key, posting_context_key: record.posting_context_key }])) });
-  write(path.join(runRoot, 'results/worker-1.part-1.json'), { result_schema_version: 4, worker: 'worker-1', part: 1, results: raw });
-  write(path.join(runRoot, 'results/worker-1.json'), { result_schema_version: 4, worker: 'worker-1', results: final });
+  write(path.join(runRoot, 'results/worker-1.part-1.json'), { result_schema_version: 6, worker: 'worker-1', part: 1, results: raw });
+  write(path.join(runRoot, 'results/worker-1.json'), { result_schema_version: 6, worker: 'worker-1', results: final });
   write(path.join(runRoot, 'receipt.json'), { status: 'COMPLETE', run_id: manifest.run_id, terminal_equation: { valid: true }, committed_evaluated_keys: raw.map(item => item.posting_key) });
   write(path.join(runRoot, 'rendered-reports.json'), { run_id: manifest.run_id, reports: mappings });
   write(path.join(careerRoot, 'data/applications.md'), tracker);
@@ -208,7 +217,7 @@ test('apply uses headed additions, preserves report IDs/source run/unrelated sta
   const { plan } = await invoke(fx);
   const result = await invoke(fx, { apply: true, expectedPlanHash: plan.plan_sha256 });
   assert.equal(result.status, 'COMPLETE'); assert.deepEqual(snapshot(fx.runRoot), originalRun);
-  assert.equal(result.tracker_synced,true);assert.deepEqual(result.pipeline_before,{errors:0,warnings:0,exit_code:0});assert.deepEqual(result.pipeline_after,{errors:0,warnings:0,exit_code:0});
+  assert.equal(result.tracker_synced,true);for (const pipeline of [result.pipeline_before, result.pipeline_after]) assert.deepEqual({errors:pipeline.errors,warnings:pipeline.warnings,exit_code:pipeline.exit_code},{errors:0,warnings:0,exit_code:0});
   assert.equal(read(path.join(fx.careerRoot,'data/synced-tracker.md')),read(path.join(fx.careerRoot,'data/applications.md')));
   assert.equal(read(path.join(fx.careerRoot,'data/sync-calls.log')),'sync\n');
   assert.equal(read(path.join(fx.careerRoot, 'batch/tracker-additions/unrelated.tsv')), 'unrelated queue is not consumed\n');
@@ -267,7 +276,7 @@ test('failed restore compensates only owned rows/reports and retains exact backu
   assert.equal(read(path.join(fx.careerRoot,'data/status-log.tsv')).split('\n').filter(Boolean).length,3);
   const journal=JSON.parse(read(path.join(fx.careerRoot,'data/daily-scan-repairs',`${fx.manifest.run_id}-reports.json`)));
   assert.equal(journal.status,'FAILED');assert.deepEqual(journal.rollback_errors,[]);
-  assert.equal(journal.rollback_tracker_synced,true);assert.deepEqual(journal.rollback_pipeline,{errors:0,warnings:0,exit_code:0});
+  assert.equal(journal.rollback_tracker_synced,true);assert.deepEqual(Object.fromEntries(['errors','warnings','exit_code'].map(key=>[key,journal.rollback_pipeline[key]])),{errors:0,warnings:0,exit_code:0});
   await assert.rejects(invoke(fx),/journal needs review/);
 });
 
@@ -306,7 +315,7 @@ test('tracker sync and post-write pipeline failures compensate owned changes and
     assert.equal((await trackerRows(fx)).length,4);assert.equal((await trackerRows(fx)).find(row=>row.number===101).status,'Evaluated');
     for(const [index,mapping] of fx.mappings.entries())assert.equal(read(path.join(fx.careerRoot,mapping.report_path)),originals[index]);
     const journal=JSON.parse(read(path.join(fx.careerRoot,'data/daily-scan-repairs',`${fx.manifest.run_id}-reports.json`)));
-    assert.equal(journal.status,'FAILED');assert.equal(journal.rollback_tracker_synced,true);assert.deepEqual(journal.rollback_pipeline,{errors:0,warnings:0,exit_code:0});assert.deepEqual(journal.rollback_errors,[]);
+    assert.equal(journal.status,'FAILED');assert.equal(journal.rollback_tracker_synced,true);assert.deepEqual(Object.fromEntries(['errors','warnings','exit_code'].map(key=>[key,journal.rollback_pipeline[key]])),{errors:0,warnings:0,exit_code:0});assert.deepEqual(journal.rollback_errors,[]);
     assert.equal(read(path.join(fx.careerRoot,'data/synced-tracker.md')),read(path.join(fx.careerRoot,'data/applications.md')));
     assert.equal(read(path.join(fx.careerRoot,'data/status-log.tsv')).split('\n').filter(Boolean).length,3);
   }

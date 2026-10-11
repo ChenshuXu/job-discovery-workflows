@@ -52,6 +52,16 @@ function careerFixture(root) {
   write(path.join(career, 'cv.md'), '# CV\n\nMaster of Science in Computer Science\n');
   write(path.join(career, 'config/profile.yml'), `location:\n  visa_status: "H-1B"\n  needs_sponsorship: true\n  scan_policy: {"local_metros":["Seattle","Bellevue","Redmond","Kirkland","Bothell","Renton","Issaquah","SeaTac","Tacoma","Everett"],"remote_country":"United States","require_structured_remote":true,"ambiguous_action":"exclude"}\n`);
   write(path.join(career, 'modes/_profile.md'), '# Candidate profile\n');
+  write(path.join(career, 'modes/_shared.md'), '# Canonical scoring rules\n');
+  write(path.join(career, 'path-resolver.mjs'), `
+import path from 'node:path';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+export const getCareerOpsRoot = () => process.env.CAREER_OPS_ROOT || path.dirname(fileURLToPath(import.meta.url));
+export const resolveTrackerPath = root => process.env.CAREER_OPS_TRACKER ? path.resolve(process.env.CAREER_OPS_TRACKER)
+  : path.join(root, existsSync(path.join(root, 'data/applications.md')) ? 'data/applications.md' : 'applications.md');
+export const resolveTrackerPathForWrite = resolveTrackerPath;
+`);
   write(path.join(career, 'output/existing.txt'), 'unchanged\n');
   write(path.join(career, 'data/applications.md'), '# Applications Tracker\n\n| # | Date | Company | Role | Score | Status | PDF | Report | Notes |\n|---|---|---|---|---|---|---|---|---|\n');
   write(path.join(career, 'data/scan-history.tsv'), 'url\tdate\tsource\ttitle\tcompany\tstatus\tlocation\n');
@@ -147,6 +157,7 @@ writeFileSync(trackerFile, tracker + '\\n');
 `);
   write(path.join(career, 'tracker.mjs'), "if (process.argv[2] !== 'sync') process.exitCode = 1;\n");
   write(path.join(career, 'cv-sync-check.mjs'), "console.log('All checks passed.')\n");
+  write(path.join(career, 'templates/discard-reasons.yml'), '{"reasons":[{"id":"tech_stack_mismatch","when":"Core stack does not fit."}]}');
   return career;
 }
 
@@ -159,8 +170,11 @@ function report() {
     archetype: 'Senior Backend Engineer', reason: 'Backend ownership aligns strongly.',
     evidence: [{ source: 'jd', quote: 'distributed backend systems', explanation: 'Matches target scope.' }],
     gaps: [], risk_level: 'Low', confidence: 'High',
+    score_evidence: Object.fromEntries(['cv_match', 'north_star', 'compensation', 'culture', 'red_flags'].map(dimension => [dimension,
+      { status: 'supported', source: 'JD: distributed backend systems', observation: `Fixture supports ${dimension}.`, question: null }])),
+    confidence_gaps: [],
     risk_summary: { classification: 'clear', culture: 'not_evaluated', interview_redflags: 'not_evaluated', ai_infra: 'consistent' },
-    advertised_comp: null, company_confidential_evidence: null,
+    discard_reasons: [], fixed_term_evidence: null, advertised_comp: null, company_confidential_evidence: null,
   };
 }
 
@@ -190,7 +204,7 @@ function writeWorkerResults(run, createResult) {
       };
     });
     for (let index = 0; index < results.length; index += batchSize) write(path.join(run, 'results', `${worker}.part-${Math.floor(index / batchSize) + 1}.json`), {
-      result_schema_version: 4, worker, part: Math.floor(index / batchSize) + 1, results: results.slice(index, index + batchSize),
+      result_schema_version: plan.result_schema_version, worker, part: Math.floor(index / batchSize) + 1, results: results.slice(index, index + batchSize),
     });
     mergeWorkerResults(run, worker);
   }
@@ -1253,6 +1267,7 @@ test('committed report headers use authoritative tier, work authorization and Ma
       const source = acquisition.acquired.find(record => record.primary_key === key);
       const payload = report(source.company, source.title, source.primary_url, key);
       payload.archetype = sample.archetype;
+      payload.discard_reasons = sample.tier === 'High Confidence' ? [] : ['Verify posting legitimacy'];
       return { posting_key: key, score: 4.2, hard_exclusion: false, legitimacy_tier: sample.tier, work_authorization: { value: sample.auth, quote: sample.jd || null }, report: payload };
     });
     const loaded = loadScanResults(fx.run);

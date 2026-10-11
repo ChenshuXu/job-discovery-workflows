@@ -28,7 +28,7 @@ function compact() {
 
 function full() {
   return [
-    '## Machine Summary\n```yaml\nscore: 4.2\nvia: null\n```',
+    compact().split('\n\n## Verdict')[0],
     '## A) Role Summary\nSummary.', '## B) Match with CV\nMatch.',
     '## C) Level and Strategy\nStrategy.', '## D) Comp and Demand\nDemand.',
     '## E) Customization Plan\nPlan.', '## F) Interview Plan\nPlan.',
@@ -45,19 +45,20 @@ function fixture() {
   const report = path.join(career, 'reports/007-example-2026-08-07.md');
   mkdirSync(path.dirname(jd), { recursive: true });
   mkdirSync(path.dirname(report), { recursive: true });
+  writeFileSync(path.join(career, 'pipeline-lock.mjs'), 'export const acquirePipelineLock = async () => ({ release() {} });\n');
   writeFileSync(jd, '# JD\nbackend role\n');
   writeFileSync(report, `# Evaluation: Example Company — Senior Software Engineer\n\n**Report Number:** 007  \n**Score:** 4.2/5  \n**URL:** ${POSTING_URL}  \n**Posting Key:** ${KEY}  \n\n---\n\n${compact()}\n`);
   return { root, discovery, career, jd, report };
 }
 
-test('on-demand expansion binds the original JD and preserves a compact backup', () => {
+test('on-demand expansion binds the original JD and preserves a compact backup', async () => {
   const fx = fixture();
   const prepared = prepareExpansion('7', fx.career, fx.discovery);
   assert.equal(prepared.posting_key, KEY);
   assert.equal(prepared.jd, fx.jd);
   const draft = path.join(fx.root, 'expanded.md');
   writeFileSync(draft, full());
-  const result = commitExpansion('7', draft, fx.career, fx.discovery);
+  const result = await commitExpansion('7', draft, fx.career, fx.discovery, { sourceSha256: prepared.source_sha256 });
   assert.equal(result.status, 'EXPANDED');
   assert.equal(existsSync(result.compact_backup), true);
   assert.match(readFileSync(fx.report, 'utf8'), /## G\) Posting Legitimacy/);

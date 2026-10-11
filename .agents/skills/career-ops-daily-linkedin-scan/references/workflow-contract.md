@@ -106,7 +106,7 @@ The Career-Ops profile owns one baseline-snapshotted policy. Local eligibility i
 
 ## Worker result
 
-`assignments.json` keeps `result_schema_version: 4`, the immutable runtime snapshot, ordered worker keys, `primary_urls`, assignment-owned semantic/context keys, and SHA-256 locks for `cv.md`, `config/profile.yml`, and `modes/_profile.md`. Expected worker ids remain `worker-1` through `worker-N`. Only non-empty assignments spawn model workers. Each `results/<worker-id>.part-<part>.json` and `results/<worker-id>.json` carries result schema version 4, and the merger proves exact ordered ownership before producing one final per worker.
+`assignments.json` keeps `result_schema_version: 6`, the immutable runtime snapshot, ordered worker keys, `primary_urls`, assignment-owned semantic/context keys, and separate SHA-256 locks for candidate facts (`cv.md`, `config/profile.yml`, `modes/_profile.md`) and canonical/custom scoring rules, Career-Ops code-root `templates/discard-reasons.yml` definitions, plus the three worker references. Expected worker ids remain `worker-1` through `worker-N`. Only non-empty assignments spawn model workers. Each `results/<worker-id>.part-<part>.json` and `results/<worker-id>.json` carries result schema version 6, and the merger proves exact ordered ownership before producing one final per worker.
 
 The worker-authored part schema and example live in
 [`config/worker-prompt.md`](../../../../config/worker-prompt.md). Use that input
@@ -117,7 +117,7 @@ The worker owns JD meaning, score, level, eligibility and work-authorization jud
 The merger rechecks source hashes, enums, exact quote occurrence, caps and report rules;
 it does not match JD predicates or override semantic judgments. No validator pass proves
 semantic correctness or replaces reading the complete JD. No safety rule calls a second model.
-Version 4 is required for new evaluations; current validation rejects v2/v3 or mixed parts.
+Version 6 is required for new evaluations; current writes reject v2/v3/v4/v5 or mixed parts.
 Read historical receipts as recorded; do not relabel old parts or automatically reinterpret them.
 
 ## Worker delegation and evidence
@@ -150,7 +150,7 @@ the existing merger owns `results/<worker-id>.json` and derived fields.
   `CODEX_THREAD_ID` from its first progress message, never `CODEX_SESSION_ID` or
   the task name. The collector independently checks parent/session/root-turn identity.
 - Empty assignments use the existing merger, without a model call. Require
-  `result_schema_version: 4` and one final for every expected id before commit.
+  `result_schema_version: 6` and one final for every expected id before commit.
 
 The final JSON's `model` and `reasoning_effort` are copied from the assignment config
 by the merger. They establish requested settings, not actual model execution. Use
@@ -167,8 +167,10 @@ CLI-recorded payloads, exact errors and observed attempt counts are preserved; i
 revalidation is not a repair. Library verification is read-only. No truthful repair
 uses `--no-repair-reason` without claiming exhaustion; no-evaluation attempt counts remain
 worker declarations. [Report fields](../../../../config/report-contract.md) have one owner.
-Current evaluation inputs require v4; finish incompatible old runs with their original
-code or stop before creating a new run, never relabel their parts.
+Current evaluation writes require v6. Historical v4/v5 supports explicit read-only
+inspection; finish incompatible old runs with their original code or start a new
+run, never relabel their parts. The compact report uses the five canonical Career-Ops
+scoring dimensions and evidence-confidence rules; code rejects inconsistent tiers.
 
 ## Usage accounting and comparison
 
@@ -238,9 +240,10 @@ Inspect existing artifacts before choosing a command:
 | Only baseline/source artifacts exist | Reuse the baseline and captured sources; use the runner's bounded eligible retry where needed, then continue normalization/planning. Do not repeat destructive preflight. |
 
 The baseline freezes source selection/config and location policy; the planner later
-freezes worker runtime and candidate-source hashes. Prompt/scoring-reference/report/scorer files have observation hashes in usage context,
-not enforced run locks. If these changed during an interrupted run, inspect
-compatibility before continuing and report any unverifiable version boundary. Do not
+freezes worker runtime, candidate-source hashes, and separate rule-source hashes
+for Career-Ops `_shared.md`, optional `_custom.md`, and the three worker config
+references. Planner reuse, merger and commit reject changed sources. Validator code
+hashes remain observational usage metadata; report an unverifiable code boundary. Do not
 rewrite an old snapshot to match live settings. Reinvoking the planner with existing
 assignments compares its runtime to live config and can reject a mismatch; it is not
 needed merely to resume valid existing assignments.
@@ -284,6 +287,15 @@ identity evidence, other warning types, and incomplete health summaries block
 completion. Do not suppress warning categories or edit historical receipts.
 For a read-only health audit, run
 `node src/career-ops-health.mjs --career-ops ../career-ops`.
+The wrapper executes the installed official verifier with copied code and data
+inputs in a temporary snapshot; Node permits writes only inside that snapshot.
+Source reservations, plugin locks, directories and linked interview records stay
+unchanged. A stale-reservation cleanup warning describes the snapshot only and
+remains blocking until the original state is separately resolved. The audit
+retains raw verifier output and exact warning-member evidence. Git-blame timestamps
+are unavailable in isolation, but lifecycle disagreement still produces a warning.
+Missing interfaces, unsupported Node permission flags and incomplete summaries fail
+closed. This guard supports trusted installed code, not untrusted plugin execution.
 
 Before finalizing persistence, including after isolating an issue, require a non-empty valid evaluated set. Here `eligible_evaluated_keys` means eligible for persistence, not `eligibility_status=eligible`: valid below-threshold and hard-excluded evaluations also enter scan history. Any non-empty valid evaluated set is persisted regardless of the number or ratio of job issues. Zero valid evaluated postings produces `FAILED` with no Career-Ops persistence. System failures are not job issues and remove only this invocation's exact owned writes.
 
@@ -298,7 +310,7 @@ successful_adapters = {acquisition.sources where status = SUCCESS}
 |successful_adapters| >= baseline.adapter_profile.minimum_successful_adapters
 location_scope.pre_scope = location_scope.accepted ⊎ location_scope.excluded
 location_scope.excluded includes every AMBIGUOUS_* decision
-location_scope.accepted = exact_history_duplicates ⊎ same_context_semantic_aliases ⊎ assignment_keys
+location_scope.accepted = blacklist_holds ⊎ exact_history_duplicates ⊎ same_context_semantic_aliases ⊎ assignment_keys
 expected_worker_ids = worker-1 through worker-N, where N = assignments.runtime.scheduler.max_active_workers
 acquisition.keys = disjoint union(assignments[worker_id] for worker_id in expected_worker_ids)
 assignments union = results posting_key union
@@ -318,7 +330,7 @@ Every report must contain its authoritative primary URL and posting key; exactly
 
 Receipt schema version 4 retains top-level `status: COMPLETE|FAILED` and includes `job_issues`, `job_issue_keys`, informational `job_issue_ratio`, `persistence_decision`, `eligible_evaluated_keys`, `committed_evaluated_keys`, and `terminal_equation`. Receipt closeout is a pure audit followed by one create-only write; retries never create provisional receipts, and an existing receipt is never overwritten. `persistence_decision.allowed` depends only on a non-empty eligible set and the terminal set equation, never on the issue ratio. Each job issue contains `posting_key`, `stage`, stable `code`, `reason`, exact `evidence`, and `existing_report` when known.
 
-Career-Ops pipeline verification runs before and after, but Daily Scan consumes only its exit code and error count. Warning text and counts are not parsed or stored and never affect completion. A nonzero verifier exit, pipeline error, database/tracker sync failure, missing canonical writer, or set non-conservation is system-level and removes only this run's exact writes.
+Career-Ops pipeline verification runs before and after through the read-only wrapper above. Daily Scan retains its raw warning count, parsed warning messages and exact identity resolutions; every unresolved warning or incomplete summary blocks completion. A nonzero verifier exit, pipeline error, unresolved warning, database/tracker sync failure, missing canonical writer, or set non-conservation is system-level and removes only this run's exact writes.
 
 On a system failure, the committer rolls back only this invocation's exact new
 report/JD paths, appended tracker rows and `daily-scan:<run-id>` history rows through

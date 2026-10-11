@@ -32,7 +32,7 @@ function employerExclusionsByAdapter(profile) {
   }));
 }
 
-function validateJd(text, label) {
+export function validateJd(text, label) {
   const normalized = String(text).replace(/\s+/g, ' ').trim();
   const errors = [];
   if (normalized.length < MIN_JD_CONTENT_CHARS) errors.push(`${label}: JD is too short (${normalized.length} chars)`);
@@ -131,6 +131,43 @@ function validateLocationScope(root, acquisition, records, errors) {
   for (const item of excluded) if (recordKeys.has(String(item.posting_key))) errors.push(`${item.posting_key}: excluded location key remains acquired`);
 }
 
+function validateBlacklistAudit(root, acquisition, records, errors) {
+  const planFile = path.join(root, 'assignments.json');
+  if (!existsSync(planFile)) return;
+  const plan = json(planFile);
+  if (Number(plan.result_schema_version) < 5) return; // Historical receipts keep their original contract.
+  const file = path.join(root, 'triage/blacklist.json');
+  if (plan.blacklist_audit !== 'triage/blacklist.json' || !existsSync(file)) {
+    errors.push('triage/blacklist.json is required before scoring'); return;
+  }
+  try {
+    const audit = json(file);
+    if (audit.schema_version !== 1 || audit.run_id !== path.basename(root)
+        || !Array.isArray(audit.checked_keys) || !Array.isArray(audit.results) || !Array.isArray(audit.overrides)) throw new Error('invalid identity/schema');
+    if (JSON.stringify(audit.snapshot) !== JSON.stringify(plan.blacklist_snapshot)
+        || JSON.stringify(audit.overrides) !== JSON.stringify(plan.blacklist_overrides)) throw new Error('snapshot/overrides disagree with assignments');
+    const checked = new Set(audit.checked_keys), matched = new Set(audit.results.map(item => item.posting_key));
+    if (checked.size !== audit.checked_keys.length || matched.size !== audit.results.length
+        || new Set(audit.overrides).size !== audit.overrides.length) throw new Error('duplicate posting keys');
+    for (const item of audit.results) {
+      if (!checked.has(item.posting_key) || !item.entry?.company || !['company', 'domain'].includes(item.entry.scope)) throw new Error('invalid blacklist match');
+      const expected = audit.overrides.includes(item.posting_key) ? 'EXPLICIT_OVERRIDE' : 'BLACKLIST_HOLD';
+      if (item.disposition !== expected) throw new Error('match disposition disagrees with override');
+    }
+    if (audit.overrides.some(key => !matched.has(key))) throw new Error('override lacks a current matched entry');
+    const excluded = audit.results.filter(item => item.disposition === 'BLACKLIST_HOLD');
+    if (audit.excluded_count !== excluded.length || acquisition.blacklist_exclusion_count !== excluded.length
+        || JSON.stringify((acquisition.blacklist_exclusions ?? []).map(item => item.posting_key).sort()) !== JSON.stringify(excluded.map(item => item.posting_key).sort())) throw new Error('exclusion counts/keys disagree');
+    const held = new Set(excluded.map(item => item.posting_key));
+    if (records.some(item => held.has(item.primary_key) || !checked.has(item.primary_key))) throw new Error('held or unchecked key remains acquired');
+    const locationFile = path.join(root, 'triage/location-scope.json');
+    if (existsSync(locationFile)) {
+      const allowed = json(locationFile).results.filter(item => item.allowed).map(item => item.posting_key).sort();
+      if (JSON.stringify(allowed) !== JSON.stringify([...checked].sort())) throw new Error('blacklist coverage differs from location-accepted keys');
+    }
+  } catch (error) { errors.push(`invalid blacklist audit: ${error.message}`); }
+}
+
 export function validateRun(runDir) {
   const root = path.resolve(runDir);
   const profile = loadRunProfile(root);
@@ -179,6 +216,7 @@ export function validateRun(runDir) {
     if (samePosting(records[left], records[right])) errors.push(`${records[left].primary_key}: overlaps ${records[right].primary_key}`);
   }
   validateLocationScope(root, acquisition, records, errors);
+  validateBlacklistAudit(root, acquisition, records, errors);
   return { root, profile, acquisition, records, errors, warnings };
 }
 
