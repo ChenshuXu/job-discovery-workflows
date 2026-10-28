@@ -1,5 +1,7 @@
 # Synthetic examples
 
+Follow [workspace setup](../docs/setup.md) before using these templates. Application Assist is unfinished and is not installed by setup; none of these examples requires it.
+
 These files are fictional, not reusable application answers. Use Career-Ops onboarding to create your own cv.md, config/profile.yml and modes/_profile.md. Do not apply using example candidate facts.
 
 The empty interview register shows the required sections; use it only for a new workspace, never overwrite an existing register. Follow [personal template setup](../assets/README.md) to prepare assets/cv-template.docx from your own CV, run `npm run resume:template`, and inspect the rendered page before tailoring.

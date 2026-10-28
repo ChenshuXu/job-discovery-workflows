@@ -88,6 +88,7 @@ export function checkSetup({ root = ROOT, careerOps = process.env.CAREER_OPS_COD
     readiness: 'requires_agent_and_user_checks',
     checks,
     manual_checks: [
+      'Application Assist is under development and excluded from workspace setup. Do not install, enable or refresh its extension, native host or MCP service; use the released browser application workflow.',
       'Confirm candidate facts, work authorization, target roles and search preferences with the user; files alone are not evidence of confirmation.',
       'Current location matching assumes Washington-state local cities and US remote; reject unsupported requested geography instead of silently changing it.',
       'Check external Skills, host model availability, browser/Gmail account identity and login without storing credentials in the report.',

@@ -3,9 +3,15 @@
 [中文](README.zh-CN.md)
 
 [Job Discovery Workflows](https://github.com/ChenshuXu/job-discovery-workflows).
-All existing workflows are included. The [MIT license](LICENSE) includes the
+The released workflows are listed below. The [MIT license](LICENSE) includes the
 upstream compatibility-code attribution. Bounded installation, host, account and
 Word checks are recorded below, together with the remaining release limitations.
+
+**Application Assist is under development.** Its unfinished browser extension is not
+included or required. Workspace setup must not install, enable or refresh it, register
+its native host/MCP service, or treat a maintainer's local installation as a released
+feature. Use the released browser-based application workflow. Development setup needs
+a separate explicit request.
 
 ## Built with
 
@@ -45,6 +51,11 @@ sites before handoff. Run `npm run test:official-ats` for the isolated integrati
 
 ## Set up with your agent
 
+Follow the [current workspace setup procedure](docs/setup.md) in order. It covers
+dependency selection, real candidate onboarding, Career Docs, Skill links and verification.
+For a missing checkout, run `git clone https://github.com/ChenshuXu/job-discovery-workflows.git job-discovery`
+and `cd job-discovery`; reuse an existing checkout instead of cloning over it.
+
 Give your agent this README and the following request:
 
 ```text
@@ -52,6 +63,7 @@ Set up Job Discovery using this README. Inspect my existing workspace first, ask
 missing CV/search/account information, install missing dependencies and create only
 missing setup files. Preserve my existing data. Run setup-check and the documented
 checks, then report what is ready and exactly what I still need to provide or change.
+Follow docs/setup.md. Application Assist is unfinished; do not install, enable or refresh it.
 If I select PERM history information, have the AI download and validate the required
 official data inside job-discovery/.local/perm-history/ before using that information;
 report missing data or failed validation as an unmet requirement.
@@ -82,8 +94,10 @@ Do not start a scan, retention cleanup, schedule, application or message during 
    Ask about active interviews before initializing an empty register; absence of a file
    does not mean no interviews. Do not request passwords, cookies or one-time codes.
    Reuse explicit answers already supplied and complete independent setup while waiting.
-3. **Install missing tools.** Follow the dependency instructions below. Use JobSpy main.
-   Install Career-Ops and Ego Lite only if missing, make the nine bundled Skills available
+3. **Install missing tools for selected workflows.** Follow the dependency instructions
+   in [the setup guide](docs/setup.md). Use JobSpy main only when that source is selected.
+   Install selected Career-Ops/Ego Lite dependencies only if missing; exclude Application
+   Assist. Make the nine bundled Skills available
    and load required external Skills. Setup permission does not authorize upgrading,
    resetting or replacing an existing installation. The user handles login/verification
    through the browser's normal flow. Never put credentials in setup reports or Git.
@@ -419,11 +433,17 @@ workspace/
   career-docs/           private interview workspace
 ```
 
-From this repository root, install missing dependencies only:
+From this repository root, install only missing dependencies required by the selected
+workflows. Career-Ops-dependent workflows use:
 
 ```bash
 git clone https://github.com/career-ops-hq/career-ops.git ../career-ops
 (cd ../career-ops && npm install)
+```
+
+Only the selected JobSpy source also needs:
+
+```bash
 git clone --branch main https://github.com/speedyapply/JobSpy.git ../JobSpy
 python3.12 -m venv ../JobSpy/.venv
 ../JobSpy/.venv/bin/python -m pip install --upgrade "pip>=21.3"
@@ -456,7 +476,7 @@ cp -n config/jobspy-ego.example.json config/jobspy-ego.json
 
 For Gmail, run `npm run setup -- --workflows gmail --apply` to create the missing
 `.local/gmail-job-reply-review/accounts.json` from the blank `config/gmail-accounts.example.json`.
-Set its `primary` and `secondary` fields to the user's confirmed account addresses;
+Set only selected `primary`/`secondary` fields to confirmed account addresses;
 existing settings are preserved. The agent must also confirm the connected Gmail app's
 primary identity and the live secondary Google Account in Chrome before reading mail.
 A missing account blocks that mailbox only. Account addresses stay in the ignored local
@@ -496,7 +516,8 @@ missing credentials still stop an actual scan. Dry-run makes no paid request.
 
 Runtime writers create `runs/`, `.local/` and Post Scan data/report directories.
 `assets/README.md` preserves the input directory; use `mkdir -p .tmp` for hand-authored
-resume plans. Private documentation and evidence under `docs/` are not required in a public checkout.
+resume plans. The public package includes `docs/setup.md`; private development plans
+and evidence under `docs/` are not distributed.
 
 ## Check and run
 
@@ -533,6 +554,14 @@ Original run evidence remains immutable. Manifest examples are in `examples/` an
 be replaced with the exact reviewed run/posting identities, never guessed by title.
 
 ## Release validation and limitations
+
+The workspace setup guide passed eight setup/release-install checks and a synthetic
+workspace replay with **24 checks / 24 CLI commands**. The replay selected all nine
+configuration workflows, preserved existing settings on repeat, resolved nine Skill
+links from Career Docs, and verified separate Career-Ops code/data roots and source
+dry-runs. It did not install Application Assist. Account login, real candidate facts,
+host UI loading and Word/template acceptance remain user-specific; existing upstream
+npm dependencies were reused read-only rather than downloaded again.
 
 The initial code snapshot is published. Validation covers the checks listed here;
 it does not establish complete online workflow coverage.
@@ -608,15 +637,15 @@ Run `npm install` in a newly cloned
 Career-Ops checkout, then complete its onboarding, Ego/host connections, the unique
 Career Docs register and your template using the instructions above.
 Examples and file presence never count as confirmed candidate facts or workflow readiness.
-Only Node 26.0.0 on macOS has been tested for this increment; other versions/platforms remain unverified.
+Use Node 26, the tested runtime. Other versions/platforms remain unverified.
 
 When invoking from Career Docs, resolve the host Skill link with `realpath`, then walk up
 three directories from the containing `.agents/skills/<name>/` directory to locate the checkout. Verify with
 that checkout's `node src/setup.mjs --skill-root /absolute/Skill/SKILL.md`, and change to
 the returned root. Pass Ego Apply an absolute `--memory` path under that root:
 `.local/career-ops-ego-apply/application-memory.json`. Do not create a second answer store
-relative to Career Docs. All eight Skills were read and resolved to the intended public
-checkout in Codex CLI, including cross-project links. Use explicit paths when names overlap;
+relative to Career Docs. Earlier host acceptance covered the eight Skills bundled at
+that time; verify all nine current Skill links in the actual host. Use explicit paths when names overlap;
 GUI selection, automatic duplicate-name resolution and desktop cache reload remain unverified.
 
 After active workflows/writers finish, preserve any local source edits and read release notes:

@@ -7,6 +7,11 @@ description: Prepare, autonomously submit, and close out one exact Career-Ops ap
 
 Prepare and submit only the exact authorized application scope, then reconcile job status without copying application answers into Career-Ops.
 
+Use the released browser workflow. Application Assist is unfinished development work,
+excluded from workspace setup; do not install, enable or refresh its extension, native
+host or MCP service to prepare an application. New workspaces follow
+[workspace setup](../../../docs/setup.md).
+
 ## Required context and tools
 
 1. Work from the `job-discovery/` repository root; follow its loaded `AGENTS.md`. All filesystem paths below are relative to that root unless stated otherwise; resolve non-sibling dependencies to their actual locations before running commands.

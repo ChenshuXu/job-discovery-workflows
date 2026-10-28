@@ -11,10 +11,13 @@ then revalidate it whenever its content or the CV changes.
 ## Prepare / 准备
 
 1. Finish Career-Ops onboarding first. For a non-sibling installation, export
-   `CAREER_OPS_ROOT` as the absolute path to that checkout. Setup-check and all
-   resume commands use the same value. Do not copy fictional examples into your CV.
-   先完成 Career-Ops 资料设置。非同级安装须将 `CAREER_OPS_ROOT` 设为该仓库的绝对路径；
-   检查与简历命令共用此值。不要将虚构示例当成个人经历。
+   `CAREER_OPS_CODE_ROOT` as the absolute path to its code checkout. Private candidate
+   data resolves separately through upstream `CAREER_OPS_ROOT` / `CAREER_OPS_DATA_DIR`
+   or `.career-ops-data`. Setup-check and resume commands use that same resolver.
+   Follow [workspace setup](../docs/setup.md) first; do not copy fictional examples into your CV.
+   先按[工作区设置](../docs/setup.md)完成资料准备。非同级安装用 `CAREER_OPS_CODE_ROOT`
+   指定代码目录；`CAREER_OPS_ROOT` / `CAREER_OPS_DATA_DIR` 或 `.career-ops-data` 指定私人资料目录。
+   检查与简历命令共用同一解析规则，不要将虚构示例当成个人经历。
 2. Use your existing one-page Word resume if compatible, or ask your document agent
    to create a flat-paragraph DOCX from your confirmed facts. Preserve an existing
    template; work on a separate copy when adapting it. No tables, text boxes or

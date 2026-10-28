@@ -2,7 +2,9 @@
 
 [English](README.md)
 
-这是 [Job Discovery Workflows](https://github.com/ChenshuXu/job-discovery-workflows)，包含全部现有功能。使用 [MIT 许可证](LICENSE)，其中保留上游兼容代码的署名。已完成一定范围的安装、宿主、账户及 Word 检查，具体结果和剩余限制见下方。
+这是 [Job Discovery Workflows](https://github.com/ChenshuXu/job-discovery-workflows)，已发布流程见下表。使用 [MIT 许可证](LICENSE)，其中保留上游兼容代码的署名。已完成一定范围的安装、宿主、账户及 Word 检查，具体结果和剩余限制见下方。
+
+**Application Assist 尚在开发中。** 其浏览器扩展未完成，不随公开版本分发，也不是任何已发布流程的依赖。工作区 setup 不得自动安装、启用或刷新扩展，不注册它的 native host/MCP 服务；维护者本机已安装或局部测试通过不代表产品已完成。申请使用已发布的浏览器流程。只有单独明确要求开发该组件时，才进入开发者设置流程。
 
 ## 依赖与致谢
 
@@ -33,18 +35,21 @@ Job Discovery 基于以下开源项目构建。感谢这些项目的维护者和
 
 ## 让 Agent 帮你完成设置
 
+按[当前工作区设置步骤](docs/setup.md)依次执行，覆盖依赖选择、真实资料 onboarding、Career Docs、Skill 链接及验收。尚无 checkout 时运行 `git clone https://github.com/ChenshuXu/job-discovery-workflows.git job-discovery`，再 `cd job-discovery`；已有目录直接复用，不覆盖 clone。
+
 把这份 README 交给 Agent，并发送：
 
 ```text
 请按这份 README 设置 Job Discovery。先检查我已有的工作区，询问缺少的 CV、搜索条件和账户信息，安装缺失的依赖，只创建缺失的设置文件，保留已有数据。运行 setup-check 和文档要求的检查，最后逐项告诉我哪些流程已就绪，以及我还需要提供什么、修改哪里。设置期间不要开始扫描、retention 清理、调度、申请或发送消息。
 如果我选择使用 PERM 历史信息，请让 AI 先把所需官方数据下载到 job-discovery/.local/perm-history/，完成校验和本地导入后再使用；数据缺失或验证失败时，明确报告该功能尚未就绪。
+按 docs/setup.md 执行。Application Assist 尚未开发完成，不要安装、启用或刷新它。
 ```
 
 ### Agent 执行步骤
 
 1. **先定位再修改。** 找到 Job Discovery、Career-Ops、JobSpy 和 Career Docs，优先同级布局，但复用用户已有安装与登记表。读取各工作区已有的 AGENTS.md。从 Job Discovery 运行 `node src/setup-check.mjs --json`，按 `checks` 和 `action` 建立缺项清单。退出码 1 表示设置缺失或无效，不能据此删除旧文件。这些自定义路径可用 `--career-ops PATH`、`--career-docs PATH`、`--jobspy PATH` 传给 setup-check。`--career-ops` 和 `CAREER_OPS_CODE_ROOT` 选择可执行的 Career-Ops checkout，简历命令也使用后者。资料、报告与申请数据按上游规则定位：`CAREER_OPS_ROOT` / `CAREER_OPS_DATA_DIR`，其次 `.career-ops-data`，最后才是 checkout；`CAREER_OPS_TRACKER` 可指定独立 tracker；`CAREER_OPS_PROFILE` 可指定独立 profile，相对路径从调用命令的工作目录解析，子进程使用解析后的绝对路径。其他流程使用各自已有的参数或配置路径，setup-check 参数不会自动修改它们。
 2. **集中询问缺少的信息。** 收集用户的 CV 或本地路径、要启用的流程/来源、目标岗位关键词与级别、城市/远程范围、雇佣类型、雇主排除项、时区、匹配所需的工作许可/赞助事实，以及已有面试登记表。只有选用相关流程时才询问 Gmail 账户和浏览器 profile。创建空登记表前确认是否已有活跃面试；缺文件不代表没有面试。复用本轮已提供的答案，等待时继续独立设置；不索取密码、cookie 或一次性验证码。
-3. **安装缺失工具。** 按下文安装依赖，JobSpy 使用 main。仅在缺少时安装 Career-Ops、Ego Lite，使 9 个内置 Skill 可用并加载所需外部 Skill。设置授权不意味着升级、重置或替换已有安装。登录/验证由用户通过正常浏览器流程完成，凭证不写入报告或 Git。
+3. **只安装所选流程的缺失工具。** 按[设置指南](docs/setup.md)执行；只有选择 JobSpy 来源才安装其 main。Career-Ops、Ego Lite 也按所选流程决定是否需要；Application Assist 不纳入 setup。使 9 个内置 Skill 可用并加载所需外部 Skill。设置授权不意味着升级、重置或替换已有安装。登录/验证由用户通过正常浏览器流程完成，凭证不写入报告或 Git。
 4. **设置 Career-Ops。** 在其仓库读取自己的 Skill 和安装说明，使用 `interview` 模式进行资料/CV onboarding。依据真实 CV 和已确认回答，一致地创建或更新 `cv.md`、`config/profile.yml`、`modes/_profile.md`，保留其他字段和文档。不虚构职位、时间、经历、指标或工作许可。运行 `node doctor.mjs --json --cli codex`（换成实际 CLI），即使退出码为 0 也读取 `missing` 和 `unpersonalized`。当前上游仅在追加 `--init-templates` 时补缺失模板；`modes/_brief.md` 也须依据同一 CV 和已确认选择个性化，自动复制模板不代表 onboarding 完成。简历解析器需要 `## PROFESSIONAL EXPERIENCE`、`### 职位, 公司 | 地点` 和 `-` 条目，以及 `## TECHNICAL SKILLS` 下的 `**类别:** 技能, 技能`；适配格式不能改动事实。缺 CV 或事实不明确时记录具体阻碍。
 5. **配置搜索和 Career Docs。** 按下表和目录结构操作。只给缺失配置复制 example；已有文件先读取，再合并用户明确选择，不能用示例覆盖。搜索参数与 profile 地点政策要一致。只创建 Career Docs 缺失的骨架文件；已有面试登记通过 Gmail Skill 的 canonical writer 修改。
 6. **检查并修复。** 运行下文检查，修复常规设置错误后重跑受影响项。只对缺少的事实、账户或重要选择询问用户。不能为了检查通过而悄悄改变目标地区或关闭用户要求的功能；不支持的能力按流程标为阻碍。
@@ -214,11 +219,16 @@ workspace/
   career-docs/           私有面试工作区
 ```
 
-从本仓库根目录安装缺少的依赖，不覆盖已有目录：
+从本仓库根目录只安装所选流程缺少的依赖，不覆盖已有目录。需要 Career-Ops 的流程使用：
 
 ```bash
 git clone https://github.com/career-ops-hq/career-ops.git ../career-ops
 (cd ../career-ops && npm install)
+```
+
+只有选择 JobSpy 来源时再安装：
+
+```bash
 git clone --branch main https://github.com/speedyapply/JobSpy.git ../JobSpy
 python3.12 -m venv ../JobSpy/.venv
 ../JobSpy/.venv/bin/python -m pip install --upgrade "pip>=21.3"
@@ -239,7 +249,7 @@ cp -n config/daily-scan-runtime.example.json config/daily-scan-runtime.json
 cp -n config/jobspy-ego.example.json config/jobspy-ego.json
 ```
 
-Gmail 使用 `npm run setup -- --workflows gmail --apply`，从空白 `config/gmail-accounts.example.json` 创建缺失的 `.local/gmail-job-reply-review/accounts.json`，已有设置会保留。将 `primary`、`secondary` 填为用户确认的账号地址；读信前还须确认已连接 Gmail app 的主账号身份，以及 Chrome 中次账号的实时 Google Account。缺少某个账号只阻塞该邮箱。地址保存在被忽略的本地文件；登录、密码和验证码留在正常认证流程中处理。
+Gmail 使用 `npm run setup -- --workflows gmail --apply`，从空白 `config/gmail-accounts.example.json` 创建缺失的 `.local/gmail-job-reply-review/accounts.json`，已有设置会保留。仅填写所选 `primary`/`secondary` 的已确认地址，未选账号留空；读信前还须确认已连接 Gmail app 的主账号身份，以及 Chrome 中次账号的实时 Google Account。缺少某个账号只阻塞该邮箱。地址保存在被忽略的本地文件；登录、密码和验证码留在正常认证流程中处理。
 
 示例 registry 只启用 JobSpy。LinkedIn/Jobright 需先配置 Ego Lite 与登录；Jobright 的空 filter snapshot 必须替换为自己实际接受的筛选状态，不能直接授权扫描。已禁用来源不再要求本地配置文件。Google ATS 和 Post Scan 各有示例配置；Google 的空 `title_exclusions` 表示不排除职位标题，地点规则仍须通过校验。worker 模型须在宿主可用；实跑前审阅 retention TTL，扫描会按 tracker 日期清理符合条件的旧 `Evaluated`、`SKIP`（含 `Skipped`）与 `Discarded` 记录，并保护申请/面试/人工活动；状态变更日志保留。
 
@@ -255,7 +265,7 @@ npm run google-ats:scan -- --dry-run
 
 真实扫描前，将 `SERPAPI_API_KEY` 写入被忽略的 `.env` 或进程环境；不能写入公开的 `.env.example`。缺少 `.env` 不影响启动或 dry-run，但真实扫描仍会检查凭证。Dry-run 不发起付费请求。
 
-`runs/`、`.local/`、Post Scan 数据与报告目录由运行时创建。`assets/README.md` 保留输入目录；手工编写简历计划前创建 `.tmp/`。公开版无需 `docs/` 中的私人文档与证据。
+`runs/`、`.local/`、Post Scan 数据与报告目录由运行时创建。`assets/README.md` 保留输入目录；手工编写简历计划前创建 `.tmp/`。公开版包含 `docs/setup.md`，不分发 `docs/` 中的私人开发计划与证据。
 
 ## 检查与首次运行
 
@@ -276,6 +286,8 @@ npm test
 修复工具现在要求 `--manifest FILE`。先将 dry-run 的完整 JSON 输出保存为 PREVIEW.json，再应用：报告修复使用 `--plan-file PREVIEW.json`，排除岗位修复使用 `--plan-file PREVIEW.json`。原始 run 不变。`examples/` 中的清单只用于说明结构，应换为审核过的准确 run/岗位身份，不能按标题猜测。
 
 ## 发布验证与限制
+
+当前工作区设置指南通过 8 项 setup/发布安装检查，以及 **24 项检查 / 24 次 CLI** 的虚构工作区演练：覆盖九个配置流程的选择、重复执行保留设置、从 Career Docs 定位九个 Skill、Career-Ops 代码/资料目录分离和来源 dry-run，没有安装 Application Assist。账号登录、真实候选人资料、宿主 UI 加载和 Word/模板验收仍须逐用户完成；演练只读复用已安装的上游 npm 依赖，没有重新联网下载。
 
 初始代码快照已发布；验收仅覆盖下列检查，不代表完整线上工作流均已验证。
 
@@ -318,7 +330,7 @@ npm run setup -- --workflows daily-scan --sources jobspy --apply
 所在的 `.agents/skills/<name>/` 目录向上三级确定 checkout；可用该 checkout 的
 `node src/setup.mjs --skill-root /绝对/Skill/SKILL.md` 核对。随后 `cd` 到返回的根目录。
 Ego Apply 的 `--memory` 使用该根目录下 `.local/career-ops-ego-apply/application-memory.json`
-的绝对路径，不能从当前 Career Docs cwd 创建第二份答案库。Codex CLI 已实际读取八个 Skill，
+的绝对路径，不能从当前 Career Docs cwd 创建第二份答案库。此前宿主验收覆盖当时的八个 Skill；当前需逐一验证九个 Skill 的实际链接，
 包括跨项目链接，并解析到目标公开 checkout。同名时使用显式路径；GUI 选择、同名自动解析和
 桌面缓存重载仍未验证。
 

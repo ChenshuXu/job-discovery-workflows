@@ -1,5 +1,9 @@
 # Career Docs — private document workspace
 
+Use the linked Job Discovery checkout's README and docs/setup.md for workspace setup.
+Application Assist is unfinished and excluded from ordinary installation; this
+document workspace does not require its extension, native host or MCP service.
+
 This workspace owns interview preparation and the sole process register at
 context/Interview/active-interviews.md. Use context/00 Knowledge Base Hub.md to locate
 materials. Candidate facts come from the user's Career-Ops profile and confirmed input;
