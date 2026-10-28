@@ -8,6 +8,10 @@ description: Run, verify, troubleshoot, compare token usage, or schedule the mul
 Job Discovery owns acquisition and identity; Career-Ops owns candidate facts,
 scoring guidance and persisted reports/tracker state. Do not modify Career-Ops code.
 
+For discovery limited to the supplied tracker's normal-status PERM employers, use
+[PERM company scan](../career-ops-perm-scan/SKILL.md), which reuses this procedure
+with an additional frozen employer gate.
+
 ## Choose the mode
 
 Read only the linked sections needed for the current mode:
@@ -66,15 +70,16 @@ path in place of `../career-ops` if the repositories are not siblings.
    Explicitly non-retryable or unclassified failures cannot be retried. Continue
    degraded only when the frozen `minimum_successful_adapters` passes; inspect both
    LinkedIn path summaries and their `required` flags.
-4. Normalize, resolve identity, and plan evaluations in this order:
+4. Prepare evaluations using the [preparation contract](references/workflow-contract.md#evaluation-preparation):
 
    ```bash
-   node src/combine.mjs --run runs/$RUN_ID
-   node src/run-contract.mjs --run runs/$RUN_ID
-   node src/resolve-canonical-urls.mjs --run runs/$RUN_ID
-   node src/plan-scan-evaluations.mjs --run runs/$RUN_ID --career-ops ../career-ops
+   npm run daily-scan:prepare -- --run runs/$RUN_ID --career-ops ../career-ops
    ```
 
+   This command combines captured sources, validates the run, resolves canonical URLs,
+   plans evaluations and validates the changed artifacts. It stops on the first error;
+   use the contract's standalone commands for diagnosis and recovery. It never starts
+   retention, acquisition, scoring or commit. Do not rerun it for assigned or closed runs.
    The planner owns location/history/semantic partitions and separately locks candidate facts and scoring rules.
    It checks Career-Ops `data/blacklist.md` through the canonical matcher before
    assignments and records holds/reasons in `triage/blacklist.json`. Continue
@@ -82,13 +87,32 @@ path in place of `../career-ops` if the repositories are not siblings.
    `--allow-blacklisted key1,key2`; never use it merely to finish a scan. The list
    is hash-locked and rechecked before persistence.
    A changed policy or locked candidate source invalidates the run; do not rewrite its snapshot.
-5. Read `assignments.json`. Treat the `assignments.json.runtime` snapshot as the sole source of truth.
+5. Use the preparation command's compact output to locate `assignments.json`; extract its runtime,
+   worker ids/keys and input paths without dumping the complete snapshots into coordinator
+   progress. Treat `assignments.json.runtime` as the sole source of truth.
    Create `results/`, then dispatch non-empty assignments under the contract's worker
-   delegation rules. Workers follow `config/worker-prompt.md` and own JD review,
-   structured v6 parts, validation, and deterministic merge. Use that merger for empty
+   delegation rules. Workers follow `config/worker-prompt.md` and own complete JD review,
+   JD-only scoring (`research_version: 0`), structured v8 parts, validation, and
+   deterministic merge. Do not perform external company/culture/operating-risk/market-salary
+   research or reuse prior company research for new evaluations; omit `research`.
+   Use JD salary/work-model evidence, retain unknown facts and confidence questions,
+   and preserve candidate facts, all five scoring dimensions and eligibility gates.
+   Historical research-enabled plans retain their frozen contract and evidence.
+   Use that merger for empty
    assignments too; the coordinator inspects completion and targeted failures.
    Bind actual worker UUIDs immediately using the delegation contract; empty assignments
    need no model binding. Send paths and ownership, not copied scoring rules or parent history.
+   Follow [compact handoff and waiting](references/workflow-contract.md#compact-handoff-and-waiting):
+   unchanged timeouts require another bounded wait, not rereading files or dispatching workers.
+   After merged scores are ready, only runs with `baseline.perm_history` perform the
+   [automatic PERM company review](references/workflow-contract.md#automatic-perm-company-review).
+   It is disabled by default: `config/daily-scan-runtime.json` must set
+   `perm_history.enabled: true` before baseline capture to enable references and research.
+   Without the frozen snapshot, skip PERM lookup, company research/questions and references.
+   Research unmatched companies, publish clear evidence-backed mappings directly, and
+   ask about material identity ambiguity while continuing other jobs. Freeze the review
+   before commit; research failure or ambiguity leaves reference information pending,
+   without changing scoring, filtering, work authorization or report thresholds.
 6. Only after one final result file exists for every expected worker id, commit:
 
    ```bash

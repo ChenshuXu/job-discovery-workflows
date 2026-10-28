@@ -1,10 +1,8 @@
-import { createHash } from 'node:crypto';
 import { employmentTypeValues } from './employment-type.mjs';
 import { normalizeWorkplaceType } from './location-scope.mjs';
 
-export const SEMANTIC_JD_NORMALIZER_VERSION = 1;
+export const SEMANTIC_JD_NORMALIZER_VERSION = 2;
 
-const sha256 = value => `sha256:${createHash('sha256').update(value).digest('hex')}`;
 const normalizeField = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 
 function extractJobDescriptionBody(markdown) {
@@ -27,7 +25,7 @@ function normalizeJobDescriptionBody(markdown) {
 function semanticJobKey({ company, markdown }) {
   const employer = normalizeField(company);
   if (!employer) throw new Error('semantic identity requires company');
-  return sha256(`v1\0${employer}\0${normalizeJobDescriptionBody(markdown)}`);
+  return JSON.stringify([2, employer, normalizeJobDescriptionBody(markdown)]);
 }
 
 function postingContextKey({ semantic_job_key, employment_types, employment_type, workplace_type, location_decision }) {
@@ -40,7 +38,7 @@ function postingContextKey({ semantic_job_key, employment_types, employment_type
     .join('|') || 'unknown';
   const workplace = normalizeWorkplaceType(workplace_type);
   const location = String(location_decision ?? 'unknown').trim() || 'unknown';
-  return sha256(`v1\0${semantic_job_key}\0${employment}\0${workplace}\0${location}`);
+  return JSON.stringify([2, semantic_job_key, employment, workplace, location]);
 }
 
 export function semanticIdentity({ record, markdown, locationDecision = record?.location_scope?.decision }) {

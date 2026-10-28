@@ -1,0 +1,23 @@
+{
+  "scope": "Job Discovery only; isolated actual planner, merger, commit, report expansion and upstream read-only fixture code",
+  "failures": [
+    "New plans still require external company, culture or market research, or cannot persist JD-only low-score and hard-excluded evaluations",
+    "Disabled research accepts copied external research, null placeholders or unsupported Research citations",
+    "Missing salary/culture facts become supported evidence, alter eligibility, or disappear from confidence questions",
+    "JD-only commit or expansion invents an external research section or loses JD work authorization evidence",
+    "Historical research-enabled assignment omits research or one of compensation/culture/company checks, including below-threshold evaluations",
+    "Research belongs to another exact posting or employer",
+    "Missing searches, missing tool evidence reference, unsafe URL, duplicate source ids, impossible timestamps or sources not opened",
+    "A complete check has no applicable sources; compensation completion lacks a market benchmark",
+    "A report cites an unknown source, the wrong research dimension, or a quote absent from its captured source",
+    "Unavailable or limited research is presented as supported evidence or silently omitted from confidence questions",
+    "Search failures are mistaken for bad culture, low compensation or a suspicious company",
+    "A primary-provider quota failure or an independent fallback result disappears during merge, commit or expansion",
+    "Research disappears during merge, commit, report repair or expansion; raw and final results diverge",
+    "Explicit read-only v8 inspection rejects frozen rules after a policy upgrade or claims those rules match live files",
+    "Historical inspection relaxes candidate content/path checks, rule snapshot shape, research checks, or current planner/merger validation",
+    "Historical inspection modifies assignments, parts, finals, receipt, or Career-Ops data",
+    "Historical v8 reports acquire research retroactively; Career-Ops source or shared dependencies change"
+  ],
+  "acceptance": "Saved CLI outputs, assertions, fictional source captures and rendered Markdown in a unique .local artifact directory; no production reports or candidate files written"
+}

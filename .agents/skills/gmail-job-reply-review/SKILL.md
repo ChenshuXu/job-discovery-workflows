@@ -29,7 +29,9 @@ TODO lists or routine run history into summaries or automation memory.
 - **Direct confirmation / register edit:** follow the document and write contracts
   below. No mailbox access or transaction is needed.
 - **Gmail review:** read [mailbox-transaction.md](references/mailbox-transaction.md),
-  which owns account routing, scan/classification, receipts, recovery, and reporting.
+  which owns account routing, browser-host verification, scan/classification, receipts,
+  recovery, and reporting. Verify the actual Chrome application before browser actions;
+  a connection labeled `Chrome` can belong to Ego Lite.
 
 Complete authorized work without another approval pause; continue independent work
 when an identity or outcome is uncertain. Workflow audits do not start production runs.
@@ -40,12 +42,12 @@ Use the canonical writer from the repository root:
 
 ```text
 node .agents/skills/gmail-job-reply-review/scripts/gmail-job-reply-run.mjs prepare FILE CANDIDATE
-node .agents/skills/gmail-job-reply-review/scripts/gmail-job-reply-run.mjs apply FILE CANDIDATE BASELINE_SHA256
+node .agents/skills/gmail-job-reply-review/scripts/gmail-job-reply-run.mjs apply FILE CANDIDATE BASELINE_FILE
 ```
 
 Edit affected summary sections before `prepare`; its baseline also fences linked files.
 Use the register as FILE and a unique separate candidate path. Edit only the candidate,
-then `apply` with `baseline_sha256` from `prepare`. The shared lock, schema and Identity
+then `apply` with `baseline_file` from `prepare`. The shared lock, schema and Identity
 checks protect Git HEAD and current contents. Failure preserves both files; success
 consumes the candidate. Re-prepare and reconcile concurrent changes.
 
@@ -83,8 +85,10 @@ Date. Do not call an update complete merely because the checks pass.
 
 ## Process summaries
 
-Reuse the company's existing folder. Keep separate process sections for separate
-requisitions; never merge by company/title alone. Use this link in the Notes cell:
+Reuse the company's existing folder. Keep separate process sections for known distinct
+requisitions. Match applications using the available evidence; a job ID is not required
+in recruiter mail. See the [application matching guidance](references/mailbox-transaction.md#application-matching).
+Use this link in the Notes cell:
 
 ```markdown
 [Process summary](company/process-summary.md#action-company-screen)

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "scope": "P3a real command acceptance with synthetic sources and isolated Career-Ops data; no retention, acquisition, scoring or persistence runs",
+  "failures": [
+    "The combined command must preserve the old combine, run-contract, resolve, plan and final contract boundaries and business partitions",
+    "A source summary count mismatch stops before resolution or planning and retains source evidence",
+    "A missing required exclusion audit fails the post-combine run contract before resolution or planning",
+    "Frozen source config drift remains rejected before any derived artifact is written",
+    "A real resolver write failure after canonical enrichment stops planning, leaves evidence, and can be repaired and rerun",
+    "A missing candidate source, invalid runtime or location policy drift stops planning after resolution, leaving the standalone planner recovery path available",
+    "An existing resolution ledger is never overwritten by the whole command without explicit force; force archives it and reuses ordinary boundaries",
+    "Existing assignments, rendered reports or receipt prohibit whole-command recombine even with force and preserve every run file",
+    "Standalone planner resume still rejects changed candidate facts, scoring rules and runtime rather than silently rebuilding the plan",
+    "Explicit runtime and exact-key blacklist overrides reach the planner without broadening their established semantics",
+    "Missing, unknown, duplicate or valueless CLI options are rejected before mutation; the new CLI has no full-snapshot mode",
+    "Successful preparation emits bounded READY metadata and paths, leaves candidate snapshots in assignments only, and creates no scoring, cleanup or persistence artifacts"
+  ],
+  "equivalence_fixture": {
+    "source_jobs": 9,
+    "after_canonical_identity": 8,
+    "after_location_gate": 6,
+    "after_exact_history": 5,
+    "after_semantic_alias_gate": 4,
+    "cases": ["LinkedIn/Greenhouse exact alias pair", "exact history duplicate", "nonlocal New York", "country-only ambiguous", "same-body same-company semantic alias pair", "unique Seattle", "structured US remote"]
+  },
+  "artifacts": ["failure-plan.json", "implementation.json", "source-code.json", "commands.json", "commands/*.stdout.txt", "commands/*.stderr.txt", "assertions.json", "equivalence.json", "artifacts.json", "result.json or failure.json"]
+}

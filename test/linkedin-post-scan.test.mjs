@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { summarizeCalibration } from '../linkedin-post-scan/src/query-plan.mjs';
+import { summarizeCalibration } from '../src/linkedin-post-scan/query-plan.mjs';
 
 const config = {
   phrase_groups: { P1: ['Hiring'], P2: ['Careers'] },

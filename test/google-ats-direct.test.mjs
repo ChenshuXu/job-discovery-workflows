@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildGoogleQueries, evaluateOfficialLocation, evaluateOfficialTitle, loadGoogleAtsConfig, runGoogleAtsDirect } from '../adapters/google_ats_direct_scan.mjs';
+import { buildGoogleQueries, evaluateOfficialLocation, evaluateOfficialTitle, loadGoogleAtsConfig, runGoogleAtsDirect } from '../src/adapters/google_ats_direct_scan.mjs';
 
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const COMBINE = path.join(PROJECT_ROOT, 'src/combine.mjs');

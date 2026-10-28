@@ -36,7 +36,13 @@ export function matchExcludedEmployer({ company = '', description = '' }, rules)
       return { id: rule.id, reason: rule.reason, source: 'company', evidence: `Company: ${companyText}` };
     }
 
-    const attribution = lines.find(line => compile(rule.attribution_line_pattern).test(line));
+    const attribution = lines.find(line => {
+      if (compile(rule.attribution_line_pattern).test(line)) return true;
+      const pipelineEmployer = line.match(/^(.{1,100}?) is building a (?:central )?pipeline of .{1,120}?\btalent\b/i)?.[1];
+      const hiringEmployer = line.match(/^(.{1,100}?) is hiring an? (?:(?!(?:to|for|with|using|not)\b)[A-Za-z0-9.+/#-]+ ){0,8}(?:engineer|developer|scientist|architect|manager|specialist|analyst|designer)\b/i)?.[1];
+      const employer = pipelineEmployer || hiringEmployer;
+      return employer && compile(`^(?:${rule.company_pattern})(?:\\s*\\([^)]*\\))?$`).test(employer);
+    });
     if (attribution) {
       return { id: rule.id, reason: rule.reason, source: 'jd_attribution', evidence: `JD attribution: ${attribution}` };
     }

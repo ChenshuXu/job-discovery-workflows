@@ -12,6 +12,8 @@ import { semanticIdentity } from './semantic-jd-identity.mjs';
 import { applyCareerBlacklist, assertCareerBlacklistUnchanged } from './career-ops-blacklist.mjs';
 import { snapshotScoringInputs, validateScoringInputs } from './scoring-inputs.mjs';
 import { resolveCareerPaths } from './career-ops-paths.mjs';
+import { scopePermEmployers } from './perm-employers.mjs';
+import { compactSummary } from './scan-summary.mjs';
 
 function atomicJson(file, value) {
   const staged = `${file}.tmp-${process.pid}`;
@@ -91,9 +93,40 @@ export function interleaveBySource(keys) {
   return output;
 }
 
-export function assignKeys(keys, workerCount) {
+export function assignKeys(keys, workerCount, records) {
   const workers = workerIdsForRuntime({ scheduler: { max_active_workers: workerCount } });
   const assignments = Object.fromEntries(workers.map(worker => [worker, []]));
+  // The two-argument API retains its historical ordering for diagnostic callers.
+  if (records) {
+    const groups = new Map();
+    const publishers = new Set(['dice', 'fde times', 'guap', 'lensa', 'jobright', 'jobright.ai']);
+    for (const key of [...keys].sort()) {
+      const record = records.get(key);
+      const company = String(record?.company ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+      // Scheduling hints never establish employer identity or research applicability.
+      const singleton = !company || publishers.has(company) || /^(?:unknown|confidential|undisclosed|company confidential|n\/a)$/.test(company)
+        || ['publisher', 'ambiguous', 'unknown'].includes(record?.employer_identity_status);
+      const group = singleton ? `key:${key}` : `company:${company}`;
+      if (!groups.has(group)) groups.set(group, []);
+      groups.get(group).push(key);
+    }
+    const capacity = Math.ceil(keys.length / workers.length);
+    const byLoad = () => [...workers].sort((a, b) => assignments[a].length - assignments[b].length || workers.indexOf(a) - workers.indexOf(b));
+    for (const [, members] of [...groups].sort(([a, x], [b, y]) => y.length - x.length || (a < b ? -1 : a > b ? 1 : 0))) {
+      const ordered = interleaveBySource(members);
+      const whole = byLoad().find(worker => capacity - assignments[worker].length >= ordered.length);
+      if (whole) assignments[whole].push(...ordered);
+      else {
+        let offset = 0;
+        while (offset < ordered.length) {
+          const worker = byLoad()[0];
+          const count = Math.min(capacity - assignments[worker].length, ordered.length - offset);
+          assignments[worker].push(...ordered.slice(offset, offset + count)); offset += count;
+        }
+      }
+    }
+    return assignments;
+  }
   keys.forEach((key, index) => assignments[workers[index % workers.length]].push(key));
   for (const worker of workers) assignments[worker] = interleaveBySource(assignments[worker]);
   return assignments;
@@ -172,7 +205,8 @@ export function planEvaluations(runDir, runtimeFile, careerDir, { allowBlacklist
   const policy = baseline.location_policy ?? livePolicy;
   if (JSON.stringify(policy) !== JSON.stringify(livePolicy)) throw new Error('Career-Ops location policy changed after baseline capture; start a new run');
   const lockedInputs = snapshotScoringInputs(careerRoot);
-  const locationScope = locationScopeForRun(run, policy);
+  const permScope = baseline.perm_employers ? scopePermEmployers({ root, records: run.records, snapshot: baseline.perm_employers }) : null;
+  const locationScope = locationScopeForRun(permScope ? { ...run, records: permScope.accepted } : run, policy);
   const blacklist = applyCareerBlacklist({ careerRoot, records: locationScope.accepted, runId: path.basename(root), allowKeys: allowBlacklisted });
   const audit = buildCanonicalFingerprintAudit({ records: blacklist.accepted, careerRoot, runId: path.basename(root) });
   const duplicateKeys = new Set(audit.results.filter(item => item.duplicate).map(item => item.primary_key));
@@ -195,7 +229,9 @@ export function planEvaluations(runDir, runtimeFile, careerDir, { allowBlacklist
     .map(record => semanticAudit.enriched.get(record.primary_key));
   const acquisition = {
     ...run.acquisition,
-    source_unique_count: Math.max(Number(run.acquisition.source_unique_count ?? 0), Number(locationScope.audit.pre_scope_count)),
+    ...(permScope ? { perm_employer_scope_audit: 'triage/perm-employer-scope.json',
+      perm_pre_scope_count: permScope.audit.pre_scope_count, perm_exclusion_count: permScope.audit.excluded_count } : {}),
+    source_unique_count: Math.max(Number(run.acquisition.source_unique_count ?? 0), Number(permScope?.audit.pre_scope_count ?? locationScope.audit.pre_scope_count)),
     location_exclusion_count: Number(locationScope.audit.excluded_count),
     location_ambiguous_count: Number(locationScope.audit.ambiguous_count),
     location_scope_policy: policy,
@@ -217,10 +253,13 @@ export function planEvaluations(runDir, runtimeFile, careerDir, { allowBlacklist
     if (typeof url !== 'string' || !url.trim()) throw new Error(`${key}: acquisition primary_url missing`);
     return [key, url];
   }));
-  const assignments = assignKeys(keys, runtime.scheduler.max_active_workers);
+  const assignments = assignKeys(keys, runtime.scheduler.max_active_workers, records);
   const output = {
     schema_version: 1,
     result_schema_version: RESULT_SCHEMA_VERSION,
+    hiring_manager_review_version: 1,
+    research_version: 0,
+    assignment_policy: 'employer-affinity-v1',
     run_id: path.basename(root),
     career_ops_root: careerRoot,
     runtime,
@@ -238,12 +277,14 @@ export function planEvaluations(runDir, runtimeFile, careerDir, { allowBlacklist
       posting_context_key: records.get(key).posting_context_key,
     }])),
     ...lockedInputs,
+    ...(permScope ? { perm_employers: baseline.perm_employers, perm_employer_scope_audit: 'triage/perm-employer-scope.json' } : {}),
   };
   // Recheck the initial snapshot before deleting any scoped JD or changing
   // acquisition. A concurrent list edit must not create a mixed-policy plan.
   validateScoringInputs(output);
   if (JSON.stringify(lockedInputs.blacklist_snapshot) !== JSON.stringify(blacklist.snapshot)) throw new Error('Career-Ops blacklist changed during planning; start a new run');
   const removedKeys = new Set([
+    ...(permScope?.excluded ?? []).map(record => record.primary_key),
     ...locationScope.records.filter(record => !isAllowedLocationDecision(record.location_scope.decision)).map(record => record.primary_key),
     ...locationScope.accepted.filter(item => duplicateKeys.has(item.primary_key)).map(record => record.primary_key),
     ...locationScope.accepted.filter(item => semanticAliases.has(item.primary_key)).map(record => record.primary_key),
@@ -252,10 +293,11 @@ export function planEvaluations(runDir, runtimeFile, careerDir, { allowBlacklist
   for (const record of run.records.filter(item => removedKeys.has(item.primary_key))) rmSync(path.join(root, record.jd_path), { force: true });
   atomicJson(path.join(root, 'acquisition.json'), acquisition);
   mkdirSync(path.dirname(resolutionFile), { recursive: true });
+  if (permScope) atomicJson(path.join(root, 'triage/perm-employer-scope.json'), permScope.audit);
   atomicJson(path.join(root, 'triage/blacklist.json'), blacklist.audit);
   atomicJson(resolutionFile, { ...resolution, history_deduplication: audit, semantic_deduplication: semanticDeduplication });
   const staged = `${file}.tmp-${process.pid}`;
-  writeFileSync(staged, `${JSON.stringify(output, null, 2)}\n`);
+  writeFileSync(staged, `${JSON.stringify(output, null, 2)}\n`, { mode: 0o600 });
   renameSync(staged, file);
   return { file, output };
 }
@@ -272,6 +314,8 @@ if (isCli) {
     if (!run || !career) throw new Error('Usage: node src/plan-scan-evaluations.mjs --run runs/<run-id> --career-ops ../career-ops [--runtime-config <file>]');
     const allowBlacklisted = allowAt >= 0 ? String(process.argv[allowAt + 1] ?? '').split(',').filter(Boolean) : [];
     if (allowAt >= 0 && !allowBlacklisted.length) throw new Error('--allow-blacklisted requires exact posting keys authorized by the user');
-    console.log(JSON.stringify(planEvaluations(run, configAt >= 0 ? process.argv[configAt + 1] : undefined, career, { allowBlacklisted }).output, null, 2));
+    const { output, file } = planEvaluations(run, configAt >= 0 ? process.argv[configAt + 1] : undefined, career, { allowBlacklisted });
+    console.log(JSON.stringify(process.argv.includes('--full') ? output : compactSummary({ stage: 'plan', status: 'READY', artifact: file,
+      counts: { assigned: Object.values(output.assignments).reduce((n, keys) => n + keys.length, 0), workers: Object.fromEntries(Object.entries(output.assignments).map(([worker, keys]) => [worker, keys.length])) } })));
   } catch (error) { console.error(error.stack || error.message); process.exit(1); }
 }

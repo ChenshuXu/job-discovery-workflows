@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -12,7 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import {
   ActiveInterviewsValidationError,
@@ -202,13 +201,13 @@ test('apply CLI rejects an Identity rename without touching the canonical file',
 
   const prepared = runCli('prepare', file, candidate);
   assert.equal(prepared.status, 0, prepared.stdout);
-  const baselineSha256 = JSON.parse(prepared.stdout).baseline_sha256;
+  const baselineContent = JSON.parse(prepared.stdout).baseline_file;
   assert.equal(statSync(candidate).mode & 0o777, 0o600);
 
   writeFileSync(candidate, original
     .replace('ambiguous:example-search-customer-platform |  ', 'ambiguous:example-search-customer-platform | #103 ')
     .replace('Example Search / ambiguous:example-search-customer-platform：', 'Example Search / #103：'));
-  const relabeled = runCli('apply', file, candidate, baselineSha256);
+  const relabeled = runCli('apply', file, candidate, baselineContent);
   assert.equal(relabeled.status, 1);
   assert.match(relabeled.stdout, /todo_identity_missing/u);
   assert.equal(readFileSync(file, 'utf8'), original);
@@ -217,7 +216,7 @@ test('apply CLI rejects an Identity rename without touching the canonical file',
   writeFileSync(candidate, original
     .replace('ambiguous:example-search-customer-platform |  ', 'tracker:#103 | #103 ')
     .replace('ambiguous:example-search-customer-platform：', '#103：'));
-  const renamed = runCli('apply', file, candidate, baselineSha256);
+  const renamed = runCli('apply', file, candidate, baselineContent);
   assert.equal(renamed.status, 1);
   assert.match(renamed.stdout, /process_removed|Previously admitted process/u);
   assert.equal(readFileSync(file, 'utf8'), original);
@@ -228,7 +227,7 @@ test('apply CLI rejects an Identity rename without touching the canonical file',
     'ambiguous:example-search-customer-platform | #103 ',
   );
   writeFileSync(candidate, resolved);
-  const preserved = runCli('apply', file, candidate, baselineSha256);
+  const preserved = runCli('apply', file, candidate, baselineContent);
   assert.equal(preserved.status, 0, preserved.stdout);
   assert.equal(JSON.parse(preserved.stdout).candidate_removed, true);
   assert.equal(readFileSync(file, 'utf8'), resolved);
@@ -237,10 +236,10 @@ test('apply CLI rejects an Identity rename without touching the canonical file',
   const staleCandidate = join(root, 'stale-candidate.md');
   const stalePrepared = runCli('prepare', file, staleCandidate);
   assert.equal(stalePrepared.status, 0, stalePrepared.stdout);
-  const staleSha256 = JSON.parse(stalePrepared.stdout).baseline_sha256;
+  const staleContent = JSON.parse(stalePrepared.stdout).baseline_file;
   const concurrent = resolved.replace('Exact tracker row unresolved', 'Concurrent note. Exact tracker row unresolved');
   writeFileSync(file, concurrent);
-  const stale = runCli('apply', file, staleCandidate, staleSha256);
+  const stale = runCli('apply', file, staleCandidate, staleContent);
   assert.equal(stale.status, 1);
   assert.match(stale.stdout, /changed since candidate preparation/u);
   assert.equal(readFileSync(file, 'utf8'), concurrent);
@@ -287,10 +286,7 @@ test('prepare CLI atomically reclaims a lock left by a dead process', async t =>
     `import { withActiveInterviewsLock } from ${JSON.stringify(lockModule)}; withActiveInterviewsLock(${JSON.stringify(file)}, () => process.exit(0));`,
   ], { encoding: 'utf8' });
   assert.equal(crashed.status, 0, crashed.stderr);
-  const lockPath = join(
-    tmpdir(),
-    `active-interviews-${createHash('sha256').update(realpathSync(file)).digest('hex').slice(0, 32)}.pid.lock`,
-  );
+  const lockPath = join(dirname(realpathSync(file)), '.active-interviews.pid.lock');
   // shlock deliberately avoids replacing a lock created in the same timestamp tick.
   await new Promise(resolveDelay => setTimeout(resolveDelay, 1100));
   const recovered = spawnSync(process.execPath, [script, 'prepare', file, candidate], {
@@ -342,7 +338,7 @@ test('prepare baseline detects linked summary changes before apply', t => {
   const prepared = run('prepare', register, candidate);
   assert.equal(prepared.status, 0, prepared.stdout);
   writeFileSync(summary, readFileSync(summary, 'utf8') + 'Concurrent change.\n');
-  const applied = run('apply', register, candidate, JSON.parse(prepared.stdout).baseline_sha256);
+  const applied = run('apply', register, candidate, JSON.parse(prepared.stdout).baseline_file);
   assert.equal(applied.status, 1);
   assert.equal(JSON.parse(applied.stdout).error.code, 'STATE_CONFLICT');
   assert.equal(readFileSync(register, 'utf8'), original);

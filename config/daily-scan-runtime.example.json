@@ -4,6 +4,9 @@
   "retention": {
     "evaluated_unapplied_ttl_days": 7
   },
+  "perm_history": {
+    "enabled": false
+  },
   "worker": {
     "model": "gpt-6-astra",
     "reasoning_effort": "medium"

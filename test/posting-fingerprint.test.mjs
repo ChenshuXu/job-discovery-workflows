@@ -7,6 +7,27 @@ import { legacyPostingKey, matchesStoredPostingKey, postingFingerprint, postingK
 const WORKDAY_REPORT = 'https://example.wd5.myworkdayjobs.com/en-US/ExampleExternalCareerSite/job/Senior-Software-Engineer--Agentic-AI_JR1000001';
 const WORKDAY_JD = 'https://example.wd5.myworkdayjobs.com/ExampleExternalCareerSite/job/US-WA-Redmond/Senior-Software-Engineer--Agentic-AI_JR1000001?source=jobboardlinkedin';
 
+test('official query IDs preserve exact identity and reject ambiguous input', () => {
+  const ms = 'https://microsoft.eightfold.ai/careers?pid=1970393557007489';
+  assert.equal(postingKey(ms), 'generic:apply.careers.microsoft.com:1970393557007489');
+  assert.equal(samePosting(ms, 'https://apply.careers.microsoft.com/careers/job/1970393557007489?src=LinkedIn'), true);
+  assert.equal(samePosting(ms, ms.replace('7489', '7490')), false);
+  assert.equal(postingKey('https://careers.ibm.com/en_US/careers/JobDetail?jobId=125730'), 'generic:careers.ibm.com:125730');
+  assert.equal(legacyPostingKey(ms), null);
+  assert.equal(postingKey('https://careers.ibm.com/job/125731'), 'generic:careers.ibm.com:125731');
+  assert.equal(postingKey('https://microsoft.eightfold.ai/careers/job/12345'), 'generic:microsoft.eightfold.ai:12345');
+  for (const url of [
+    `${ms}&pid=1970393557007489`, ms.replace('pid=1970393557007489', 'pid='),
+    ms.replace('pid=1970393557007489', 'pid=not-a-job'), ms.replace('/careers?', '/other?'),
+    ms.replace('microsoft.eightfold.ai', 'other.eightfold.ai'),
+    'https://careers.ibm.com/en_US/careers/JobDetail?jobId=125730&jobId=125731',
+    'https://careers.ibm.com/en_US/careers/JobDetail?jobId=',
+    'https://careers.ibm.com/en_US/careers/JobDetail?jobId=ABC125730',
+    'https://careers.ibm.com/en_US/careers?jobId=125730',
+    'https://example.com/en_US/careers/JobDetail?jobId=125730',
+  ]) assert.equal(postingKey(url), null, url);
+});
+
 test('Ashby board query identifies the same exact tenant and job as its path URL', () => {
   const id = '11111111-2222-4333-8444-555555555555';
   const board = `https://jobs.ashbyhq.com/acmeco?ashby_jid=${id}&utm_source=linkedin`;
@@ -60,6 +81,7 @@ test('different requisitions on one tenant are different postings', () => {
 test('workday keeps opaque requisition suffixes and accepts an optional apply tail', () => {
   for (const [url, expected] of [
     ['https://exampleone.wd5.myworkdayjobs.com/en-US/External/job/Seattle-WA/Engineer_R10001/apply', 'R10001'],
+    ['https://terex.wd1.myworkdayjobs.com/en-US/terexcareers/job/US-WA-Redmond/Software-Engineer-III_REQ-11037/apply/applyManually', 'REQ-11037'],
     ['https://exampletwo.wd1.myworkdayjobs.com/en-US/external/job/Seattle-WA/Engineer_H100ABC10-1', 'H100ABC10-1'],
     ['https://exampletwo.wd1.myworkdayjobs.com/external/job/Seattle-WA/Engineer_R0000001-1', 'R0000001-1'],
     ['https://acme.wd1.myworkdayjobs.com/External/job/Engineer_JR1000004-1', 'JR1000004-1'],
@@ -81,6 +103,8 @@ test('workday keeps opaque requisition suffixes and accepts an optional apply ta
     'https://exampletwo.wd1.myworkdayjobs.com/external/job/Engineer_R0000001-1',
     'https://exampletwo.wd1.myworkdayjobs.com/external/job/Engineer_R00000011',
   ), false);
+  assert.equal(postingFingerprint('https://terex.wd1.myworkdayjobs.com/terexcareers/job/US-WA-Redmond/Software-Engineer-III_REQ-11037/apply/unknown'), null);
+  assert.equal(postingFingerprint('https://terex.wd1.myworkdayjobs.com/terexcareers/job/US-WA-Redmond/Software-Engineer-III_REQ-11037/applyManually'), null);
 });
 
 test('major ATS hosts resolve to tenant and requisition', () => {

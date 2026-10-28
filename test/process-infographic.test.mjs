@@ -1,13 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { collect, chart } from '../.agents/skills/process-infographic/scripts/collect.mjs';
 
-const sha = text => createHash('sha256').update(text).digest('hex');
 const header = '| Identity | Tracker | Company | Role / Requisition | Stage | Date / Deadline | Status | Last Updated | Notes |';
 const divider = '|---|---|---|---|---|---|---|---|---|';
 const doc = (active, archived = []) => ['## Active Processes', header, divider, ...active, '## Current TODO', '## Archived Processes', header, divider, ...archived].join('\n');
@@ -23,7 +21,7 @@ function fixture(t) {
   const register = path.join(careerDocs, 'custom-register.md');
   const put = (name, text) => writeFileSync(path.join(careerOps, name), text);
   put('path-resolver.mjs', `export const getCareerOpsRoot = () => ${JSON.stringify(root)}; export const resolveTrackerPath = () => ${JSON.stringify(tracker)};`);
-  put('tracker-parse.mjs', `export const resolveColumns = () => ({}); export const parseTrackerRow = line => line.trim() ? JSON.parse(line) : null;`);
+  put('tracker-parse.mjs', `export const parseMarkdownLinks = value => [...String(value ?? '').matchAll(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g)].map(match => ({label:match[1],target:match[2]})); export const resolveColumns = () => ({}); export const parseTrackerRow = line => line.trim() ? JSON.parse(line) : null;`);
   put('stats.mjs', `
     export const trackerStatusByNum = text => new Map(text.trim().split('\\n').filter(Boolean).map(line => {const r=JSON.parse(line); return [r.num,r.status]}));
     export const parseStatusLogStages = JSON.parse;
@@ -62,10 +60,10 @@ test('recollects counts, outcomes and graph paths; custom roots, history and exa
   assert(Number.isInteger(large.width) && Number.isInteger(large.height));
 });
 
-test('completed events come from hashed sources; changed evidence and unknown IDs fail', async t => {
+test('completed events come from reviewed source snapshots; changed evidence and unknown IDs fail', async t => {
   const f=fixture(t), file=path.join(f.careerDocs,'debrief.md'), eventsFile=path.join(f.careerDocs,'events.json');
   writeFileSync(file,'Completed debugging on 2000-01-01.');
-  const event={id:'session-a',identity:'tracker:#3',date:'2000-01-01',kind:'debugging',sources:[{path:'debrief.md',sha256:sha(readFileSync(file))}]};
+  const event={id:'session-a',identity:'tracker:#3',date:'2000-01-01',kind:'debugging',sources:[{path:'debrief.md',content:readFileSync(file, 'utf8')}]};
   writeFileSync(eventsFile,JSON.stringify({events:[event]}));
   const data=await collect({...f.options,eventsFile});
   assert.equal(data.interviews.records.find(r=>r.id==='tracker:#3').completed_hands_on,1);
@@ -80,7 +78,7 @@ test('completed events come from hashed sources; changed evidence and unknown ID
 test('alternate register format preserves identities and rejects ambiguous records', async t => {
   const f=fixture(t), registerJson=path.join(f.careerDocs,'adapted.json'), original=path.join(f.careerDocs,'original.csv');
   writeFileSync(original,'stable-id,waiting\n');
-  const process={identity:'custom-stable-id',tracker:'',company:'Example',role:'Engineer',status:'Waiting',sources:[{path:'original.csv',sha256:sha(readFileSync(original))}]};
+  const process={identity:'custom-stable-id',tracker:'',company:'Example',role:'Engineer',status:'Waiting',sources:[{path:'original.csv',content:readFileSync(original, 'utf8')}]};
   const save=processes=>writeFileSync(registerJson,JSON.stringify({processes}));
   save([process]);
   const options={careerOps:f.careerOps,careerDocs:f.careerDocs,registerJson};

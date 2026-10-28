@@ -48,7 +48,7 @@ node .agents/skills/process-infographic/scripts/collect.mjs \
 如果只是文件夹布局不同，传绝对路径即可；如果登记格式也不同，先依据其真实字段编写一次性只读转换代码，生成私有 `--register-json /path/adapted.json`，替代 Markdown 登记输入：
 
 ```json
-{"processes":[{"identity":"process-example-a","tracker":"","company":"Example Co","role":"Engineer","status":"Waiting","sources":[{"path":"original-register.csv","sha256":"<original-file-sha256>"}]}]}
+{"processes":[{"identity":"process-example-a","tracker":"","company":"Example Co","role":"Engineer","status":"Waiting","sources":[{"path":"original-register.csv","content":"<verbatim original file text>"}]}]}
 ```
 
 来源路径相对于 adapted JSON。每条保留原始稳定身份；只有确切关联才填 `tracker:"#N"`。状态映射为 `Action Required / Scheduled / Waiting / Rejected / Withdrawn / Cancelled / Hired`；含糊状态必须先核实，不能凭相似文本强制映射。转换代码必须完整遍历原始记录并检查输入/输出身份集合，不能手填公司名单和人数。采集器验证唯一身份、状态、关联及来源校验值；格式适配不授权修改用户原始结构。
@@ -58,10 +58,10 @@ node .agents/skills/process-infographic/scripts/collect.mjs \
 采集器每次重读申请和面试状态，重新计算人数与分组。自然语言复盘不能可靠地靠关键词确定轮次；先按下面口径审阅有关记录，生成私有 `events.json`，再传 `--events /path/events.json`。未提供完成证据的流程仍计入总数，显示 `Completion unclassified`，不当成零次面试。
 
 ```json
-{"events":[{"id":"example-session-1","identity":"process-example-a","date":"2000-01-02","kind":"coding","sources":[{"path":"debrief.md","sha256":"<reviewed-file-sha256>"}]}]}
+{"events":[{"id":"example-session-1","identity":"process-example-a","date":"2000-01-02","kind":"coding","sources":[{"path":"debrief.md","content":"<verbatim reviewed file text>"}]}]}
 ```
 
-每个事件是一项已完成事实，不带人数或当前结果。`id` 稳定且唯一；`identity` 必须存在于本次登记；日期按来源时区保留场次日期，同日事件按数组顺序；来源路径相对于 events JSON。SHA-256 由代码读取真实文件计算，文件改变时重新审阅后提取，不能只更新 hash 跳过审阅。可用 `node --input-type=module -e 'import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; console.log(createHash("sha256").update(readFileSync(process.argv[1])).digest("hex"))' /path/to/evidence`。
+每个事件是一项已完成事实，不带人数或当前结果。`id` 稳定且唯一；`identity` 必须存在于本次登记；日期按来源时区保留场次日期，同日事件按数组顺序；来源路径相对于 events JSON。来源的 `content` 保存审阅时的完整原文；采集时直接比较文件内容。文件改变时重新审阅后提取，不能只更新快照跳过审阅。用 `JSON.stringify({path: file, content: readFileSync(file, "utf8")})` 生成正确转义的记录。
 
 支持事件类型：`screen / coding / debugging / integration / oa / ai-screening / design / hm / bq / loop / verbal-offer / verbal-accepted / written-offer / signed-offer`。其中 coding/debugging/integration 自动累计为实作场次。每次更新图表时先沿当前登记的 Notes 链接检查流程汇总里新的完成里程碑与有关复盘，补充新的事件；来源 hash 只能检测已有文件变化，不能证明遗漏的新文件不存在。当前结果始终来自本次登记，不从事件摘录缓存读取；原因和详细结果只有被当前证据支持才添加展示说明。
 

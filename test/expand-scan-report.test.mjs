@@ -58,7 +58,7 @@ test('on-demand expansion binds the original JD and preserves a compact backup',
   assert.equal(prepared.jd, fx.jd);
   const draft = path.join(fx.root, 'expanded.md');
   writeFileSync(draft, full());
-  const result = await commitExpansion('7', draft, fx.career, fx.discovery, { sourceSha256: prepared.source_sha256 });
+  const result = await commitExpansion('7', draft, fx.career, fx.discovery, { sourceContent: prepared.source_content });
   assert.equal(result.status, 'EXPANDED');
   assert.equal(existsSync(result.compact_backup), true);
   assert.match(readFileSync(fx.report, 'utf8'), /## G\) Posting Legitimacy/);

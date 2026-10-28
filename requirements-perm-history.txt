@@ -1,0 +1,2 @@
+# Optional local PERM history importer; SQLite uses Python's standard library.
+openpyxl>=3.1.5,<4

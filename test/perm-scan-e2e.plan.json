@@ -1,0 +1,21 @@
+{
+  "scope": "Fictional employers and candidate data through the actual baseline, combine, identity resolver, planner, worker merger and official Career-Ops writers. No live scan or application.",
+  "failure_modes": [
+    "A normal PERM label is mistaken for a role-specific sponsorship guarantee.",
+    "Unnamed or multi-company groups, empty lists or non-normal statuses enter the allowlist.",
+    "Substring, customer/technology mention or unlisted subsidiary is mistaken for the employer.",
+    "Case, legal suffix or an explicitly evidenced alias loses a valid employer.",
+    "Canonical URL resolution changes posting keys before company filtering.",
+    "Non-allowlisted JDs remain in assignments, combined jobs or persisted reports.",
+    "Employer filtering destroys raw source evidence or alters source liveness.",
+    "Policy changes after baseline/planning are accepted during reuse, merge or commit.",
+    "Missing/forged scope audit or missing assignments snapshot bypasses the gate.",
+    "A valid allowlisted employer overrides an existing Career-Ops blacklist.",
+    "All postings are filtered out and nonempty persistence is falsely claimed.",
+    "Ordinary Daily Scan acquires an unintended PERM restriction.",
+    "Refreshing the catalog makes an already completed receipt unreadable.",
+    "A corrected candidate without its report is accepted as an evaluation-only repair.",
+    "A completed PERM report repair reads a refreshed live catalog instead of the frozen snapshot.",
+    "A restored report slices the perm- prefix into its date."
+  ]
+}

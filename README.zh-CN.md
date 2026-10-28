@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-这是 [Job Discovery Workflows](https://github.com/ChenshuXu/job-discovery-workflows)，包含全部现有功能。使用 [MIT 许可证](LICENSE)，附[第三方声明](THIRD_PARTY_NOTICES.md)。已完成一定范围的安装、宿主、账户及 Word 检查，具体结果和剩余限制见下方。
+这是 [Job Discovery Workflows](https://github.com/ChenshuXu/job-discovery-workflows)，包含全部现有功能。使用 [MIT 许可证](LICENSE)，其中保留上游兼容代码的署名。已完成一定范围的安装、宿主、账户及 Word 检查，具体结果和剩余限制见下方。
 
 ## 依赖与致谢
 
@@ -14,7 +14,7 @@ Job Discovery 基于以下开源项目构建。感谢这些项目的维护者和
 | [JobSpy](https://github.com/speedyapply/JobSpy) | 提供职位网站采集能力，用于 JobSpy 采集来源。 |
 | [Ego Lite](https://github.com/citrolabs/ego-lite) | 提供浏览器及 `ego-browser` 集成，支持需要登录的岗位发现、面试研究和申请流程。 |
 
-这些依赖需要单独安装。安装说明见[外部依赖](#外部依赖是什么)，许可证信息见[第三方声明](THIRD_PARTY_NOTICES.md)。
+这些依赖需要单独安装。安装说明见[外部依赖](#外部依赖是什么)，各自许可证见上游仓库。
 
 ## 功能与依赖
 
@@ -29,7 +29,7 @@ Job Discovery 基于以下开源项目构建。感谢这些项目的维护者和
 | 申请与面试流程统计图 | Career-Ops、Career Docs、Node.js、Python 3 和 Pillow、覆盖图中文字的字体 |
 | 招聘帖扫描与 outreach 准备 | Career-Ops、Ego Lite、Node SQLite；停在 Send 前 |
 | 独立 Google ATS 搜索 | SerpAPI key；不属于 Daily Scan |
-| 报告与排除岗位修复 | Career-Ops、已完成 run、显式审核清单和计划 hash |
+| 报告与排除岗位修复 | Career-Ops、已完成 run、显式审核清单和审核后的计划文件 |
 
 ## 让 Agent 帮你完成设置
 
@@ -37,17 +37,64 @@ Job Discovery 基于以下开源项目构建。感谢这些项目的维护者和
 
 ```text
 请按这份 README 设置 Job Discovery。先检查我已有的工作区，询问缺少的 CV、搜索条件和账户信息，安装缺失的依赖，只创建缺失的设置文件，保留已有数据。运行 setup-check 和文档要求的检查，最后逐项告诉我哪些流程已就绪，以及我还需要提供什么、修改哪里。设置期间不要开始扫描、retention 清理、调度、申请或发送消息。
+如果我选择使用 PERM 历史信息，请让 AI 先把所需官方数据下载到 job-discovery/.local/perm-history/，完成校验和本地导入后再使用；数据缺失或验证失败时，明确报告该功能尚未就绪。
 ```
 
 ### Agent 执行步骤
 
-1. **先定位再修改。** 找到 Job Discovery、Career-Ops、JobSpy 和 Career Docs，优先同级布局，但复用用户已有安装与登记表。读取各工作区已有的 AGENTS.md。从 Job Discovery 运行 `node src/setup-check.mjs --json`，按 `checks` 和 `action` 建立缺项清单。退出码 1 表示设置缺失或无效，不能据此删除旧文件。这些自定义路径可用 `--career-ops PATH`、`--career-docs PATH`、`--jobspy PATH` 传给 setup-check。`--career-ops` 和 `CAREER_OPS_CODE_ROOT` 选择可执行的 Career-Ops checkout，简历命令也使用后者。资料、报告与申请数据按上游规则定位：`CAREER_OPS_ROOT` / `CAREER_OPS_DATA_DIR`，其次 `.career-ops-data`，最后才是 checkout；`CAREER_OPS_TRACKER` 可指定独立 tracker。其他流程使用各自已有的参数或配置路径，setup-check 参数不会自动修改它们。
+1. **先定位再修改。** 找到 Job Discovery、Career-Ops、JobSpy 和 Career Docs，优先同级布局，但复用用户已有安装与登记表。读取各工作区已有的 AGENTS.md。从 Job Discovery 运行 `node src/setup-check.mjs --json`，按 `checks` 和 `action` 建立缺项清单。退出码 1 表示设置缺失或无效，不能据此删除旧文件。这些自定义路径可用 `--career-ops PATH`、`--career-docs PATH`、`--jobspy PATH` 传给 setup-check。`--career-ops` 和 `CAREER_OPS_CODE_ROOT` 选择可执行的 Career-Ops checkout，简历命令也使用后者。资料、报告与申请数据按上游规则定位：`CAREER_OPS_ROOT` / `CAREER_OPS_DATA_DIR`，其次 `.career-ops-data`，最后才是 checkout；`CAREER_OPS_TRACKER` 可指定独立 tracker；`CAREER_OPS_PROFILE` 可指定独立 profile，相对路径从调用命令的工作目录解析，子进程使用解析后的绝对路径。其他流程使用各自已有的参数或配置路径，setup-check 参数不会自动修改它们。
 2. **集中询问缺少的信息。** 收集用户的 CV 或本地路径、要启用的流程/来源、目标岗位关键词与级别、城市/远程范围、雇佣类型、雇主排除项、时区、匹配所需的工作许可/赞助事实，以及已有面试登记表。只有选用相关流程时才询问 Gmail 账户和浏览器 profile。创建空登记表前确认是否已有活跃面试；缺文件不代表没有面试。复用本轮已提供的答案，等待时继续独立设置；不索取密码、cookie 或一次性验证码。
-3. **安装缺失工具。** 按下文安装依赖，JobSpy 使用 main。仅在缺少时安装 Career-Ops、Ego Lite，使 8 个内置 Skill 可用并加载所需外部 Skill。设置授权不意味着升级、重置或替换已有安装。登录/验证由用户通过正常浏览器流程完成，凭证不写入报告或 Git。
+3. **安装缺失工具。** 按下文安装依赖，JobSpy 使用 main。仅在缺少时安装 Career-Ops、Ego Lite，使 9 个内置 Skill 可用并加载所需外部 Skill。设置授权不意味着升级、重置或替换已有安装。登录/验证由用户通过正常浏览器流程完成，凭证不写入报告或 Git。
 4. **设置 Career-Ops。** 在其仓库读取自己的 Skill 和安装说明，使用 `interview` 模式进行资料/CV onboarding。依据真实 CV 和已确认回答，一致地创建或更新 `cv.md`、`config/profile.yml`、`modes/_profile.md`，保留其他字段和文档。不虚构职位、时间、经历、指标或工作许可。运行 `node doctor.mjs --json --cli codex`（换成实际 CLI），即使退出码为 0 也读取 `missing` 和 `unpersonalized`。当前上游仅在追加 `--init-templates` 时补缺失模板；`modes/_brief.md` 也须依据同一 CV 和已确认选择个性化，自动复制模板不代表 onboarding 完成。简历解析器需要 `## PROFESSIONAL EXPERIENCE`、`### 职位, 公司 | 地点` 和 `-` 条目，以及 `## TECHNICAL SKILLS` 下的 `**类别:** 技能, 技能`；适配格式不能改动事实。缺 CV 或事实不明确时记录具体阻碍。
 5. **配置搜索和 Career Docs。** 按下表和目录结构操作。只给缺失配置复制 example；已有文件先读取，再合并用户明确选择，不能用示例覆盖。搜索参数与 profile 地点政策要一致。只创建 Career Docs 缺失的骨架文件；已有面试登记通过 Gmail Skill 的 canonical writer 修改。
 6. **检查并修复。** 运行下文检查，修复常规设置错误后重跑受影响项。只对缺少的事实、账户或重要选择询问用户。不能为了检查通过而悄悄改变目标地区或关闭用户要求的功能；不支持的能力按流程标为阻碍。
 7. **逐流程交付。** 使用“可开始首次运行 / 需用户补充 / 暂不支持 / 验证失败”，列出具体文件/配置项、下一动作和实际检查结果。同时列出创建/修改的文件及未解问题。文件存在不等于就绪。设置到此结束，真实运行由用户另外发起。
+
+### PERM 历史数据初始化
+
+本地下载、索引、查询、已核实公司名称映射和 Daily Scan 参考信息已接入新扫描；不回填旧报告。使用 PERM 信息前，由 AI 下载官方 FY2025 全年、FY2026 最新可用季度累计版及对应字段说明，校验后导入本地 SQLite。下载、临时文件、索引、清单与预览全部保存在当前 checkout 的 `job-discovery/.local/perm-history/`，由现有 `.local/` Git 忽略规则覆盖。数据不放到 Career-Ops 或 Job Discovery 外，也不加入公开发布包。
+
+使用 Python 3 和隔离环境安装可选导入依赖，也可复用已有兼容解释器。从 Job Discovery 执行：
+
+```bash
+python3 -m venv .local/perm-history/venv
+.local/perm-history/venv/bin/python -m pip install -r requirements-perm-history.txt
+.local/perm-history/venv/bin/python src/perm-history.py refresh
+.local/perm-history/venv/bin/python src/perm-history.py query --company '已评分记录中的原始公司名'
+```
+
+`refresh` 从官方目录发现当前版本，下载并校验文件，完成 SQLite 导入后才发布新版本。已有验证通过的版本直接复用；只有初始化或显式刷新访问网络。`query`、`preview` 离线运行，只需 Python 标准库。
+
+独立预览的选择清单为 JSON：`companies` 数组中的每项包含 `company` 与 `scored_evidence`，后者列出已有已评分报告的 `path`，并保留 report/posting identity。执行：
+
+```bash
+python3 src/perm-history.py preview --companies .local/perm-history/companies.json --id sample
+```
+
+结果写入 `.local/perm-history/previews/sample/`：选择清单、JSON、Markdown、来源清单和待核对的原表位置。预览不修改 Career-Ops 报告。选择清单的生成方须用正式报告解析器验证公司、数值评分与 exact posting identity；预览工具检查来源文件存在、证据原文和岗位范围。可用 `selection_validation: {path}` 绑定该验证产物。已有下载来源清单可用 `import --manifest PATH` 离线重建索引。AI 须核对 release/截止日、导入审计及可重复查询后再报告可用。当前 `setup` / `setup-check` 不会自动下载或验证 PERM 数据，AI 需另行执行上述步骤。
+
+有证据的公司名称映射通过唯一导入入口保存：
+
+```bash
+python3 src/perm-history.py aliases-import --file .local/perm-history/alias-bundle.json
+python3 src/perm-history.py query --company '已评分记录中的原始公司名' --posting-key '原始岗位键' --posting-url '原始岗位URL'
+```
+
+导入会替换完整映射清单，文件须包含仍需保留的既有映射。映射包使用 `schema_version: 1` 和 `aliases`；每项包含原公司名 `source_company`、核实状态 `status`、关系类型 `relationship_type`、公司或具体岗位范围 `scope`、原始 JD 证据引用 `source_evidence_ids`、法人名及明确城市/州的 `targets`，以及 `evidence`。每份证据记录 HTTPS 来源 URL、相对 `.local/perm-history/` 的快照路径、原文短引和带时区的 `checked_at`。导入校验快照、原文、引用及目标地点后，发布 `.local/perm-history/employer-aliases.json`。官方证据清楚时由 AI 直接核实；有歧义保留未确认。名称近似、法人后缀或商号不能独立证明身份；不同法人分别展示，不推算集团合计。
+
+具体岗位范围的映射要求 `--posting-key`、`--posting-url` 同时匹配；缺失或不符则返回明确状态，不显示统计。`preview` 自动从每项原始 `scored_evidence` 取得这两个字段，选择清单必须保留它们。每次新预览在自己的目录冻结映射清单、证据快照。映射更新后使用新预览 ID，已有预览和 Career-Ops 报告保持原样。
+
+只有唯一的规范化法人名精确匹配，或已核实映射在明确法人/地点范围内找到披露记录，才生成统计。法人身份已核实但没有对应披露记录时，保留身份依据并显示 `not_found`，不显示零申请。缺数据显示不可用；未确认匹配或没有披露记录不能解释为不办理。官方披露不能完整提供申请总量及待审量；历史认证也不能证明公司或当前岗位现时支持 PERM。
+
+Daily Scan 的 PERM 历史参考**默认关闭**。需要时，在新 baseline 前将 `config/daily-scan-runtime.json` 的 `perm_history.enabled` 改为 `true`。关闭或省略时，跳过 PERM 数据快照、本地查询、公司研究/提问及报告附加信息；原 Work Authorization 判断仍保留，独立 PERM 雇主名单筛选保持原流程。修改开关只影响新扫描，已有冻结运行及报告沿用原设置。
+
+开启后，新 Daily Scan 在 baseline 固定本地数据版本、映射、原文证据及 `perm_history.report_layout: work-authorization-v1`；评分后由提交路径生成 `runs/<run-id>/perm-history.json` / `perm-history.md`，覆盖全部已评分岗位，含低分和硬排除。新正式报告在 Work Authorization 原结论后追加嵌套的 PERM 历史参考，展示年度结果、法人/适用范围、截止日、时长分位数和样本数、最近日期、主要维度及官方来源。完整明细保存在本地 run 文件，明确标为工作区文件，不当作网页下载链接。复用 Career-Ops 现有 Markdown 展示，不修改其源码。PERM 不进入评分输入，不改变评分、筛选、work authorization 或报告门槛。具体岗位映射仍须准确 key/URL 同时匹配，不自动扩大范围。
+
+本地数据或 Python 不可用时明确标注不可得，扫描继续；初始化完成后须开始新扫描才会使用该版本。已固定来源、工件或报告摘要不一致则阻止持久化，避免发布错误数字。收据核对覆盖集合、章节位置及冻结内容；展开报告在 Work Authorization 保留一次原授权文本及参考，不在附录重复。没有展示版本标记的旧 PERM baseline 保留原 metadata 格式，无 PERM 快照的旧 run 不补数据。保留仍被报告引用的 run 证据及本地数据版本；扫描不自动联网下载，不回填旧报告。验收：`npm run test:daily-scan:perm-history -- --out <新的本地产物目录>`。
+
+PERM 工具不计算、保存或校验文件内容摘要；兼容读取旧清单时忽略该类字段，新产物不再带入。文件格式、证据短引和准确岗位范围检查继续保留。
+
+新 Daily Scan 会在评分完成、报告提交前，由执行扫描的 AI 自动核实未匹配公司。读取官方身份依据并保存快照，明确的公司级历史映射可直接经 `aliases-import --merge` 合并发布；有歧义则询问用户并保留待核实，来源失败也可记录后继续。`node src/review-perm-companies.mjs prepare|freeze --run runs/<run-id>` 管理清单和冻结核实文件；freeze 另需 `--decisions <JSON 文件>`。这些参考不改变评分、筛选、授权结论或报告门槛；不把平台统一映射到客户，不合并未经核实的集团法人，不回填旧报告。详见 [自动核实流程](.agents/skills/career-ops-daily-linkedin-scan/references/workflow-contract.md#automatic-perm-company-review)。
 
 ### Career-Ops 与搜索条件映射
 
@@ -60,7 +107,7 @@ Job Discovery 基于以下开源项目构建。感谢这些项目的维护者和
 | 雇主排除 | 各来源配置的 `employer_exclusions`；只写用户选择，无排除时为 `[]`，保留各 adapter 的规则 schema |
 | Jobright 岗位、地点、级别、工作模式、经验范围 | 用户接受的浏览器筛选 → `config/jobright.json` 的 `filter_snapshot` values/codes/visible_controls，必须实际采集，不能编造 |
 | 独立 Google ATS 搜索 | `config/google-ats-direct.json` 的 role/location/negative terms 与 official_scope，编辑后运行对应校验 |
-| 招聘帖搜索 | `linkedin-post-scan/config/post-scan.json` 的 role/location/phrase groups 和 paths |
+| 招聘帖搜索 | `config/linkedin-post-scan.json` 的 role/location/phrase groups 和 paths |
 | worker 模型、并发、报告阈值、retention TTL | `config/daily-scan-runtime.json`；选择宿主可用模型，实跑前解释 retention 行为 |
 | 邮箱身份、登录与时区 | 私有 `.local/gmail-job-reply-review/accounts.json` 的 `primary`、`secondary` 邮箱地址字符串；主账号使用已连接的 Gmail app，次账号通过宿主原生浏览器工具访问已登录的 Chrome。Gmail Skill 当前登记主日期使用 America/Los_Angeles |
 
@@ -111,11 +158,12 @@ career-docs/
 
 ## 本项目包含的 Skills
 
-本仓库包含 **8 个 Skill**，位于 `.agents/skills/<名称>/`。下表链接可直接查看各自的实际指令。克隆后这些文件已在本地，但不代表代理已经加载它们或完成全局安装。
+本仓库包含 **9 个 Skill**，位于 `.agents/skills/<名称>/`。下表链接可直接查看各自的实际指令。克隆后这些文件已在本地，但不代表代理已经加载它们或完成全局安装。
 
 | Skill 名称 | 用途 |
 | --- | --- |
 | [career-ops-daily-linkedin-scan](.agents/skills/career-ops-daily-linkedin-scan/SKILL.md) | 运行或核验已配置岗位来源，评分并保存报告；支持恢复、用量比较与调度，不提交申请。 |
+| [career-ops-perm-scan](.agents/skills/career-ops-perm-scan/SKILL.md) | 刷新指定 PERM tracker 名单，在 Daily Scan 评估前只保留当前标为正常办理的具名公司岗位，不提交申请。 |
 | [career-ops-expand-report](.agents/skills/career-ops-expand-report/SKILL.md) | 将一个选定的 compact report 展开为完整 Career-Ops 报告。 |
 | [career-ops-tailored-resume](.agents/skills/career-ops-tailored-resume/SKILL.md) | 为一个已有报告生成真实的一页 Word 简历，检查事实、JD 覆盖和页数。 |
 | [career-ops-ego-apply](.agents/skills/career-ops-ego-apply/SKILL.md) | 准备并提交选定申请或冻结批次，从批准的事实来源解析答案并核验结果；此 Skill 会提交申请。 |
@@ -124,7 +172,7 @@ career-docs/
 | [technical-interview-prepare](.agents/skills/technical-interview-prepare/SKILL.md) | 调研已约面试轮次和近期题目，维护准备文档及独立证据账。 |
 | [process-infographic](.agents/skills/process-infographic/SKILL.md) | 从 Career-Ops 读取申请数量，从 Career Docs 读取面试流程，动态统计并渲染流程图；支持自定义路径和格式适配。 |
 
-在代理中打开本仓库后，查看可用 Skill 列表，核对上面 8 个名称。缺少时使用宿主的 Skill 加载机制；也可以明确要求代理读取上表链接的 `SKILL.md` 执行任务。支持 `$skill-name` 的宿主可这样调用：
+在代理中打开本仓库后，查看可用 Skill 列表，核对上面 9 个名称。缺少时使用宿主的 Skill 加载机制；也可以明确要求代理读取上表链接的 `SKILL.md` 执行任务。支持 `$skill-name` 的宿主可这样调用：
 
 ```text
 使用 $career-ops-tailored-resume，为我选定的 Career-Ops 报告制作简历。
@@ -141,7 +189,7 @@ career-docs/
 | Skill | 来源与用途 |
 | --- | --- |
 | `ego-browser` | 由 [Ego Lite](https://github.com/citrolabs/ego-lite) 提供，让代理操作浏览器；浏览器流程需要它。 |
-| `career-ops` | 由 [Career-Ops](https://github.com/career-ops-hq/career-ops) 提供，用于其自身的求职管理和 onboarding；与本项目 8 个 Skill 不同。 |
+| `career-ops` | 由 [Career-Ops](https://github.com/career-ops-hq/career-ops) 提供，用于其自身的求职管理和 onboarding；与本项目 9 个 Skill 不同。 |
 | `obsidian-markdown` | 通过宿主 Skill 列表另行安装；面试准备 Skill 使用其 Obsidian Markdown 语法规范。 |
 
 这些外部 Skill 不随本仓库复制。安装 Skill 也不能代替安装对应应用，或准备所需账户与资料。
@@ -207,12 +255,12 @@ npm run google-ats:scan -- --dry-run
 
 真实扫描前，将 `SERPAPI_API_KEY` 写入被忽略的 `.env` 或进程环境；不能写入公开的 `.env.example`。缺少 `.env` 不影响启动或 dry-run，但真实扫描仍会检查凭证。Dry-run 不发起付费请求。
 
-`runs/`、`.local/`、Post Scan 数据与报告目录由运行时创建。`assets/README.md` 保留输入目录；手工编写简历计划前创建 `.tmp/`。公开版无需 `docs/`、`audits/`、`drafts/`。
+`runs/`、`.local/`、Post Scan 数据与报告目录由运行时创建。`assets/README.md` 保留输入目录；手工编写简历计划前创建 `.tmp/`。公开版无需 `docs/` 中的私人文档与证据。
 
 ## 检查与首次运行
 
 ```bash
-python3 adapters/jobspy_linkedin_scan.py --runtime-check
+python3 src/adapters/jobspy_linkedin_scan.py --runtime-check
 ../JobSpy/.venv/bin/python -c "from jobspy import scrape_jobs; assert callable(scrape_jobs)"
 node --input-type=module -e "import { loadCareerInterfaces } from './src/commit-scan.mjs'; await loadCareerInterfaces('../career-ops'); console.log('interfaces OK')"
 npm run daily-scan:sources -- --run runs/installation-preview --dry-run
@@ -225,11 +273,13 @@ npm test
 
 首次真实扫描在代理中调用 `$career-ops-daily-linkedin-scan`，要求按自己的配置运行已启用来源。Skill 负责阶段顺序和核验，成功后返回报告和 `runs/<run-id>/receipt.json`。扫描执行 retention 并写入评估，但不提交申请。申请需单独调用 `$career-ops-ego-apply` 并明确范围；其他流程使用对应 Skill。
 
-修复工具现在要求 `--manifest FILE`。先 dry-run，再应用：报告修复使用 `--plan-sha256 HASH`，排除岗位修复使用 `--expected-plan-hash HASH`。原始 run 不变。`examples/` 中的清单只用于说明结构，应换为审核过的准确 run/岗位身份，不能按标题猜测。
+修复工具现在要求 `--manifest FILE`。先将 dry-run 的完整 JSON 输出保存为 PREVIEW.json，再应用：报告修复使用 `--plan-file PREVIEW.json`，排除岗位修复使用 `--plan-file PREVIEW.json`。原始 run 不变。`examples/` 中的清单只用于说明结构，应换为审核过的准确 run/岗位身份，不能按标题猜测。
 
 ## 发布验证与限制
 
 初始代码快照已发布；验收仅覆盖下列检查，不代表完整线上工作流均已验证。
+
+2026-10-27 更新通过公开隔离测试 **318/318**、开发仓库测试 **321/321**。本次同步源码目录调整、官方 ATS 与可选 PERM 工具、JD-only 评分、扫描准备、私有答案存储、邮箱事务和面试文档检查；PERM 历史参考继续默认关闭。公开测试入口可在没有私人发布工具的目录运行。完整虚构数据 Career-Ops 集成 E2E 通过 **268 次 CLI、673 项断言**；扫描准备通过 **75 次 CLI、133 项断言**，私有答案存储通过 **19 个场景**。这些检查不证明真实来源覆盖、模型判断质量或申请成功。已检查公开源码、样例、文档及可达 Git 历史中的私人候选人资料、本机路径和凭证；维护者署名仅保留公开 GitHub 用户名和 noreply 提交地址。
 
 2026-10-11 更新通过公开隔离测试 **306/306**，以及使用虚构数据和已安装上游 writer 的完整 Career-Ops 集成 E2E：**151 次 CLI、374 项断言**。包含代码/数据根分离、黑名单 hold、标准原因与固定期限 JD 证据的 v6 报告、展开时的不可变字段保护、归档兼容和失败补偿。E2E 示例兼容开发版与公开版布局；安装 Career-Ops 依赖并配置本地 runtime 后，可用 `npm run test:career-ops:e2e -- --out <新的绝对路径目录>` 复跑。本次未验证真实来源覆盖、模型判断质量或申请提交。
 
@@ -243,7 +293,7 @@ npm test
 
 这些结果只覆盖已测环境、账号和模板。虚构 onboarding 资料不等于用户确认的事实，评分示例也不是生产校准；其他系统、模板和账号仍需各自检查。尚未验证完整的账户工作流事务、GUI Skill 选择、同名自动选择或桌面缓存重载。验收没有进行真实投递、发信或生产 retention；单个岗位采集不证明来源覆盖。
 
-私人 golden tests、原始 JD 采集样例、日志、报告、历史修复清单、凭证、浏览器状态、私人模板和开发文档不分发。MIT 与第三方声明已包含。
+私人 golden tests、原始 JD 采集样例、日志、报告、历史修复清单、凭证、浏览器状态、私人模板和开发文档不分发。MIT 许可及上游兼容代码署名保留在 `LICENSE` 中。
 
 
 ## 可重复的本地 setup 与更新
@@ -285,6 +335,22 @@ validator 报告，按发布说明补字段。不要覆盖整个文件。升级�
 Git 回退不能恢复数据库迁移。`setup-check` 是全量 inventory，可能报告未选择来源的缺项；
 `setup` 才按选择筛选结果。
 
+2026-10-27 之前的安装需在已有 `config/discovery-adapters.v1.json` 中，仅将命令里的 `adapters/` 脚本前缀改为 `src/adapters/`，保留解释器、启用来源和个人筛选条件。只有选择官方 ATS 来源时，才按当前示例补充该项。
+
+招聘帖存储改为 schema v2，默认数据库位于 `.local/linkedin-post-scan/data/linkedin-post-scan.db`，配置位于 `config/linkedin-post-scan.json`，报告位于 `.local/outputs/linkedin-post-scan/`。当前没有 v1→v2 迁移。已有招聘帖用户应先将该流程保留在旧版本 `3ce4b8a`，待审核后的迁移能够保留 outreach 和排除历史再升级，不能用空白 v2 数据库代替旧库。停止 writer 后，备份原 `linkedin-post-scan/config/`、`data/`、`reports/`；其中私人文件继续被 Git 忽略。新安装直接使用 v2。
+
 离线验收：`npm test` 在临时 checkout 中建立固定测试配置与独立 Git 历史，
 不使用实际运行配置或相邻私人仓库。测试套件本身不证明账号、实时采集、Word 页面或申请成功；
 另行实测的结果及其范围见上方。
+
+### 扫描准备
+
+```bash
+npm run daily-scan:prepare -- --run runs/RUN_ID --career-ops ../career-ops
+```
+
+该入口按顺序合并采集结果、检查来源契约、解析规范 URL 并生成评估分配；每一步保留独立产物和失败信息，不进行评分或提交。已有冻结分配会阻止重新准备；失败后按诊断使用独立恢复入口继续。用 `npm run test:daily-scan:prepare` 复跑隔离 CLI 验收。
+
+### 依据 JD 评估（2026-10-21）
+
+新 Daily Scan 计划固定 `research_version: 0`，取消外部公司、文化、经营风险及薪资行情调查，也不复用旧公司调查。Worker 只读取完整 JD、锁定候选人资料和评分规则；结果不包含 `research`，验证器拒绝外部研究记录或占位对象。JD 已写明的薪资、职责及工作方式照常使用，缺失信息保留 partial/unknown 和置信度问题。五维整体评分、4.0 门槛、级别/资格及工作授权判断继续保留，岗位采集和准确身份核验照常执行。旧 research-enabled 计划及报告保留其冻结证据和原验证流程，不回填或删除。`npm run test:daily-scan:research` 验证新流程及历史兼容；测试不证明实际 Token 节省。

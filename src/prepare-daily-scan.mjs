@@ -4,8 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { cleanupExpiredEvaluated } from './evaluated-retention.mjs';
 import { captureBaseline } from './verify-scan-receipt.mjs';
 import { observeScanUsage, startScanUsage } from './scan-usage.mjs';
+import { snapshotPermEmployers } from './perm-employers.mjs';
 
-export async function prepareDailyScan({ runRoot, careerRoot, asOfDate = null, cleanup = cleanupExpiredEvaluated, capture = captureBaseline, startUsage = startScanUsage }) {
+export async function prepareDailyScan({ runRoot, careerRoot, asOfDate = null, permEmployersFile = null, cleanup = cleanupExpiredEvaluated, capture = captureBaseline, startUsage = startScanUsage }) {
+  const permEmployers = permEmployersFile ? snapshotPermEmployers(permEmployersFile) : null;
   observeScanUsage(() => startUsage({ runRoot }));
   const retention = await cleanup({ runRoot, careerRoot, ...(asOfDate ? { asOfDate } : {}) });
   const maintenance = {
@@ -18,7 +20,7 @@ export async function prepareDailyScan({ runRoot, careerRoot, asOfDate = null, c
       protected_count: retention.audit.protected_count,
     },
   };
-  return capture({ runRoot, careerRoot, maintenance });
+  return capture({ runRoot, careerRoot, maintenance, ...(permEmployers ? { permEmployers } : {}) });
 }
 
 function arg(name) {
@@ -31,8 +33,8 @@ if (isCli) {
   try {
     const runRoot = arg('--run');
     const careerRoot = arg('--career-ops');
-    if (!runRoot || !careerRoot) throw new Error('Usage: node src/prepare-daily-scan.mjs --run runs/<run-id> --career-ops ../career-ops');
-    console.log(JSON.stringify(await prepareDailyScan({ runRoot, careerRoot }), null, 2));
+    if (!runRoot || !careerRoot) throw new Error('Usage: node src/prepare-daily-scan.mjs --run runs/<run-id> --career-ops ../career-ops [--perm-employers <catalog.json>]');
+    console.log(JSON.stringify(await prepareDailyScan({ runRoot, careerRoot, permEmployersFile: arg('--perm-employers') }), null, 2));
   } catch (error) {
     console.error(error.stack || error.message);
     process.exitCode = 1;

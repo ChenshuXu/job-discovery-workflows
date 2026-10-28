@@ -5,7 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkSetup } from './setup-check.mjs';
 import { loadAdapterRegistry } from './adapter-registry.mjs';
-import { loadJobrightConfig } from '../adapters/jobright_recommendations_scan.mjs';
+import { loadJobrightConfig } from './adapters/jobright_recommendations_scan.mjs';
+import { loadCareerAtsConfig } from './adapters/career_ops_ats_scan.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const WORKFLOWS = {
@@ -36,19 +37,19 @@ export function setup({ root = ROOT, workflows = [], sources = [], apply = false
   root = realpathSync(root);
   const careerOps = path.resolve(process.env.CAREER_OPS_CODE_ROOT || path.join(root, '../career-ops'));
   if (!workflows.length) return { action: 'Choose --workflows ' + Object.keys(WORKFLOWS).join(','), writes: [] };
-  if (workflows.some(x => !WORKFLOWS[x]) || sources.some(x => !['jobspy', 'ego-browser', 'jobright'].includes(x))) throw new Error('Unknown workflow or source');
+  if (workflows.some(x => !WORKFLOWS[x]) || sources.some(x => !['jobspy', 'ego-browser', 'jobright', 'official-ats'].includes(x))) throw new Error('Unknown workflow or source');
   if (sources.length && !workflows.includes('daily-scan')) throw new Error('--sources requires daily-scan');
   if (workflows.includes('daily-scan') && !sources.length) throw new Error('Choose --sources for daily-scan');
   if (install && !apply) throw new Error('--install requires --apply');
   const writes = [], operations = [], files = new Set();
   if (workflows.includes('daily-scan')) {
     files.add('config/discovery-adapters.v1.json'); files.add('config/daily-scan-runtime.json');
-    for (const source of sources) files.add(`config/${source === 'jobright' ? 'jobright' : 'jobspy-ego'}.json`);
+    for (const source of sources) files.add(`config/${['jobright', 'official-ats'].includes(source) ? source : 'jobspy-ego'}.json`);
   }
   if (workflows.includes('google-ats')) files.add('config/google-ats-direct.json');
   const gmailAccounts = '.local/gmail-job-reply-review/accounts.json';
   if (workflows.includes('gmail')) files.add(gmailAccounts);
-  if (workflows.includes('post-scan')) { files.add('linkedin-post-scan/config/post-scan.json'); files.add('config/daily-scan-runtime.json'); files.add('config/jobspy-ego.json'); }
+  if (workflows.includes('post-scan')) { files.add('config/linkedin-post-scan.json'); files.add('config/daily-scan-runtime.json'); files.add('config/jobspy-ego.json'); }
   // Preflight every path and every link before writing any of them.
   for (const relative of files) {
     const target = path.join(root, relative); noSymlinks(target);
@@ -104,6 +105,7 @@ export function setup({ root = ROOT, workflows = [], sources = [], apply = false
   const results = workflows.map(workflow => {
     const scopes = new Set(['all', ...WORKFLOWS[workflow]]);
     if (workflow === 'daily-scan') for (const source of sources) {
+      if (source === 'official-ats') { scopes.add('official-ats'); continue; }
       scopes.add(source === 'jobspy' ? 'jobspy' : 'browser'); scopes.add(source === 'jobright' ? 'jobright' : 'jobspy-ego');
     }
     const selected = checks.checks.filter(x => scopes.has(x.scope));
@@ -111,12 +113,13 @@ export function setup({ root = ROOT, workflows = [], sources = [], apply = false
     if (apply && workflow === 'daily-scan') try {
       const registry = loadAdapterRegistry(path.join(root, 'config/discovery-adapters.v1.json'));
       if (JSON.stringify(Object.keys(registry.adapters).filter(x => registry.adapters[x].enabled).sort()) !== JSON.stringify([...new Set(sources)].sort())) throw new Error('Existing registry differs from selected sources; preserved it. Reconcile explicit choices before scanning.');
-      for (const source of sources.filter(x => x !== 'jobright')) {
+      for (const source of sources.filter(x => !['jobright', 'official-ats'].includes(x))) {
         const command = source === 'jobspy' ? 'python3' : process.execPath;
-        const script = source === 'jobspy' ? 'adapters/jobspy_linkedin_scan.py' : 'adapters/egobrowser_linkedin_scan.mjs';
+        const script = source === 'jobspy' ? 'src/adapters/jobspy_linkedin_scan.py' : 'src/adapters/egobrowser_linkedin_scan.mjs';
         execFileSync(command, [path.join(root, script), '--dry-run', '--config', path.join(root, 'config/jobspy-ego.json')], { stdio: 'pipe' });
       }
       if (sources.includes('jobright')) loadJobrightConfig(path.join(root, 'config/jobright.json'));
+      if (sources.includes('official-ats')) loadCareerAtsConfig(path.join(root, 'config/official-ats.json'));
     } catch (e) { errors.push(e.message); }
     return { workflow, status: errors.length ? 'validation failed' : 'needs user input', errors, checks: selected,
       next: 'Confirm actual user settings, host capabilities and accounts; perform README workflow checks. File presence alone is not readiness.' };

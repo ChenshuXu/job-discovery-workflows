@@ -9,7 +9,7 @@
       "enabled": true,
       "command": [
         "python3",
-        "adapters/jobspy_linkedin_scan.py"
+        "src/adapters/jobspy_linkedin_scan.py"
       ],
       "config": "config/jobspy-ego.json",
       "employer_exclusions": true
@@ -18,7 +18,7 @@
       "enabled": false,
       "command": [
         "node",
-        "adapters/egobrowser_linkedin_scan.mjs"
+        "src/adapters/egobrowser_linkedin_scan.mjs"
       ],
       "config": "config/jobspy-ego.json",
       "employer_exclusions": true
@@ -27,9 +27,18 @@
       "enabled": false,
       "command": [
         "node",
-        "adapters/jobright_recommendations_scan.mjs"
+        "src/adapters/jobright_recommendations_scan.mjs"
       ],
       "config": "config/jobright.json",
+      "employer_exclusions": true
+    },
+    "official-ats": {
+      "enabled": false,
+      "command": [
+        "node",
+        "src/adapters/career_ops_ats_scan.mjs"
+      ],
+      "config": "config/official-ats.json",
       "employer_exclusions": true
     }
   }

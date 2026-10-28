@@ -82,7 +82,7 @@ must appear in the report header, Machine Summary, and tracker.
 <3.5       Recommend against applying
 ```
 
-For culture, apply the canonical culture-screen rules and any locked user override. Daily Scan uses the complete JD and locked profile; it does no new company research. Missing evidence remains partial or unknown. Absence is not counterevidence; respect the explicit profile setting `culture_screen.deprioritize_if_absent` when present.
+For culture, apply the canonical culture-screen rules and any locked user override to the complete JD and locked profile. Missing evidence remains partial or unknown. Absence is not counterevidence; respect the explicit profile setting `culture_screen.deprioritize_if_absent` when present.
 
 Treat specialized stack depth as a scoring gap, not a hard exclusion. Do not bulk-exclude target-adjacent backend, platform, distributed-systems, data-platform, developer-infrastructure, or AI-infrastructure roles. Distinguish baseline requirements from preferred/contextual technologies.
 
@@ -136,6 +136,29 @@ one of these decisive. Use the exact category and `JD: "<quote>"` evidence:
 | `internal_only` | Structured role title ends in `Internal Only` or `Internal Candidates Only` |
 
 `Security Clearance required: No` is not a clearance exclusion unless the same clause also requires obtaining or maintaining clearance. Public Trust alone is not a security clearance and must be `needs_verification` with category `public_trust`. Use `work_authorization.value=unstated` for a silent sponsorship statement; overall eligibility still follows all requirements. Conditional, compound, or conflicting text may become `needs_verification` when its meaning raises a specific eligibility question; generic keywords are insufficient. This is your semantic judgment, not a code predicate. Specialized-stack gaps affect fit only. Use the work-authorization contract below for its separate judgment and evidence.
+
+## JD-only evaluation
+
+New plans freeze `research_version: 0`. Evaluate the full JD against locked
+candidate facts and scoring rules without external company, culture, operating-risk
+or market-salary research. Do not search, open public research pages or reuse prior
+company research for this evaluation; omit `research` and `Research:` citations.
+Posting acquisition and exact posting-identity verification remain separate.
+For this Daily Scan policy, generic Career-Ops WebSearch/company-research
+instructions do not apply; its five-dimension rubric continues to apply.
+
+Use the JD's stated salary, responsibilities, employment terms, team practices
+and work model when supported. Distinguish advertised base, bonus/equity and
+missing market context. If compensation, culture or company facts are absent,
+keep partial/unknown evidence and concrete questions under the original confidence
+rules. Absence is not proof of low pay, good/bad culture, stability or a suspicious
+employer, and does not cause a mechanical score or legitimacy penalty. Do not
+substitute technical fit for an unknown dimension. Preserve all five dimensions,
+level/eligibility gates, report threshold and JD work-authorization judgments.
+
+Historical research-enabled plans keep their frozen instructions, captured
+sources, exact citations and original confidence constraints. Existing results
+and reports are not rewritten or stripped of their evidence.
 
 ## Work authorization for report candidates
 

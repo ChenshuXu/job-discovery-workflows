@@ -2,7 +2,6 @@
 import { resolveCareerPaths } from '../../../../src/career-ops-paths.mjs';
 // Read-only source collection. Personal records belong in the caller's private output.
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -11,7 +10,6 @@ import { loadCareerTrackerParser, parseTracker } from '../../../../src/daily-sca
 import { validateActiveInterviews } from '../../gmail-job-reply-review/scripts/active-interviews.mjs';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
-const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const tally = values => values.reduce((counts, key) => (counts[key] = (counts[key] || 0) + 1, counts), {});
 const EVENTS = {
   screen: 'Screen completed', coding: 'Hands-on completed', debugging: 'Hands-on completed',
@@ -60,17 +58,17 @@ export async function collect({ careerOps = path.resolve(ROOT, '../career-ops'),
   const sources = new Map();
   const read = file => {
     file = path.resolve(file);
-    const bytes = readFileSync(file), sha256 = hash(bytes);
-    assert(!sources.has(file) || sources.get(file) === sha256, `Source changed during collection: ${file}`);
-    sources.set(file, sha256);
+    const bytes = readFileSync(file), content = String(bytes);
+    assert(!sources.has(file) || sources.get(file) === content, `Source changed during collection: ${file}`);
+    sources.set(file, content);
     return bytes.toString('utf8');
   };
   const evidence = (items, base) => {
     assert(Array.isArray(items) && items.length, 'Evidence sources required');
     return items.map(item => {
-      assert(typeof item.path === 'string' && item.path && /^[a-f0-9]{64}$/.test(item.sha256), 'Evidence needs path and sha256');
+      assert(typeof item.path === 'string' && item.path && typeof item.content === 'string', 'Evidence needs path and content');
       const file = path.resolve(base, item.path);
-      assert.equal(hash(read(file)), item.sha256, `Stale evidence: ${file}; review and re-extract`);
+      assert.equal(String(read(file)), item.content, `Stale evidence: ${file}; review and re-extract`);
       return file;
     });
   };
@@ -169,9 +167,9 @@ export async function collect({ careerOps = path.resolve(ROOT, '../career-ops'),
   }[row.status].includes(statusByNum.get(Number(row.tracker.slice(1))))));
   if (drifts.length) warnings.push(`Status disagreement; sources preserved, no auto-repair: ${drifts.map(row => row.identity).join(', ')}`);
   // Check again after all reads: do not publish a snapshot mixed across a concurrent write.
-  for (const [file, sha256] of sources) assert.equal(hash(readFileSync(file)), sha256, `Source changed: ${file}`);
+  for (const [file, content] of sources) assert.equal(String(readFileSync(file)), content, `Source changed: ${file}`);
   return { schema_version: 1, as_of: asOf, paths: { career_ops: careerOps, career_docs: careerDocs, tracker: trackerFile, register: registerFile },
-    sources: [...sources].map(([file, sha256]) => ({ path: file, sha256 })), warnings,
+    sources: [...sources.keys()].map(file => ({ path: file })), warnings,
     applications: { total: applications.length, funnel, by_status: tally(applications.map(row => row.status)), records: applications },
     interviews: { total: interviews.length, by_status: tally(interviews.map(row => row.status)),
       exact_tracker_links: trackers.size, unlinked: interviews.length - trackers.size,

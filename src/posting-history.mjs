@@ -4,6 +4,10 @@ import path from 'node:path';
 import { extractPostingIdentity, postingKey } from './posting-identity.mjs';
 import { evaluateLocationScope, isAllowedLocationDecision } from './location-scope.mjs';
 import { semanticIdentity } from './semantic-jd-identity.mjs';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const OBSERVATIONAL_HISTORY_STATUSES = new Set(['skipped_title', 'skipped_location', 'skipped_age', 'skipped_no_apply_control']);
 
 function filesBelow(root) {
   if (!existsSync(root)) return [];
@@ -34,7 +38,13 @@ export function collectHistoricalPostingKeys({ careerRoot, greenhouseKeys = [] }
   ];
   for (const surface of [...new Set(surfaces)]) {
     for (const file of filesBelow(surface).filter(item => /\.(?:md|tsv)$/i.test(item))) {
-      const text = readFileSync(file, 'utf8');
+      let text = readFileSync(file, 'utf8');
+      if (file === paths.scanHistoryFile) {
+        const columnsFile = path.join(paths.codeRoot, 'lib/scan-history-columns.mjs');
+        // Setup/offline fixtures may lack upstream modules; status is its append-only sixth column.
+        const parseLine = existsSync(columnsFile) ? require(columnsFile).parseScanHistoryLine : line => ({ status: line.split('\t')[5] ?? '' });
+        text = text.split(/\r?\n/).filter(line => !OBSERVATIONAL_HISTORY_STATUSES.has(String(parseLine(line).status ?? '').trim().toLowerCase())).join('\n');
+      }
       const artifact = `career-ops/${path.relative(root, file)}`;
       for (const url of extractPostingIdentity(text).urls) {
         const key = postingKey(url);

@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { resolveCareerPaths } from './career-ops-paths.mjs';
 // A bounded correction of persisted acquisition exclusions. Original runs are immutable.
-import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +10,6 @@ import { postingKey } from './posting-identity.mjs';
 
 
 const moduleRoot = path.dirname(fileURLToPath(import.meta.url));
-const hash = value => createHash('sha256').update(value).digest('hex');
 const read = file => readFileSync(file, 'utf8');
 const json = file => JSON.parse(read(file));
 const exact = (items, label) => { if (items.length !== 1) throw new Error(`${label}: expected exactly one match, found ${items.length}`); return items[0]; };
@@ -112,17 +110,16 @@ function buildPlan({ runRoot, careerRoot, manifest, interfaces, trackerText }) {
     if (String(result.status ?? 'EVALUATED').toUpperCase() !== 'EVALUATED' || result.report != null || result.hard_exclusion || !Number.isFinite(result.score)) throw new Error(`${key}: original result is not an unreported successful evaluation`);
     inputs.add(sourceFile); inputs.add(resultFile);
     return { posting_key: key, posting_url: record.primary_url, exclusion, source_jd: sourceFile, jd_file: jdFile,
-      jd_sha256: hash(jdText), archive_jd: path.join(archiveRoot, path.basename(jdFile)), history_index: owned.index, history_raw: owned.segment, history_line_sha256: hash(owned.segment) };
+      jd_content: String(jdText), archive_jd: path.join(archiveRoot, path.basename(jdFile)), history_index: owned.index, history_raw: owned.segment, history_line_content: String(owned.segment) };
   });
   const remove = new Set(effects.map(item => item.history_index));
   const nextHistory = historySegments.filter((_, index) => !remove.has(index)).join('');
-  const inputHashes = [...inputs].sort().map(file => { safePath(file, { missing: true }); return { path: file, sha256: existsSync(file) ? hash(readFileSync(file)) : null }; });
+  const inputSnapshots = [...inputs].sort().map(file => { safePath(file, { missing: true }); return { path: file, content: existsSync(file) ? String(readFileSync(file)) : null }; });
   const plan = { schema_version: 1, operation: 'remove-excluded-employer-persistence', run_id: manifest.run_id, run_root: runRoot,
     career_ops_root: careerRoot, archive_root: archiveRoot, tracker_path: trackerFile, history_path: historyFile,
-    original_run_untouched: true, history_before_sha256: hash(historyText), history_after_sha256: hash(nextHistory),
+    original_run_untouched: true, history_before_content: String(historyText), history_after_content: String(nextHistory),
     history_rows_before: history.filter(item => canonical(item.cells[0])).length, history_rows_after: history.filter(item => canonical(item.cells[0])).length - effects.length,
-    reports_catalog: reports, jds_catalog: jds, input_hashes: inputHashes, effects };
-  plan.plan_sha256 = hash(JSON.stringify(plan));
+    reports_catalog: reports, jds_catalog: jds, input_snapshots: inputSnapshots, effects };
   return { plan, historyText, nextHistory };
 }
 
@@ -130,17 +127,17 @@ function verifyInputs(plan, changed = new Set()) {
   for (const [name, expected] of [['reports', plan.reports_catalog], ['jds', plan.jds_catalog.filter(file => !changed.has(file))]]) {
     if (JSON.stringify(referenceFiles(path.join(resolveCareerPaths(plan.career_ops_root).dataRoot, name))) !== JSON.stringify(expected)) throw new Error(`correction ${name} catalog changed`);
   }
-  for (const input of plan.input_hashes.filter(input => !changed.has(input.path))) {
+  for (const input of plan.input_snapshots.filter(input => !changed.has(input.path))) {
     safePath(input.path, { missing: true });
-    if ((existsSync(input.path) ? hash(readFileSync(input.path)) : null) !== input.sha256) throw new Error(`correction input changed: ${input.path}`);
+    if ((existsSync(input.path) ? String(readFileSync(input.path)) : null) !== input.content) throw new Error(`correction input changed: ${input.path}`);
   }
 }
 
-export async function repairExcludedScanPostings({ runRoot, careerRoot, manifest, apply = false, expectedPlanHash, interfaces = null }) {
+export async function repairExcludedScanPostings({ runRoot, careerRoot, manifest, apply = false, expectedPlan, interfaces = null }) {
   runRoot = path.resolve(runRoot); careerRoot = path.resolve(careerRoot);
   const api = interfaces ?? await loadCareerInterfaces(careerRoot);
   if (!apply) return { applied: false, ...buildPlan({ runRoot, careerRoot, manifest, interfaces: api }).plan };
-  if (!/^[a-f0-9]{64}$/.test(expectedPlanHash ?? '')) throw new Error('apply requires the reviewed --expected-plan-hash');
+  if (!expectedPlan || typeof expectedPlan !== 'object') throw new Error('apply requires the reviewed --plan-file');
   const commitLock = await api.pipelineLock.acquirePipelineLock(resolveCareerPaths(careerRoot).commitLockFile, { timeoutMs: 60_000, staleMs: 10 * 60_000 });
   try {
     const transaction = await api.trackerUtils.openTrackerTransaction(resolveCareerPaths(careerRoot).trackerFile);
@@ -148,7 +145,7 @@ export async function repairExcludedScanPostings({ runRoot, careerRoot, manifest
       const historyFile = configured(careerRoot, 'CAREER_OPS_SCAN_HISTORY', 'data/scan-history.tsv');
       return await api.pipelineLock.withPipelineLock(historyFile, async () => {
         const { plan, historyText, nextHistory } = buildPlan({ runRoot, careerRoot, manifest, interfaces: api, trackerText: transaction.read() });
-        if (plan.plan_sha256 !== expectedPlanHash) throw new Error('correction plan hash changed; review a new dry-run');
+        if (JSON.stringify({ applied: false, ...plan }) !== JSON.stringify(expectedPlan)) throw new Error('correction plan changed; review a new dry-run');
         verifyInputs(plan);
         mkdirSync(path.dirname(plan.archive_root), { recursive: true });
         mkdirSync(plan.archive_root);
@@ -160,14 +157,14 @@ export async function repairExcludedScanPostings({ runRoot, careerRoot, manifest
         try {
           verifyInputs(plan);
           for (const effect of plan.effects) {
-            if (hash(readFileSync(effect.archive_jd)) !== effect.jd_sha256) throw new Error('archive JD verification failed');
+            if (String(readFileSync(effect.archive_jd)) !== effect.jd_content) throw new Error('archive JD verification failed');
             unlinkSync(effect.jd_file); removed.push(effect);
           }
           api.trackerUtils.writeFileAtomic(historyFile, nextHistory);
           if (read(historyFile) !== nextHistory || removed.some(effect => existsSync(effect.jd_file))) throw new Error('correction persistence verification failed');
           verifyInputs(plan, new Set([historyFile, ...removed.map(effect => effect.jd_file)]));
-          const outcome = { schema_version: 1, status: 'COMPLETE', completed_at: new Date().toISOString(), plan_sha256: plan.plan_sha256,
-            removed_count: removed.length, history_after_sha256: hash(read(historyFile)), original_run_untouched: true, recoverable: true };
+          const outcome = { schema_version: 1, status: 'COMPLETE', completed_at: new Date().toISOString(),
+            removed_count: removed.length, history_after_content: String(read(historyFile)), original_run_untouched: true, recoverable: true };
           create('outcome.json', outcome);
           return { applied: true, ...plan, outcome };
         } catch (error) {
@@ -180,10 +177,10 @@ export async function repairExcludedScanPostings({ runRoot, careerRoot, manifest
           for (const effect of removed) {
             try {
               if (!existsSync(effect.jd_file)) writeFileSync(effect.jd_file, readFileSync(effect.archive_jd), { flag: 'wx' });
-              if (hash(readFileSync(effect.jd_file)) !== effect.jd_sha256) throw new Error(`JD diverged: ${effect.jd_file}`);
+              if (String(readFileSync(effect.jd_file)) !== effect.jd_content) throw new Error(`JD diverged: ${effect.jd_file}`);
             } catch (rollback) { failures.push(rollback.message); }
           }
-          create('outcome.json', { status: failures.length ? 'RECOVERY_REQUIRED' : 'ROLLED_BACK', error: error.message, recovery_errors: failures, plan_sha256: plan.plan_sha256 });
+          create('outcome.json', { status: failures.length ? 'RECOVERY_REQUIRED' : 'ROLLED_BACK', error: error.message, recovery_errors: failures });
           throw new Error(`${error.message}; ${failures.length ? `recovery required: ${failures.join('; ')}` : 'owned changes rolled back; archive retained'}`);
         }
       });
@@ -196,10 +193,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   for (let index = 0; index < args.length; index++) {
     const flag = args[index];
     if (flag === '--apply') options.apply = true;
-    else if (['--run', '--career-ops', '--expected-plan-hash', '--manifest'].includes(flag) && args[index + 1]) options[{ '--run': 'runRoot', '--career-ops': 'careerRoot', '--expected-plan-hash': 'expectedPlanHash', '--manifest': 'manifestFile' }[flag]] = args[++index];
+    else if (['--run', '--career-ops', '--plan-file', '--manifest'].includes(flag) && args[index + 1]) options[{ '--run': 'runRoot', '--career-ops': 'careerRoot', '--plan-file': 'expectedPlan', '--manifest': 'manifestFile' }[flag]] = args[++index];
     else throw new Error(`unknown or incomplete option: ${flag}`);
   }
   if (!options.runRoot || !options.careerRoot || !options.manifestFile) throw new Error('--run, --career-ops and --manifest are required');
   options.manifest = json(options.manifestFile);
+  if (options.expectedPlan) options.expectedPlan = json(options.expectedPlan);
   console.log(JSON.stringify(await repairExcludedScanPostings(options), null, 2));
 }

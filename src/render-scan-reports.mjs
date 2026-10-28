@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync } 
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { postingRequisition } from './posting-identity.mjs';
-import { renderCompactReport } from './scan-report-contract.mjs';
+import { renderCompactReport, appendPermHistoryReference, PERM_REPORT_LAYOUT } from './scan-report-contract.mjs';
+import { renderPermHistoryReference } from './perm-history.mjs';
 export { discoveryVia } from './scan-report-contract.mjs';
 
 const MAX_BATCH = 50;
@@ -62,10 +63,12 @@ export function scanReportStem(record, number) {
   return `${String(number).padStart(3, '0')}-${slug(record.company)}-${slug(record.title)}`;
 }
 
-export function renderScanReportDocument({ result, record, number, date, runId }) {
+export function renderScanReportDocument({ result, record, number, date, runId, permReference = '', permReportLayout = null }) {
   const report = { company: record.company, role: record.title, archetype: result.report.archetype,
     work_auth: result.work_authorization.label, markdown: renderCompactReport({ result, record, runId }) };
   const linkedin = record.linkedin_id ? `**LinkedIn Job ID:** ${record.linkedin_id}  \n` : '';
+  const inAuthorization = permReportLayout === PERM_REPORT_LAYOUT;
+  if (inAuthorization) report.markdown = appendPermHistoryReference(report.markdown, permReference);
   return `# Evaluation: ${report.company} — ${report.role}\n\n`
     + `**Report Number:** ${number}  \n**Date:** ${date}  \n`
     + `**Archetype:** ${report.archetype || 'Unstated'}  \n`
@@ -73,7 +76,7 @@ export function renderScanReportDocument({ result, record, number, date, runId }
     + `**Legitimacy:** ${result.legitimacy_tier}  \n**Work Auth:** ${report.work_auth}  \n`
     + `**Location:** ${oneLine(record.location) || 'Unstated'}  \n**Workplace Type:** ${oneLine(record.workplace_type) || 'unknown'}  \n**Structured Remote Signal:** ${record.structured_remote_signal === true ? 'yes' : 'no'}  \n**Location Scope:** ${oneLine(record.location_scope?.decision) || 'unknown'}  \n`
     + `**URL:** ${record.primary_url}  \n**Posting Key:** ${record.primary_key}  \n${linkedin}`
-    + `**PDF:** not generated — Daily Scan does not create PDFs\n\n---\n\n${report.markdown.trim()}\n`;
+    + `**PDF:** not generated — Daily Scan does not create PDFs\n\n${inAuthorization ? '' : permReference}---\n\n${report.markdown.trim()}\n`;
 }
 
 export function renderScanReports({
@@ -118,11 +121,12 @@ export function renderScanReports({
       const stem = scanReportStem(item.record, number);
       const reportPath = `reports/${stem}-${date}.md`;
       const tsvPath = path.join(trackerAdditionsRoot, `${stem}.tsv`);
-      const reportText = renderScanReportDocument({ ...item, number, date, runId: results.plan.run_id });
+      const reportFile = path.join(resolveCareerPaths(careerRoot).dataRoot, reportPath);
+      const permReference = renderPermHistoryReference(validated.permHistory, item.record, reportFile, runRoot);
+      const reportText = renderScanReportDocument({ ...item, number, date, runId: results.plan.run_id, permReference, permReportLayout: validated.permHistory?.report_layout });
       const note = trackerIdentityNote(item.record);
       const tsv = 'num\tdate\tcompany\trole\tstatus\tscore\tpdf\treport\tnotes\n'
         + `${[Number(number), date, oneLine(item.report.company), oneLine(item.report.role), 'Evaluated', `${Number(item.result.score).toFixed(1)}/5`, '❌', `[${Number(number)}](${reportPath})`, note].join('\t')}\n`;
-      const reportFile = path.join(resolveCareerPaths(careerRoot).dataRoot, reportPath);
       const tsvFile = tsvPath;
       const sentinel = path.join(resolveCareerPaths(careerRoot).reportsRoot, `${number}-RESERVED.md`);
       if (existsSync(reportFile) || existsSync(tsvFile)) throw new Error(`${assignment.posting_key}: report or tracker addition already exists`);

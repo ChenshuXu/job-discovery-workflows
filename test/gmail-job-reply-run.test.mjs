@@ -154,6 +154,24 @@ function candidateDescriptor() {
   return `message_1@${new Date(Date.now() - 5_000).toISOString()}`;
 }
 
+test('user-excluded secondary preserves its cursor at coordinator commit', (t) => {
+  const fx = fixture(t);
+  const secondaryPath = join(fx.state, 'gmail-job-reply-secondary-state.json');
+  const before = readFileSync(secondaryPath, 'utf8');
+  const begin = command(fx, 'begin').output;
+  assert.equal(command(fx, 'page', ...credentials(begin), '--mailbox', 'primary',
+    '--query', begin.mailboxes.primary.required_query, '--page-token', 'START',
+    '--next-page-token', 'END', '--result-count', '0').status, 0);
+  assert.equal(command(fx, 'mailbox', ...credentials(begin), '--mailbox', 'primary',
+    '--status', 'success').status, 0);
+  const excluded = command(fx, 'mailbox', ...credentials(begin), '--mailbox', 'secondary',
+    '--status', 'unavailable', '--reason-code', 'USER_EXCLUDED_SECONDARY');
+  assert.equal(excluded.status, 0, excluded.stdout);
+  const committed = command(fx, 'commit', ...credentials(begin));
+  assert.equal(committed.status, 0, committed.stdout);
+  assert.equal(readFileSync(secondaryPath, 'utf8'), before);
+});
+
 function stage(fx, begin, descriptor, mailbox = 'primary') {
   const result = command(
     fx,
@@ -317,6 +335,60 @@ test('final tracker mismatch fails before committing the interview register', (t
   assert.notEqual(git(fx.careerDocs, 'rev-parse', 'HEAD'), priorHead);
 });
 
+test('position cancellation verifies exact Discarded receipts and advances only primary', (t) => {
+  const eventDate = '2026-08-31';
+  const note = `Gmail position cancellation received ${eventDate} for R1604359`;
+  for (const baseline of ['Applied', 'Discarded']) {
+    const log = `1\t${eventDate}\tApplied\tDiscarded\tset-status\t\n`;
+    const fx = fixture(t, baseline === 'Discarded'
+      ? { status: baseline, note, statusLog: log } : {});
+    const secondaryPath = join(fx.state, 'gmail-job-reply-secondary-state.json');
+    const secondaryBefore = readFileSync(secondaryPath, 'utf8');
+    const begin = command(fx, 'begin').output;
+    const descriptor = candidateDescriptor();
+    stage(fx, begin, descriptor);
+    const args = ['classify', ...credentials(begin), '--mailbox', 'primary',
+      '--category', 'position_cancelled', '--disposition', 'tracker_discarded',
+      '--identity-key', 'tracker:#1', descriptor];
+    const classified = command(fx, ...args);
+    assert.equal(classified.status, 0, classified.stdout);
+    assert.deepEqual(classified.output.register_markers, []);
+    assert.equal(command(fx, ...args).output.idempotent_count, 1);
+    const receiptArgs = ['receipt', ...credentials(begin), '--mailbox', 'primary',
+      '--target', 'tracker', '--event-date', eventDate, descriptor];
+    write(join(fx.career, 'data/applications.md'), applications('Rejected', note));
+    assert.equal(command(fx, ...receiptArgs).output.error.code, 'TRACKER_STATE_MISMATCH');
+    write(join(fx.career, 'data/applications.md'), applications('Discarded',
+      `Gmail rejection received ${eventDate}`));
+    assert.equal(command(fx, ...receiptArgs).output.error.code, 'TRACKER_STATE_MISMATCH');
+    write(join(fx.career, 'data/applications.md'), applications('Discarded', note));
+    write(join(fx.career, 'data/status-log.tsv'), '');
+    assert.equal(command(fx, ...receiptArgs).output.error.code, 'STATUS_LOG_RECEIPT_MISSING');
+    write(join(fx.career, 'data/status-log.tsv'), log.replace('Discarded', 'Rejected'));
+    assert.equal(command(fx, ...receiptArgs).output.error.code, 'STATUS_LOG_RECEIPT_MISSING');
+    write(join(fx.career, 'data/status-log.tsv'), log);
+    const receipt = command(fx, ...receiptArgs);
+    assert.equal(receipt.status, 0, receipt.stdout);
+    assert.equal(command(fx, 'mailbox', ...credentials(begin), '--mailbox', 'primary',
+      '--status', 'success').status, 0);
+    assert.equal(command(fx, 'mailbox', ...credentials(begin), '--mailbox', 'secondary',
+      '--status', 'unavailable', '--reason-code', 'USER_EXCLUDED_SECONDARY').status, 0);
+    const committed = command(fx, 'commit', ...credentials(begin));
+    assert.equal(committed.status, 0, committed.stdout);
+    assert.equal(committed.output.mailboxes.primary.content_classification_complete, true);
+    assert.equal(committed.output.writes.tracker_receipt_count, 1);
+    assert.equal(committed.output.writes.register_receipt_count, 0);
+    assert.equal(readFileSync(secondaryPath, 'utf8'), secondaryBefore);
+    assert.equal(JSON.parse(readFileSync(join(fx.state, 'gmail-job-reply-state.json')))
+      .last_successful_run_at, begin.mailboxes.primary.scan_cutoff_at);
+    const next = command(fx, 'begin').output;
+    stage(fx, next, descriptor);
+    const active = JSON.parse(readFileSync(join(fx.state, 'runs/active.json')));
+    assert.equal(Object.keys(active.mailboxes.primary.candidates).length, 0);
+    assert.equal(command(fx, 'abort', ...credentials(next), '--reason-code', 'test_complete').status, 0);
+  }
+});
+
 test('tracker rejection needs only a tracker receipt when the baseline is already Rejected', (t) => {
   const eventDate = '2026-08-31';
   const note = `Gmail rejection received ${eventDate} for REQ-123`;
@@ -459,6 +531,9 @@ test('post-interview rejection requires a verified register receipt', (t) => {
   stage(fx, begin, descriptor);
   const classified = classifyRejectionAndFinish(fx, begin, descriptor);
   const marker = classified.register_markers[0];
+
+  assert.doesNotMatch(marker, /[\x00-\x1f\x7f]/u);
+  assert.equal(Buffer.from(marker.split(' / ')[1], 'base64url').toString(), `primary\0${descriptor}`);
 
   write(
     join(fx.career, 'data/applications.md'),
@@ -626,6 +701,39 @@ test('post-interview rejection without a Tracker archives with only a register r
   const eventDate = '2026-08-31';
   write(fx.interviews, document({
     archivedRow: `| action:untracked-interview |  | Untracked Co | Engineer | Recruiter Screen | ${eventDate} | Rejected | ${eventDate} | ${classified.register_markers[0]} |`,
+  }));
+  const receipt = command(
+    fx,
+    'receipt',
+    ...credentials(begin),
+    '--mailbox', 'primary',
+    '--target', 'register',
+    descriptor,
+  );
+  assert.equal(receipt.status, 0, receipt.stdout);
+  const committed = command(fx, 'commit', ...credentials(begin));
+  assert.equal(committed.status, 0, committed.stdout);
+  assert.equal(committed.output.writes.register_receipt_count, 1);
+  assert.equal(committed.output.writes.tracker_receipt_count, 0);
+});
+
+test('post-interview cancellation without a Tracker archives as Cancelled', (t) => {
+  const activeRow = '| action:untracked-interview |  | Untracked Co | Engineer | Recruiter Screen | 2026-08-30 | Waiting | 2026-08-30 | |';
+  const fx = fixture(t, { interviews: document({ row: activeRow }) });
+  const begin = command(fx, 'begin').output;
+  const descriptor = candidateDescriptor();
+  stage(fx, begin, descriptor);
+  const result = command(fx, 'classify', ...credentials(begin), '--mailbox', 'primary',
+    '--category', 'position_cancelled', '--disposition', 'tracker_discarded',
+    '--identity-key', 'action:untracked-interview', descriptor);
+  assert.equal(result.status, 0, result.stdout);
+  const classified = result.output;
+  assert.equal(command(fx, 'mailbox', ...credentials(begin), '--mailbox', 'primary',
+    '--status', 'success').status, 0);
+  closeEmptySecondary(fx, begin);
+  const eventDate = '2026-08-31';
+  write(fx.interviews, document({
+    archivedRow: `| action:untracked-interview |  | Untracked Co | Engineer | Recruiter Screen | ${eventDate} | Cancelled | ${eventDate} | ${classified.register_markers[0]} |`,
   }));
   const receipt = command(
     fx,

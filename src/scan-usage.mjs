@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +8,7 @@ import { captureCodexUsageScope, collectCodexUsage } from './codex-usage.mjs';
 const projectRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const fields = ['input_tokens', 'cached_input_tokens', 'uncached_input_tokens', 'cache_write_input_tokens', 'output_tokens', 'reasoning_output_tokens', 'total_tokens'];
 const unique = values => [...new Set(values)];
-const digest = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
+const serialize = value => typeof value === 'string' ? value : JSON.stringify(value);
 const readJson = file => existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null;
 const contextFile = root => path.join(path.resolve(root), 'usage-context.json');
 const iso = value => new Date(value ?? Date.now()).toISOString();
@@ -39,12 +38,12 @@ function readContext(root) {
 }
 
 function codeSnapshot() {
-  const files = ['config/worker-prompt.md', 'config/worker-scoring.md', 'config/report-contract.md', 'src/merge-worker-results.mjs', 'src/scoring-safety.mjs', 'src/scan-report-contract.mjs'];
-  const hashes = Object.fromEntries(files.map(file => [file, digest(readFileSync(path.join(projectRoot, file), 'utf8'))]));
+  const files = ['config/worker-prompt.md', 'config/worker-scoring.md', 'config/report-contract.md', 'src/merge-worker-results.mjs', 'src/scoring-safety.mjs', 'src/scan-report-contract.mjs', 'src/scoring-research.mjs', 'src/validation-diagnostics.mjs', 'src/scan-summary.mjs', 'src/plan-scan-evaluations.mjs'];
+  const contents = Object.fromEntries(files.map(file => [file, serialize(readFileSync(path.join(projectRoot, file), 'utf8'))]));
   const git = args => spawnSync('git', args, { cwd: projectRoot, encoding: 'utf8' });
   const head = git(['rev-parse', 'HEAD']);
   const dirty = git(['status', '--porcelain']);
-  return { files: hashes, sha256: digest(hashes), git_head: head.status === 0 ? head.stdout.trim() : null, git_dirty: dirty.status === 0 ? Boolean(dirty.stdout.trim()) : null };
+  return { files: contents, git_head: head.status === 0 ? head.stdout.trim() : null, git_dirty: dirty.status === 0 ? Boolean(dirty.stdout.trim()) : null };
 }
 
 export function startScanUsage({ runRoot, threadId, rootTurnId, sessionsDir, now, capture = captureCodexUsageScope } = {}) {
@@ -143,11 +142,11 @@ function fingerprints(root, plan, context) {
   });
   const { worker, ...policy } = plan?.runtime ?? {};
   return {
-    sample: sample?.every(Boolean) ? digest(sample) : null,
-    candidate: plan?.candidate_sources ? digest(plan.candidate_sources.map(({ label, sha256 }) => [label, sha256]).sort()) : null,
-    execution_policy: plan && context?.implementation ? digest([context.implementation.sha256, policy]) : null,
-    scheduling: plan ? digest([plan.assignments, plan.runtime?.scheduler]) : null,
-    source_registry: baseline?.adapter_profile?.registry_sha256 ?? null,
+    sample: sample?.every(Boolean) ? serialize(sample) : null,
+    candidate: plan?.candidate_sources ? serialize(plan.candidate_sources.map(({ label, content }) => [label, content]).sort()) : null,
+    execution_policy: plan && context?.implementation ? serialize([context.implementation.files, policy]) : null,
+    scheduling: plan ? serialize([plan.assignments, plan.runtime?.scheduler]) : null,
+    source_registry: baseline?.adapter_profile?.registry_content ?? null,
   };
 }
 
@@ -271,7 +270,8 @@ function comparisonRows(values) {
 }
 
 export function renderScanUsage(comparison, format = 'markdown') {
-  if (format === 'json') return JSON.stringify(comparison, null, 2);
+  if (format === 'json') return JSON.stringify(comparison, (key, value) => key === 'fingerprints' ? undefined
+    : key === 'implementation' && value ? { ...value, files: Object.keys(value.files ?? {}) } : value, 2);
   const rows = comparisonRows(comparison.runs);
   if (!rows.length) return 'No runs with usage context.';
   if (format === 'csv') {

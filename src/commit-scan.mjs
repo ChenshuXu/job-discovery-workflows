@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { buildCanonicalFingerprintAudit } from './canonical-url-fingerprint.mjs';
+import { listingIdentityFromUrl, postingKey } from './posting-identity.mjs';
 import {
   loadCareerTrackerParser,
   parseTracker,
@@ -17,6 +18,7 @@ import { validateRun } from './run-contract.mjs';
 import { loadScanResults } from './scan-results.mjs';
 import { validateScoringInputs } from './scoring-inputs.mjs';
 import { renderScanReports } from './render-scan-reports.mjs';
+import { preparePermHistory } from './perm-history.mjs';
 import { collectHistoricalSemanticContexts } from './posting-history.mjs';
 import {
   auditScanReceipt,
@@ -181,11 +183,17 @@ async function loadScanWriter(careerRoot) {
   const previous = process.cwd();
   process.chdir(careerRoot);
   try {
+    const listingModule = path.join(careerRoot, 'listing-fingerprint.mjs');
+    const columnsModule = path.join(careerRoot, 'lib/scan-history-columns.mjs');
+    if (!existsSync(listingModule) || !existsSync(columnsModule)) throw new Error('Career-Ops listing identity interface missing');
+    const { computeListingFingerprint } = await import(pathToFileURL(listingModule).href);
+    const { parseScanHistoryLine } = await import(pathToFileURL(columnsModule).href);
+    if (typeof computeListingFingerprint !== 'function' || typeof parseScanHistoryLine !== 'function') throw new Error('Career-Ops listing identity interface incompatible');
     const writer = await import(`${pathToFileURL(scanModule).href}?daily=${Date.now()}-${Math.random()}`);
     if (typeof writer.appendToScanHistory !== 'function' || typeof writer.appendScanRunSummary !== 'function') {
       throw new Error(`Career-Ops scan writer is incompatible: ${scanModule}`);
     }
-    return writer;
+    return { ...writer, computeListingFingerprint, parseScanHistoryLine };
   } finally {
     process.chdir(previous);
   }
@@ -242,7 +250,7 @@ export async function appendCandidateTracker({
     // canonical transaction; every pre-existing cell remains byte-identical.
     const target = path.join(resolveCareerPaths(careerRoot).dataRoot, report.report_path);
     const actualLink = path.relative(path.dirname(trackerFile), target).split(path.sep).join('/');
-    const reportField = addedRow.parsed.report.replace(/\]\([^)]+\)/, `](${actualLink})`);
+    const reportField = `[${report.report_number}](${actualLink})`;
     if (reportField !== addedRow.parsed.report) {
       const columns = trackerParser.resolveColumns(beforeText.split(/\r?\n/));
       const cells = addedRow.raw.split('|');
@@ -335,6 +343,9 @@ async function persistEvaluatedJobs({
     for (const result of accepted) {
       const record = records.get(result.posting_key);
       if (!record) throw new JobScopedCommitError(result.posting_key, 'JD_PERSIST_FAILED', 'acquisition record missing during JD persistence');
+      const strong = listingIdentityFromUrl(record.primary_url);
+      const listingKey = strong ? scanWriter.computeListingFingerprint({ url: record.primary_url, strong }).listing_key : undefined;
+      if (strong && (typeof listingKey !== 'string' || !/^listing_v1_[a-f0-9]{64}$/.test(listingKey))) throw new Error('Career-Ops listing identity interface returned an invalid listing_key');
       const filename = `discovery-${path.basename(run.root)}-${record.primary_key.replace(/[^A-Za-z0-9._-]/g, '-')}.md`;
       const destination = path.join(jdRoot, filename);
       try {
@@ -351,6 +362,7 @@ async function persistEvaluatedJobs({
           source: `job-discovery:${record.sources.join('+')}`,
           description: readFileSync(destination, 'utf8'),
           postedAt: record.posted_at ? Date.parse(record.posted_at) : undefined,
+          listingKey,
           note: `daily-scan=${path.basename(run.root)} posting_key=${record.primary_key} jd=jds/${filename}`,
         });
       } catch (error) {
@@ -363,7 +375,13 @@ async function persistEvaluatedJobs({
     const previous = process.cwd();
     process.chdir(careerRoot);
     try {
-      await scanWriter.appendToScanHistory(offers, new Date().toISOString().slice(0, 10), `daily-scan:${path.basename(run.root)}`);
+      const status = `daily-scan:${path.basename(run.root)}`;
+      await scanWriter.appendToScanHistory(offers, new Date().toISOString().slice(0, 10), status);
+      const rows = readFileSync(scanHistoryFile, 'utf8').split(/\r?\n/).map(scanWriter.parseScanHistoryLine).filter(row => row.status === status);
+      for (const offer of offers) {
+        const matches = rows.filter(row => postingKey(row.url) === postingKey(offer.url));
+        if (matches.length !== 1 || matches[0].listing_key !== (offer.listingKey ?? '')) throw new Error(`scan-history listing_key mismatch: ${offer.url}`);
+      }
     } finally {
       process.chdir(previous);
     }
@@ -555,6 +573,7 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
     });
     if (systemRunErrors.length) throw new Error(`run contract failed: ${systemRunErrors.join('; ')}`);
     if (systemResultErrors.length) throw new Error(`result contract failed: ${systemResultErrors.join('; ')}`);
+    const permHistory = preparePermHistory(runRoot, run, results);
     issues = initialJobIssues(run, results, careerRoot, scopedContractErrors);
     const acquired = run.acquisition.keys.map(String);
     const recomputeEligible = () => {
@@ -586,7 +605,7 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
               writeOutput: false,
               ignoredJobIssueKeys: issues.map(item => item.posting_key),
               additionsDir,
-              validated: { run, results },
+              validated: { run, results, permHistory },
             });
           } catch (error) {
             throw new JobScopedCommitError(candidate.posting_key, 'REPORT_RENDER_FAILED', error.message);

@@ -9,12 +9,13 @@ import { fileURLToPath } from 'node:url';
 import { loadCvSource } from './resume/cv-source.mjs';
 import { loadLocationPolicy } from './location-scope.mjs';
 import { loadDailyScanRuntime } from './daily-scan-runtime.mjs';
-import { loadGoogleAtsConfig } from '../adapters/google_ats_direct_scan.mjs';
+import { loadGoogleAtsConfig } from './adapters/google_ats_direct_scan.mjs';
+import { loadCareerAtsConfig } from './adapters/career_ops_ats_scan.mjs';
 import { buildTemplateBaseline } from './resume/template-baseline.mjs';
 import { validateActiveInterviews } from '../.agents/skills/gmail-job-reply-review/scripts/active-interviews.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const SKILLS = ['career-ops-daily-linkedin-scan', 'career-ops-expand-report', 'career-ops-tailored-resume', 'career-ops-ego-apply', 'gmail-job-reply-review', 'linkedin-post-scan', 'technical-interview-prepare', 'process-infographic'];
+const SKILLS = ['career-ops-daily-linkedin-scan', 'career-ops-perm-scan', 'career-ops-expand-report', 'career-ops-tailored-resume', 'career-ops-ego-apply', 'gmail-job-reply-review', 'linkedin-post-scan', 'technical-interview-prepare', 'process-infographic'];
 const nonempty = file => { if (!statSync(file).isFile() || !readFileSync(file, 'utf8').trim()) throw new Error('missing'); };
 const executable = file => accessSync(file, constants.X_OK);
 
@@ -56,18 +57,19 @@ export function checkSetup({ root = ROOT, careerOps = process.env.CAREER_OPS_COD
       if (typeof value !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) throw new Error('email address');
     });
   }
-  for (const name of ['discovery-adapters.v1', 'jobspy-ego', 'jobright', 'google-ats-direct']) {
+  for (const name of ['discovery-adapters.v1', 'jobspy-ego', 'jobright', 'google-ats-direct', 'official-ats']) {
     const file = path.join(root, 'config', `${name}.json`);
     check(`config:${name}`, name === 'discovery-adapters.v1' ? 'daily-scan' : name, file, 'Copy the matching example only if absent, fill user choices, then run the owning adapter/config validator.', () => {
       const value = JSON.parse(readFileSync(file, 'utf8'));
       if (!value || value.schema_version !== 1) throw new Error('schema');
       if (name === 'jobright' && (!value.filter_snapshot?.values?.length || !value.filter_snapshot?.visible_controls?.length || !value.filter_snapshot?.codes?.locations?.length)) throw new Error('snapshot');
       if (name === 'google-ats-direct') loadGoogleAtsConfig(file);
+      if (name === 'official-ats') loadCareerAtsConfig(file);
     });
   }
   const runtime = path.join(root, 'config/daily-scan-runtime.json');
   check('config:runtime', 'daily-scan', runtime, 'Copy the runtime example if absent and choose an available model/effort, batch size, threshold and retention TTL.', () => loadDailyScanRuntime(runtime));
-  const postConfig = path.join(root, 'linkedin-post-scan/config/post-scan.json');
+  const postConfig = path.join(root, 'config/linkedin-post-scan.json');
   check('config:post-scan', 'post-scan', postConfig, 'Copy and customize the Post Scan example, including paths, role/location groups, phrase groups and the referenced runtime.', () => {
     const value = JSON.parse(readFileSync(postConfig, 'utf8'));
     for (const key of ['role_groups', 'location_groups', 'phrase_groups']) if (!Object.keys(value[key] ?? {}).length) throw new Error('groups');

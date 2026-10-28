@@ -6,6 +6,7 @@ import { loadRunProfile } from './adapter-registry.mjs';
 import { matchExcludedEmployer, validateEmployerExclusionRules } from './employer-exclusions.mjs';
 import { isAllowedLocationDecision } from './location-scope.mjs';
 import { matchesStoredPostingKey, normalizePostingKeys, primaryPostingKey, samePosting } from './posting-identity.mjs';
+import { validatePermRun } from './perm-employers.mjs';
 
 const MIN_JD_CONTENT_CHARS = 200;
 const BLOCKED_JD_PATTERNS = [
@@ -217,6 +218,8 @@ export function validateRun(runDir) {
   }
   validateLocationScope(root, acquisition, records, errors);
   validateBlacklistAudit(root, acquisition, records, errors);
+  try { validatePermRun(root, acquisition, records); }
+  catch (error) { errors.push(`PERM employer scope: ${error.message}`); }
   return { root, profile, acquisition, records, errors, warnings };
 }
 

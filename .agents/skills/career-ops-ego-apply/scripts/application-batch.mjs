@@ -236,7 +236,7 @@ function groupPriority(group) {
   return PRIORITY.get(group.items[0]?.ats) ?? 100;
 }
 
-function retryHold(notes, today) {
+export function retryHold(notes, today) {
   const state = { noRetry: false, identityReview: false, retryOn: null };
   const marker = /\b(no_retry|identity_review\s*\/\s*no_submit|retry_on)\b(?:\s*(?:[:=]\s*|\s+)((?:clear|\d{4}-\d{2}-\d{2})(?![A-Za-z0-9_-])))?/gi;
   for (const match of String(notes ?? '').matchAll(marker)) {

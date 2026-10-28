@@ -17,7 +17,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'fs';
-import { createHash, randomUUID } from 'crypto';
+import { randomUUID } from 'crypto';
 import { spawnSync } from 'child_process';
 import { basename, dirname, join, relative, resolve } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -52,6 +52,7 @@ const MAILBOXES = new Set(['primary', 'secondary']);
 const CATEGORIES = new Set([
   'action_required',
   'explicit_rejection',
+  'position_cancelled',
   'ambiguous',
   'application_confirmation',
   'superseded',
@@ -60,6 +61,7 @@ const CATEGORIES = new Set([
 const DISPOSITIONS = new Set([
   'register_updated',
   'tracker_rejected',
+  'tracker_discarded',
   'needs_confirmation',
   'no_action',
   'deferred_mailbox_failure',
@@ -68,14 +70,20 @@ const RECEIPT_TARGETS = new Set(['register', 'tracker']);
 const ALLOWED_DISPOSITIONS = new Map([
   ['action_required', new Set(['register_updated', 'needs_confirmation'])],
   ['explicit_rejection', new Set(['tracker_rejected', 'no_action'])],
+  ['position_cancelled', new Set(['tracker_discarded', 'no_action'])],
   ['ambiguous', new Set(['needs_confirmation', 'deferred_mailbox_failure'])],
   ['application_confirmation', new Set(['no_action'])],
   ['superseded', new Set(['register_updated', 'no_action'])],
   ['not_application', new Set(['no_action'])],
 ]);
 
+const TRACKER_OUTCOMES = {
+  tracker_rejected: { status: 'Rejected', archived: 'Rejected', note: 'Gmail rejection received' },
+  tracker_discarded: { status: 'Discarded', archived: 'Cancelled', note: 'Gmail position cancellation received' },
+};
+
 function requiredReceiptTargets(classification) {
-  if (classification.disposition === 'tracker_rejected') {
+  if (TRACKER_OUTCOMES[classification.disposition]) {
     return [
       ...(classification.tracker_identity_key ? ['tracker'] : []),
       ...(classification.interview_process_identity ? ['register'] : []),
@@ -272,7 +280,7 @@ function readJson(path) {
 
 function readFileSnapshot(path, optional = false) {
   if (!existsSync(path)) {
-    if (optional) return { exists: false, raw: null, text: null, sha256: null };
+    if (optional) return { exists: false, raw: null, text: null, content: null };
     throw new CliError('INVALID_STATE', `Required file is missing: ${path}`);
   }
   try {
@@ -281,7 +289,7 @@ function readFileSnapshot(path, optional = false) {
       exists: true,
       raw,
       text: raw.toString('utf8'),
-      sha256: createHash('sha256').update(raw).digest('hex'),
+      content: String(raw),
     };
   } catch (error) {
     throw new CliError('INVALID_STATE', `Cannot snapshot file: ${path}`, {
@@ -376,7 +384,7 @@ function interviewRows(document) {
   return [...document.active, ...document.archived];
 }
 
-function rejectionBinding(identityKey, document, requestedTrackerIdentity = null) {
+function terminalBinding(identityKey, document, requestedTrackerIdentity = null) {
   const rows = interviewRows(document);
   const inputTracker = trackerIdentity(identityKey);
   if (inputTracker && requestedTrackerIdentity && inputTracker !== requestedTrackerIdentity) {
@@ -407,7 +415,7 @@ function rejectionBinding(identityKey, document, requestedTrackerIdentity = null
   const processTracker = trackerIdentity(process?.tracker);
   const linkedTracker = exactTracker ?? processTracker;
   if (!process && !linkedTracker) {
-    throw new CliError('INVALID_IDENTITY', 'tracker_rejected requires an exact tracker or interview process identity', {
+    throw new CliError('INVALID_IDENTITY', 'Terminal outcome requires an exact tracker or interview process identity', {
       identity_key: identityKey,
     });
   }
@@ -434,13 +442,14 @@ function rejectionBinding(identityKey, document, requestedTrackerIdentity = null
   };
 }
 
-function assertArchivedRejection(document, classification) {
+function assertArchivedOutcome(document, classification) {
   if (!classification.interview_process_identity) return;
   const row = document.archived.find(
     (item) => item.identity === classification.interview_process_identity,
   );
-  if (!row || row.status !== 'Rejected') {
-    throw new CliError('INTERVIEW_ARCHIVE_MISSING', 'Interview process is not archived as Rejected', {
+  const outcome = TRACKER_OUTCOMES[classification.disposition];
+  if (!row || row.status !== outcome.archived) {
+    throw new CliError('INTERVIEW_ARCHIVE_MISSING', `Interview process is not archived as ${outcome.archived}`, {
       identity_key: classification.interview_process_identity,
       line: row?.line ?? null,
     });
@@ -473,11 +482,9 @@ function assertRegisterMarker(document, classification, marker) {
 
 function replaceInterviewDocument(expectedHash, text) {
   const current = readFileSnapshot(ACTIVE_INTERVIEWS_PATH);
-  if (current.sha256 !== expectedHash) {
+  if (current.content !== expectedHash) {
     throw new CliError('STATE_CONFLICT', 'Interview document changed during update', {
       path: ACTIVE_INTERVIEWS_PATH,
-      expected_sha256: expectedHash,
-      current_sha256: current.sha256,
     });
   }
   const temporaryPath = join(
@@ -486,7 +493,7 @@ function replaceInterviewDocument(expectedHash, text) {
   );
   try {
     writeFileSync(temporaryPath, text, 'utf8');
-    assertInterviewHash(expectedHash, 'while writing the replacement');
+    assertInterviewContent(expectedHash, 'while writing the replacement');
     renameSyncWithRetry(temporaryPath, ACTIVE_INTERVIEWS_PATH);
   } catch (error) {
     rmSync(temporaryPath, { force: true });
@@ -508,31 +515,29 @@ function runGit(args) {
   return result;
 }
 
-function assertInterviewHash(expectedHash, stage) {
+function assertInterviewContent(expectedHash, stage) {
   const current = readFileSnapshot(ACTIVE_INTERVIEWS_PATH);
-  if (current.sha256 !== expectedHash) {
+  if (current.content !== expectedHash) {
     throw new CliError('STATE_CONFLICT', `Interview document changed ${stage}`, {
       path: ACTIVE_INTERVIEWS_PATH,
-      expected_sha256: expectedHash,
-      current_sha256: current.sha256,
     });
   }
 }
 
 function interviewSummaryGuards(document) {
   return [...new Map(interviewRows(document).filter(row => row.summary).map(row => [
-    row.summary.path, { path: row.summary.path, expected_sha256: row.summary.sha256 },
+    row.summary.path, { path: row.summary.path, expected_content: row.summary.content },
   ])).values()].sort((a, b) => a.path.localeCompare(b.path));
 }
 
-function interviewEvidenceHash(snapshot, document) {
+function interviewEvidenceContent(snapshot, document) {
   const summaries = interviewSummaryGuards(document);
-  return summaries.length ? warningFingerprint(JSON.stringify([snapshot.sha256, summaries])) : snapshot.sha256;
+  return summaries.length ? warningContent(JSON.stringify([snapshot.content, summaries])) : snapshot.content;
 }
 
 function assertWorkspaceGuards(guards, stage) {
   for (const guard of guards) {
-    if (readFileSnapshot(guard.path, true).sha256 !== guard.expected_sha256) {
+    if (readFileSnapshot(guard.path, true).content !== guard.expected_content) {
       throw new CliError('STATE_CONFLICT', `Interview evidence changed ${stage}`, { path: guard.path });
     }
   }
@@ -553,7 +558,7 @@ function summaryBaseline(document) {
   return [...paths].map(path => {
     const status = runGit(['-C', gitRoot, 'status', '--porcelain=v1', '--', relative(gitRoot, path)]);
     if (status.status !== 0) throw new CliError('GIT_COMMIT_FAILED', 'Cannot inspect process-summary Git state');
-    return { path, expected_sha256: readFileSnapshot(path, true).sha256, linked: linked.has(path), dirty: Boolean(status.stdout.trim()) };
+    return { path, expected_content: readFileSnapshot(path, true).content, linked: linked.has(path), dirty: Boolean(status.stdout.trim()) };
   });
 }
 
@@ -564,7 +569,7 @@ function commitInterviewDocument(guards, baselineSummaries = []) {
   const targets = guards.filter(guard => {
     if (guard.path === ACTIVE_INTERVIEWS_PATH) return true;
     const previous = baseline.get(guard.path);
-    if (previous?.expected_sha256 === guard.expected_sha256 && previous.linked) return false;
+    if (previous?.expected_content === guard.expected_content && previous.linked) return false;
     if (previous?.dirty) throw new CliError('GIT_COMMIT_CONFLICT', 'Changed process summary already had local edits at begin', { path: guard.path });
     return true;
   });
@@ -615,13 +620,13 @@ function checkedInterviewSnapshot() {
   const committed = validateInterviewDocument(headInterviewDocument(), false);
   validateInterviewContinuity(interviewProcessSnapshot(committed), snapshot.text);
   const document = validateInterviewDocument(snapshot.text);
-  return { snapshot, document, evidence_sha256: interviewEvidenceHash(snapshot, document) };
+  return { snapshot, document, evidence_content: interviewEvidenceContent(snapshot, document) };
 }
 
-function interviewDocumentSummary(command, document, baselineSha256 = null) {
+function interviewDocumentSummary(command, document, baselineContent = null) {
   return {
     command,
-    ...(baselineSha256 ? { baseline_sha256: baselineSha256 } : {}),
+    ...(baselineContent ? { baseline_file: baselineContent } : {}),
     active: document.active.length,
     todos: document.todos.length,
     archived: document.archived.length,
@@ -633,11 +638,11 @@ function interviewRegisterCommand(command, args) {
   if (args.length !== requiredArguments) {
     throw new CliError(
       'INVALID_ARGUMENT',
-      'Usage: gmail-job-reply-run.mjs check FILE | prepare FILE CANDIDATE | apply FILE CANDIDATE BASELINE_SHA256',
+      'Usage: gmail-job-reply-run.mjs check FILE | prepare FILE CANDIDATE | apply FILE CANDIDATE BASELINE_FILE',
     );
   }
 
-  const [filePath, candidatePath, expectedSha256] = args;
+  const [filePath, candidatePath, baselineFile] = args;
   ACTIVE_INTERVIEWS_PATH = canonicalPath(filePath);
   if (command === 'check') {
     return interviewDocumentSummary(command, checkedInterviewSnapshot().document);
@@ -650,22 +655,21 @@ function interviewRegisterCommand(command, args) {
   if (command === 'prepare') {
     return withActiveInterviewsLock(ACTIVE_INTERVIEWS_PATH, () => {
       const current = checkedInterviewSnapshot();
+      writeFileSync(`${candidate}.baseline.json`, JSON.stringify({ content: current.evidence_content }), { flag: 'wx', mode: 0o600 });
       writeFileSync(candidate, current.snapshot.text, { flag: 'wx', mode: 0o600 });
-      return interviewDocumentSummary(command, current.document, current.evidence_sha256);
+      return interviewDocumentSummary(command, current.document, `${candidate}.baseline.json`);
     });
   }
-  if (!/^[a-f0-9]{64}$/u.test(expectedSha256)) {
-    throw new CliError('INVALID_ARGUMENT', 'Expected baseline SHA-256 is required');
-  }
+  if (canonicalPath(baselineFile) !== `${candidate}.baseline.json`) throw new CliError('INVALID_ARGUMENT', 'Baseline file must belong to this candidate');
+  const expectedContent = readJson(baselineFile).content;
+  if (typeof expectedContent !== 'string') throw new CliError('INVALID_ARGUMENT', 'Prepared baseline file is required');
 
   const candidateSnapshot = readFileSnapshot(candidate);
   const candidateDocument = validateInterviewDocument(candidateSnapshot.text);
   return withActiveInterviewsLock(ACTIVE_INTERVIEWS_PATH, () => {
     const current = checkedInterviewSnapshot();
-    if (current.evidence_sha256 !== expectedSha256) {
+    if (current.evidence_content !== expectedContent) {
       throw new CliError('STATE_CONFLICT', 'active-interviews.md changed since candidate preparation', {
-        expected_sha256: expectedSha256,
-        current_sha256: current.evidence_sha256,
       });
     }
     validateInterviewContinuity(
@@ -673,10 +677,11 @@ function interviewRegisterCommand(command, args) {
       candidateSnapshot.text,
     );
     assertWorkspaceGuards(interviewSummaryGuards(candidateDocument), 'before register replacement');
-    replaceInterviewDocument(current.snapshot.sha256, candidateSnapshot.text);
+    replaceInterviewDocument(current.snapshot.content, candidateSnapshot.text);
     const result = interviewDocumentSummary(command, candidateDocument);
     try {
       rmSync(candidate, { force: true });
+      rmSync(baselineFile, { force: true });
       return { ...result, candidate_removed: true };
     } catch (error) {
       return {
@@ -692,16 +697,16 @@ function serializedJson(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-function jsonFingerprint(value) {
-  return warningFingerprint(serializedJson(value));
+function jsonContent(value) {
+  return warningContent(serializedJson(value));
 }
 
-function warningFingerprint(text) {
-  return createHash('sha256').update(text).digest('hex');
+function warningContent(text) {
+  return String(text);
 }
 
-function fileFingerprint(path) {
-  return createHash('sha256').update(readFileSync(path)).digest('hex');
+function fileContent(path) {
+  return readFileSync(path, 'utf8');
 }
 
 function compactWarningCapture(capture) {
@@ -710,13 +715,13 @@ function compactWarningCapture(capture) {
     errors: capture.errors,
     warnings: capture.warnings,
     exit_status: capture.exit_status,
-    fingerprints: (capture.fingerprints ?? []).map((item) => ({ hash: item.hash })),
+    fingerprints: (capture.fingerprints ?? []).map((item) => ({ content: item.content })),
   };
 }
 
 function compactWarningDelta(delta) {
   if (!delta) return null;
-  const compactItems = (items) => items.map(({ hash, count }) => ({ hash, count }));
+  const compactItems = (items) => items.map(({ content, count }) => ({ content, count }));
   return {
     existing_count: delta.existing_count,
     added: compactItems(delta.added),
@@ -739,7 +744,7 @@ function safeCommandError(error) {
     if (typeof value === 'string') {
       diagnostics[key] = {
         byte_count: Buffer.byteLength(value),
-        sha256: warningFingerprint(value),
+        content: warningContent(value),
       };
     } else if (value === null || ['number', 'boolean'].includes(typeof value)) {
       diagnostics[key] = value;
@@ -804,7 +809,7 @@ function captureVerify() {
     warnings,
     exit_status: result.status,
     fingerprints: warningTexts.map((text) => ({
-      hash: warningFingerprint(text),
+      content: warningContent(text),
       text,
     })),
   };
@@ -824,29 +829,29 @@ function warningDelta(before, after) {
   const countFingerprints = (items) => {
     const counts = new Map();
     for (const item of items) {
-      const current = counts.get(item.hash) ?? { text: item.text, count: 0 };
+      const current = counts.get(item.content) ?? { text: item.text, count: 0 };
       current.count++;
-      counts.set(item.hash, current);
+      counts.set(item.content, current);
     }
     return counts;
   };
   const beforeMap = countFingerprints(before.fingerprints);
   const afterMap = countFingerprints(after.fingerprints);
-  const hashes = new Set([...beforeMap.keys(), ...afterMap.keys()]);
+  const contents = new Set([...beforeMap.keys(), ...afterMap.keys()]);
   const added = [];
   const resolved = [];
   let existingCount = 0;
-  for (const hash of hashes) {
-    const beforeItem = beforeMap.get(hash);
-    const afterItem = afterMap.get(hash);
+  for (const content of contents) {
+    const beforeItem = beforeMap.get(content);
+    const afterItem = afterMap.get(content);
     const beforeCount = beforeItem?.count ?? 0;
     const afterCount = afterItem?.count ?? 0;
     existingCount += Math.min(beforeCount, afterCount);
     if (afterCount > beforeCount) {
-      added.push({ hash, text: afterItem.text, count: afterCount - beforeCount });
+      added.push({ content, text: afterItem.text, count: afterCount - beforeCount });
     }
     if (beforeCount > afterCount) {
-      resolved.push({ hash, text: beforeItem.text, count: beforeCount - afterCount });
+      resolved.push({ content, text: beforeItem.text, count: beforeCount - afterCount });
     }
   }
   return {
@@ -917,11 +922,11 @@ function archiveFailed(run, reasonCode, status = 'aborted') {
     record.verification.after = compactWarningCapture(record.verification.after);
     record.verification.delta = compactWarningDelta(record.verification.delta);
   }
-  if (record.workspace_baseline?.application_row_hashes) {
+  if (record.workspace_baseline?.application_rows) {
     record.workspace_baseline.application_row_count = Object.keys(
-      record.workspace_baseline.application_row_hashes,
+      record.workspace_baseline.application_rows,
     ).length;
-    delete record.workspace_baseline.application_row_hashes;
+    delete record.workspace_baseline.application_rows;
     delete record.workspace_baseline.application_row_statuses;
   }
   if (record.workspace_baseline?.status_log_line_counts) {
@@ -955,7 +960,7 @@ function mailboxTemplate(statePath, state, cutoffAt) {
     candidates: {},
     pages: [],
     pagination_complete: false,
-    expected_page_token_hash: warningFingerprint('START'),
+    expected_page_token: warningContent('START'),
   };
 }
 
@@ -975,7 +980,7 @@ function publicRunSummary(run) {
     status: mailbox.status,
     page_count: mailbox.pages.length,
     pagination_complete: mailbox.pagination_complete,
-    next_page_expected: mailbox.expected_page_token_hash !== null,
+    next_page_expected: mailbox.expected_page_token !== null,
     candidate_count: Object.keys(mailbox.candidates).length,
     classified_count: Object.values(mailbox.candidates)
       .filter((candidate) => candidate.classification !== null).length,
@@ -1062,10 +1067,10 @@ function applicationRows(text) {
   return rows;
 }
 
-function applicationRowHashes(rows) {
+function applicationRowContents(rows) {
   return Object.fromEntries([...rows].map(([key, line]) => [
     key,
-    warningFingerprint(line),
+    warningContent(line),
   ]));
 }
 
@@ -1083,8 +1088,8 @@ function statusLogLineCounts(lines) {
   }
   for (const line of lines) {
     if (!line) continue;
-    const hash = warningFingerprint(line);
-    counts[hash] = (counts[hash] ?? 0) + 1;
+    const content = warningContent(line);
+    counts[content] = (counts[content] ?? 0) + 1;
   }
   return counts;
 }
@@ -1144,19 +1149,19 @@ function captureWorkspaceBaseline() {
     ? statusLogSnapshot.text.split(/\r?\n/)
     : [];
   return {
-    active_interviews_sha256: interviewEvidenceHash(registerSnapshot, registerDocument),
+    active_interviews_content: interviewEvidenceContent(registerSnapshot, registerDocument),
     interview_summaries: summaryBaseline(registerDocument),
-    applications_sha256: applicationsSnapshot.sha256,
-    status_log_sha256: statusLogSnapshot.sha256,
+    applications_content: applicationsSnapshot.content,
+    status_log_content: statusLogSnapshot.content,
     interview_processes: interviewProcessSnapshot(registerDocument),
-    application_row_hashes: applicationRowHashes(rows),
+    application_rows: applicationRowContents(rows),
     application_row_statuses: applicationRowStatuses(rows),
     status_log_line_counts: statusLogLineCounts(statusLogLines),
   };
 }
 
 function registerAuditMarker(identityKey, mailboxName, candidateKey) {
-  const evidenceId = warningFingerprint(`${mailboxName}\0${candidateKey}`).slice(0, 16);
+  const evidenceId = Buffer.from(`${mailboxName}\0${candidateKey}`).toString('base64url');
   return `Gmail evidence: ${identityKey} / ${evidenceId}`;
 }
 
@@ -1228,9 +1233,9 @@ function validateCommitGate(run) {
   if (checked.length) throw new CliError('INTERVIEW_RECONCILIATION_REQUIRED', 'Reconcile checked TODOs with Stage, Date / Deadline, Status and process-summary evidence before commit', { identities: [...new Set(checked.map(todo => todo.identity))] });
   const applicationsSnapshot = readFileSnapshot(APPLICATIONS_PATH);
   const statusLogSnapshot = readFileSnapshot(STATUS_LOG_PATH, true);
-  const registerHash = interviewEvidenceHash(registerSnapshot, registerDocument);
-  const applicationsHash = applicationsSnapshot.sha256;
-  const statusLogHash = statusLogSnapshot.sha256;
+  const registerHash = interviewEvidenceContent(registerSnapshot, registerDocument);
+  const applicationsHash = applicationsSnapshot.content;
+  const statusLogHash = statusLogSnapshot.content;
   const applicationRowsSnapshot = applicationRows(applicationsSnapshot.text);
   assertTrackerRegisterSync(registerDocument, applicationRowsSnapshot);
   const statusLogLines = statusLogSnapshot.exists
@@ -1251,7 +1256,7 @@ function validateCommitGate(run) {
     }
     if (mailbox.status === 'success') {
       if (mailbox.pages.length === 0 || !mailbox.pagination_complete
-          || mailbox.expected_page_token_hash !== null) {
+          || mailbox.expected_page_token !== null) {
         throw new CliError('PAGINATION_INCOMPLETE', `${mailboxName} page chain is incomplete`);
       }
       const deferred = Object.values(mailbox.candidates)
@@ -1267,8 +1272,8 @@ function validateCommitGate(run) {
       const classification = candidate.classification;
       const requiredTargets = requiredReceiptTargets(classification);
       const allowedTargets = allowedReceiptTargets(classification);
-      if (classification.disposition === 'tracker_rejected') {
-        assertArchivedRejection(registerDocument, classification);
+      if (TRACKER_OUTCOMES[classification.disposition]) {
+        assertArchivedOutcome(registerDocument, classification);
       }
       const receipts = classification.receipts ?? [];
       for (const target of requiredTargets) {
@@ -1304,42 +1309,44 @@ function validateCommitGate(run) {
               error instanceof CliError ? error.details : {},
             );
           }
-          if (receipt.file_sha256 !== registerHash) {
+          if (receipt.file_content !== registerHash) {
             throw new CliError('REGISTER_RECEIPT_STALE', `${candidate.key} register marker is absent`);
           }
         } else {
           const trackerKey = trackerReceiptIdentity(classification);
           const row = parseApplicationRow(trackerKey, applicationRowsSnapshot);
-          const baselineRowHash = run.workspace_baseline.application_row_hashes[
+          const baselineRowHash = run.workspace_baseline.application_rows[
             trackerKey
           ] ?? null;
-          const baselineRejected = run.workspace_baseline.application_row_statuses?.[
+          const outcome = TRACKER_OUTCOMES[classification.disposition];
+          const baselineTerminal = run.workspace_baseline.application_row_statuses?.[
             trackerKey
-          ] === 'Rejected';
-          const expectedNote = `Gmail rejection received ${receipt.event_date}`;
-          if ((!baselineRejected && warningFingerprint(row.line) === baselineRowHash)
-              || warningFingerprint(row.line) !== receipt.tracker_row_sha256
-              || row.status !== 'Rejected'
-              || !hasTrackerRejectionNote(row.notes, expectedNote)
-              || receipt.applications_sha256 !== applicationsHash
-              || receipt.status_log_sha256 !== statusLogHash) {
+          ] === outcome.status;
+          const expectedNote = `${outcome.note} ${receipt.event_date}`;
+          if ((!baselineTerminal && warningContent(row.line) === baselineRowHash)
+              || warningContent(row.line) !== receipt.tracker_row_content
+              || row.status !== outcome.status
+              || !hasTrackerOutcomeNote(row.notes, expectedNote)
+              || receipt.applications_content !== applicationsHash
+              || receipt.status_log_content !== statusLogHash) {
             throw new CliError('TRACKER_RECEIPT_STALE', `${candidate.key} tracker state is absent`);
           }
           const exactLines = exactStatusLogLines(
             statusLogLines,
             trackerKey,
             receipt.event_date,
+            outcome.status,
           );
           const exactHashPresent = exactLines.some(
-            (line) => warningFingerprint(line) === receipt.status_log_line_sha256,
+            (line) => warningContent(line) === receipt.status_log_line_content,
           );
           if (!exactHashPresent
-              || (currentStatusLogCounts[receipt.status_log_line_sha256] ?? 0)
+              || (currentStatusLogCounts[receipt.status_log_line_content] ?? 0)
                 !== receipt.status_log_line_count
-              || (!baselineRejected
-                && (currentStatusLogCounts[receipt.status_log_line_sha256] ?? 0)
+              || (!baselineTerminal
+                && (currentStatusLogCounts[receipt.status_log_line_content] ?? 0)
                   <= (run.workspace_baseline.status_log_line_counts[
-                    receipt.status_log_line_sha256
+                    receipt.status_log_line_content
                   ] ?? 0))) {
             throw new CliError('TRACKER_RECEIPT_STALE', `${candidate.key} status log entry is absent`);
           }
@@ -1348,11 +1355,11 @@ function validateCommitGate(run) {
     }
   }
   return {
-    interview_evidence_sha256: registerHash,
+    interview_evidence_content: registerHash,
     workspace_guards: [
-      { path: ACTIVE_INTERVIEWS_PATH, expected_sha256: registerSnapshot.sha256 },
-      { path: APPLICATIONS_PATH, expected_sha256: applicationsSnapshot.sha256 },
-      { path: STATUS_LOG_PATH, expected_sha256: statusLogSnapshot.sha256 },
+      { path: ACTIVE_INTERVIEWS_PATH, expected_content: registerSnapshot.content },
+      { path: APPLICATIONS_PATH, expected_content: applicationsSnapshot.content },
+      { path: STATUS_LOG_PATH, expected_content: statusLogSnapshot.content },
       ...interviewSummaryGuards(registerDocument),
     ],
   };
@@ -1371,11 +1378,11 @@ function completedRecord(run, completedAt, syncCheck, after, delta, finalGate) {
   delete record.verification.command_error;
   record.sync_check = compactSyncCheck(syncCheck);
   delete record.transaction;
-  if (record.workspace_baseline?.application_row_hashes) {
+  if (record.workspace_baseline?.application_rows) {
     record.workspace_baseline.application_row_count = Object.keys(
-      record.workspace_baseline.application_row_hashes,
+      record.workspace_baseline.application_rows,
     ).length;
-    delete record.workspace_baseline.application_row_hashes;
+    delete record.workspace_baseline.application_rows;
     delete record.workspace_baseline.application_row_statuses;
   }
   if (record.workspace_baseline?.status_log_line_counts) {
@@ -1421,7 +1428,7 @@ function completedRecord(run, completedAt, syncCheck, after, delta, finalGate) {
   // merely assigned a terminal deferred classification.
   record.classification_complete = record.content_classification_complete;
   record.writes = {
-    interview_evidence_changed: run.workspace_baseline.active_interviews_sha256 !== finalGate.interview_evidence_sha256,
+    interview_evidence_changed: run.workspace_baseline.active_interviews_content !== finalGate.interview_evidence_content,
     receipt_count: receipts.length,
     register_receipt_count: receipts.filter((item) => item.target === 'register').length,
     tracker_receipt_count: receipts.filter((item) => item.target === 'tracker').length,
@@ -1464,44 +1471,39 @@ function applyTransaction(run) {
   }
   for (const guard of run.transaction.workspace_guards) {
     const snapshot = readFileSnapshot(guard.path, true);
-    if (snapshot.sha256 !== guard.expected_sha256) {
+    if (snapshot.content !== guard.expected_content) {
       throw new CliError('STATE_CONFLICT', 'Receipt source changed before cursor commit', {
         path: guard.path,
-        expected_sha256: guard.expected_sha256,
-        current_sha256: snapshot.sha256,
       });
     }
   }
   for (const target of run.transaction.state_targets) {
-    if (!target.expected_before_sha256 || !target.target_sha256 || !existsSync(target.path)) {
+    if (!target.expected_before_content || !target.target_content || !existsSync(target.path)) {
       throw new CliError('INVALID_TRANSACTION', `State target is not safely replayable: ${target.path}`);
     }
-    const currentHash = fileFingerprint(target.path);
-    if (currentHash === target.target_sha256) continue;
-    if (currentHash !== target.expected_before_sha256) {
+    const currentHash = fileContent(target.path);
+    if (currentHash === target.target_content) continue;
+    if (currentHash !== target.expected_before_content) {
       throw new CliError('STATE_CONFLICT', 'Prepared state target changed before recovery', {
         path: target.path,
-        expected_before_sha256: target.expected_before_sha256,
-        current_sha256: currentHash,
-        target_sha256: target.target_sha256,
       });
     }
     atomicWritePrivateJson(target.path, target.value);
-    if (fileFingerprint(target.path) !== target.target_sha256) {
-      throw new CliError('STATE_WRITE_MISMATCH', `State target hash mismatch: ${target.path}`);
+    if (fileContent(target.path) !== target.target_content) {
+      throw new CliError('STATE_WRITE_MISMATCH', `State target content mismatch: ${target.path}`);
     }
   }
   const completedPath = archivePath(COMPLETED_DIR, run.run_id);
-  const completedHash = run.transaction.completed_record_sha256;
-  if (!completedHash) throw new CliError('INVALID_TRANSACTION', 'Completed-record hash is absent');
+  const completedHash = run.transaction.completed_record_content;
+  if (!completedHash) throw new CliError('INVALID_TRANSACTION', 'Completed-record content is absent');
   if (existsSync(completedPath)) {
-    if (fileFingerprint(completedPath) !== completedHash) {
+    if (fileContent(completedPath) !== completedHash) {
       throw new CliError('STATE_CONFLICT', 'Completed ledger conflicts with prepared transaction');
     }
   } else {
     atomicWritePrivateJson(completedPath, run.transaction.completed_record);
-    if (fileFingerprint(completedPath) !== completedHash) {
-      throw new CliError('STATE_WRITE_MISMATCH', 'Completed ledger hash mismatch');
+    if (fileContent(completedPath) !== completedHash) {
+      throw new CliError('STATE_WRITE_MISMATCH', 'Completed ledger content mismatch');
     }
   }
   rmSync(ACTIVE_PATH, { force: true });
@@ -1564,7 +1566,7 @@ async function begin() {
         checked_todos: interviewPreflight.map(({ identity, action, line }) => ({
           identity,
           line,
-          action_sha256: warningFingerprint(action),
+          action_content: warningContent(action),
         })),
       },
       mailboxes: {
@@ -1665,13 +1667,13 @@ async function page(options, descriptors) {
         required_query: mailbox.required_query,
       });
     }
-    const pageTokenHash = warningFingerprint(pageToken);
+    const pageTokenHash = warningContent(pageToken);
     const nextPageTokenHash = nextPageToken === 'END'
       ? null
-      : warningFingerprint(nextPageToken);
-    const priorPage = mailbox.pages.find((item) => item.page_token_hash === pageTokenHash);
+      : warningContent(nextPageToken);
+    const priorPage = mailbox.pages.find((item) => item.page_token === pageTokenHash);
     if (priorPage) {
-      const same = priorPage.next_page_token_hash === nextPageTokenHash
+      const same = priorPage.next_page_token === nextPageTokenHash
         && priorPage.result_count === resultCount
         && JSON.stringify(priorPage.results.map((item) => item.key))
           === JSON.stringify(candidates.map((candidate) => candidate.key));
@@ -1690,27 +1692,27 @@ async function page(options, descriptors) {
         total_candidates: Object.keys(mailbox.candidates).length,
       };
     }
-    if (pageTokenHash !== mailbox.expected_page_token_hash) {
+    if (pageTokenHash !== mailbox.expected_page_token) {
       throw new CliError('PAGE_CHAIN_MISMATCH', 'Page token does not continue the recorded chain');
     }
     if (nextPageTokenHash !== null && nextPageTokenHash === pageTokenHash) {
       throw new CliError('PAGE_CHAIN_LOOP', 'A page cannot point to itself');
     }
     if (nextPageTokenHash !== null
-        && mailbox.pages.some((item) => item.page_token_hash === nextPageTokenHash)) {
+        && mailbox.pages.some((item) => item.page_token === nextPageTokenHash)) {
       throw new CliError('PAGE_CHAIN_LOOP', 'A page cannot point to an earlier page token');
     }
     const results = stagePageCandidates(run, mailboxName, candidates);
     const pageRecord = {
       page_index: mailbox.pages.length + 1,
-      page_token_hash: pageTokenHash,
-      next_page_token_hash: nextPageTokenHash,
+      page_token: pageTokenHash,
+      next_page_token: nextPageTokenHash,
       result_count: resultCount,
       results,
       recorded_at: nowIso(),
     };
     mailbox.pages.push(pageRecord);
-    mailbox.expected_page_token_hash = nextPageTokenHash;
+    mailbox.expected_page_token = nextPageTokenHash;
     mailbox.pagination_complete = nextPageTokenHash === null;
     refreshLease(run);
     atomicWritePrivateJson(ACTIVE_PATH, run);
@@ -1741,12 +1743,12 @@ async function classify(options, descriptors) {
       || !ALLOWED_DISPOSITIONS.get(category).has(disposition)) {
     throw new CliError('INVALID_ARGUMENT', `Invalid disposition for ${category}: ${disposition}`);
   }
-  if (['register_updated', 'tracker_rejected', 'needs_confirmation'].includes(disposition)
+  if (['register_updated', 'tracker_rejected', 'tracker_discarded', 'needs_confirmation'].includes(disposition)
       && !identityKey) {
     throw new CliError('INVALID_ARGUMENT', `${disposition} requires --identity-key`);
   }
-  if (trackerIdentityKey && disposition !== 'tracker_rejected') {
-    throw new CliError('INVALID_ARGUMENT', '--tracker-identity-key is only valid for tracker_rejected');
+  if (trackerIdentityKey && !TRACKER_OUTCOMES[disposition]) {
+    throw new CliError('INVALID_ARGUMENT', '--tracker-identity-key requires tracker_rejected or tracker_discarded');
   }
   if (disposition === 'needs_confirmation'
       && !/^(?:action|ambiguous):/.test(identityKey)) {
@@ -1770,8 +1772,8 @@ async function classify(options, descriptors) {
     if (mailbox.status !== 'pending') {
       throw new CliError('INVALID_PHASE', `${mailboxName} mailbox is already ${mailbox.status}`);
     }
-    const binding = disposition === 'tracker_rejected'
-      ? rejectionBinding(
+    const binding = TRACKER_OUTCOMES[disposition]
+      ? terminalBinding(
         identityKey,
         validateInterviewDocument(readFileSnapshot(ACTIVE_INTERVIEWS_PATH).text),
         trackerIdentityKey,
@@ -1829,7 +1831,7 @@ async function classify(options, descriptors) {
   });
 }
 
-function hasTrackerRejectionNote(notes, note) {
+function hasTrackerOutcomeNote(notes, note) {
   return notes.split(';').some((item) => {
     const entry = item.trim();
     const detailedPrefix = `${note} for `;
@@ -1838,13 +1840,13 @@ function hasTrackerRejectionNote(notes, note) {
   });
 }
 
-function exactStatusLogLines(lines, identityKey, eventDate) {
+function exactStatusLogLines(lines, identityKey, eventDate, status) {
   const trackerId = identityKey.slice('tracker:#'.length);
   return lines.filter((line) => {
     const fields = line.split('\t');
     return fields[0] === trackerId
       && fields[1] === eventDate
-      && fields[3] === 'Rejected'
+      && fields[3] === status
       && fields[4] === 'set-status';
   });
 }
@@ -1863,8 +1865,8 @@ function refreshRegisterReceiptSnapshots(run, registerText, registerHash) {
     if (!item) continue;
     const marker = registerAuditMarker(item.identity_key, mailboxName, candidate.key);
     assertRegisterMarker(document, classification, marker);
-    item.file_sha256 = registerHash;
-    item.marker_sha256 = warningFingerprint(marker);
+    item.file_content = registerHash;
+    item.marker_content = warningContent(marker);
     item.snapshot_refreshed_at = nowIso();
   }
 }
@@ -1882,24 +1884,25 @@ function refreshTrackerReceiptSnapshots(
     const item = classification?.receipts?.find((receiptItem) => receiptItem.target === 'tracker');
     if (!item) continue;
     const row = parseApplicationRow(item.identity_key, applicationRowsSnapshot);
-    const rowHash = warningFingerprint(row.line);
-    const baselineRowHash = run.workspace_baseline.application_row_hashes[item.identity_key] ?? null;
-    const baselineRejected = run.workspace_baseline.application_row_statuses?.[
+    const rowHash = warningContent(row.line);
+    const baselineRowHash = run.workspace_baseline.application_rows[item.identity_key] ?? null;
+    const outcome = TRACKER_OUTCOMES[classification.disposition];
+    const baselineTerminal = run.workspace_baseline.application_row_statuses?.[
       item.identity_key
-    ] === 'Rejected';
-    const expectedNote = `Gmail rejection received ${item.event_date}`;
-    const currentLineCount = currentCounts[item.status_log_line_sha256] ?? 0;
+    ] === outcome.status;
+    const expectedNote = `${outcome.note} ${item.event_date}`;
+    const currentLineCount = currentCounts[item.status_log_line_content] ?? 0;
     const baselineLineCount = run.workspace_baseline.status_log_line_counts[
-      item.status_log_line_sha256
+      item.status_log_line_content
     ] ?? 0;
-    if ((!baselineRejected && rowHash === baselineRowHash) || row.status !== 'Rejected'
-        || !hasTrackerRejectionNote(row.notes, expectedNote)
-        || (!baselineRejected && currentLineCount <= baselineLineCount)) {
+    if ((!baselineTerminal && rowHash === baselineRowHash) || row.status !== outcome.status
+        || !hasTrackerOutcomeNote(row.notes, expectedNote)
+        || (!baselineTerminal && currentLineCount <= baselineLineCount)) {
       throw new CliError('TRACKER_RECEIPT_STALE', `${candidate.key} tracker receipt is stale`);
     }
-    item.applications_sha256 = applicationsHash;
-    item.tracker_row_sha256 = rowHash;
-    item.status_log_sha256 = statusLogHash;
+    item.applications_content = applicationsHash;
+    item.tracker_row_content = rowHash;
+    item.status_log_content = statusLogHash;
     item.status_log_line_count = currentLineCount;
     item.snapshot_refreshed_at = nowIso();
   }
@@ -1937,8 +1940,8 @@ async function receipt(options, descriptors) {
       ? readFileSnapshot(STATUS_LOG_PATH, true)
       : null;
     const registerText = registerSnapshot?.text ?? null;
-    const applicationsHash = applicationsSnapshot?.sha256 ?? null;
-    const statusLogHash = statusLogSnapshot?.sha256 ?? null;
+    const applicationsHash = applicationsSnapshot?.content ?? null;
+    const statusLogHash = statusLogSnapshot?.content ?? null;
     const applicationRowsSnapshot = applicationsSnapshot
       ? applicationRows(applicationsSnapshot.text)
       : null;
@@ -1949,7 +1952,7 @@ async function receipt(options, descriptors) {
     const registerDocument = registerText !== null
       ? validateInterviewDocument(registerText)
       : null;
-    const registerHash = registerSnapshot ? interviewEvidenceHash(registerSnapshot, registerDocument) : null;
+    const registerHash = registerSnapshot ? interviewEvidenceContent(registerSnapshot, registerDocument) : null;
 
     let recorded = 0;
     let idempotent = 0;
@@ -1974,8 +1977,8 @@ async function receipt(options, descriptors) {
 
       let nextReceipt;
       if (target === 'register') {
-        if (classification.disposition === 'tracker_rejected') {
-          assertArchivedRejection(registerDocument, classification);
+        if (TRACKER_OUTCOMES[classification.disposition]) {
+          assertArchivedOutcome(registerDocument, classification);
         }
         const marker = registerAuditMarker(identityKey, mailboxName, candidate.key);
         assertRegisterMarker(registerDocument, classification, marker);
@@ -1983,8 +1986,8 @@ async function receipt(options, descriptors) {
           target,
           identity_key: identityKey,
           process_identity_key: registerIdentity(classification),
-          file_sha256: registerHash,
-          marker_sha256: warningFingerprint(marker),
+          file_content: registerHash,
+          marker_content: warningContent(marker),
           verified_at: nowIso(),
         };
       } else {
@@ -1992,35 +1995,36 @@ async function receipt(options, descriptors) {
           throw new CliError('INVALID_IDENTITY', 'Tracker receipt requires tracker:#N identity');
         }
         const row = parseApplicationRow(identityKey, applicationRowsSnapshot);
-        const rowHash = warningFingerprint(row.line);
-        const baselineRowHash = run.workspace_baseline.application_row_hashes[identityKey] ?? null;
-        const baselineRejected = run.workspace_baseline.application_row_statuses?.[
+        const rowHash = warningContent(row.line);
+        const baselineRowHash = run.workspace_baseline.application_rows[identityKey] ?? null;
+        const outcome = TRACKER_OUTCOMES[classification.disposition];
+        const baselineTerminal = run.workspace_baseline.application_row_statuses?.[
           identityKey
-        ] === 'Rejected';
-        if (!baselineRejected && rowHash === baselineRowHash) {
+        ] === outcome.status;
+        if (!baselineTerminal && rowHash === baselineRowHash) {
           throw new CliError('TRACKER_ROW_UNCHANGED', `Exact tracker row did not change: ${identityKey}`);
         }
-        const expectedNote = `Gmail rejection received ${eventDate}`;
-        if (row.status !== 'Rejected' || !hasTrackerRejectionNote(row.notes, expectedNote)) {
-          throw new CliError('TRACKER_STATE_MISMATCH', 'Exact tracker rejection state is absent', {
+        const expectedNote = `${outcome.note} ${eventDate}`;
+        if (row.status !== outcome.status || !hasTrackerOutcomeNote(row.notes, expectedNote)) {
+          throw new CliError('TRACKER_STATE_MISMATCH', 'Exact tracker terminal state is absent', {
             identity_key: identityKey,
-            expected_status: 'Rejected',
+            expected_status: outcome.status,
             expected_note_date: eventDate,
           });
         }
         if (!run.workspace_baseline.status_log_line_counts) {
           throw new CliError('INVALID_STATE', 'Status-log line baseline is unavailable');
         }
-        const exactLogLines = exactStatusLogLines(statusLogLines, identityKey, eventDate)
-          .map((line) => ({ line, hash: warningFingerprint(line) }));
-        const exactLogLine = baselineRejected
+        const exactLogLines = exactStatusLogLines(statusLogLines, identityKey, eventDate, outcome.status)
+          .map((line) => ({ line, content: warningContent(line) }));
+        const exactLogLine = baselineTerminal
           ? exactLogLines[0]
-          : exactLogLines.find(({ hash }) => (
-            (currentStatusLogCounts[hash] ?? 0)
-              > (run.workspace_baseline.status_log_line_counts[hash] ?? 0)
+          : exactLogLines.find(({ content }) => (
+            (currentStatusLogCounts[content] ?? 0)
+              > (run.workspace_baseline.status_log_line_counts[content] ?? 0)
           ));
         if (!exactLogLine
-            || (!baselineRejected && statusLogHash === run.workspace_baseline.status_log_sha256)) {
+            || (!baselineTerminal && statusLogHash === run.workspace_baseline.status_log_content)) {
           throw new CliError('STATUS_LOG_RECEIPT_MISSING', 'Exact set-status transition is absent', {
             identity_key: identityKey,
             event_date: eventDate,
@@ -2031,11 +2035,11 @@ async function receipt(options, descriptors) {
           identity_key: identityKey,
           process_identity_key: registerIdentity(classification),
           event_date: eventDate,
-          applications_sha256: applicationsHash,
-          tracker_row_sha256: rowHash,
-          status_log_sha256: statusLogHash,
-          status_log_line_sha256: exactLogLine.hash,
-          status_log_line_count: currentStatusLogCounts[exactLogLine.hash],
+          applications_content: applicationsHash,
+          tracker_row_content: rowHash,
+          status_log_content: statusLogHash,
+          status_log_line_content: exactLogLine.content,
+          status_log_line_count: currentStatusLogCounts[exactLogLine.content],
           verified_at: nowIso(),
         };
       }
@@ -2085,7 +2089,8 @@ async function finishMailbox(options) {
   const failureReasonCode = status === 'unavailable'
     ? requiredOption(options, 'reason-code')
     : null;
-  if (failureReasonCode && !/^[a-z0-9_-]{1,64}$/.test(failureReasonCode)) {
+  if (failureReasonCode && failureReasonCode !== 'USER_EXCLUDED_SECONDARY'
+      && !/^[a-z0-9_-]{1,64}$/.test(failureReasonCode)) {
     throw new CliError('INVALID_ARGUMENT', 'Invalid --reason-code');
   }
   return withPipelineLock(ACTIVE_PATH, async () => {
@@ -2116,7 +2121,7 @@ async function finishMailbox(options) {
       }
     } else {
       if (mailbox.pages.length === 0 || !mailbox.pagination_complete
-          || mailbox.expected_page_token_hash !== null) {
+          || mailbox.expected_page_token !== null) {
         throw new CliError(
           'PAGINATION_INCOMPLETE',
           `${mailboxName} has no closed search-page chain`,
@@ -2237,8 +2242,8 @@ async function commit(options) {
       stateTargets.push({
         path: PRIMARY_STATE_PATH,
         value,
-        expected_before_sha256: primarySnapshot.sha256,
-        target_sha256: jsonFingerprint(value),
+        expected_before_content: primarySnapshot.content,
+        target_content: jsonContent(value),
       });
     }
     if (run.mailboxes.secondary.status === 'success') {
@@ -2249,8 +2254,8 @@ async function commit(options) {
       stateTargets.push({
         path: SECONDARY_STATE_PATH,
         value,
-        expected_before_sha256: secondarySnapshot.sha256,
-        target_sha256: jsonFingerprint(value),
+        expected_before_content: secondarySnapshot.content,
+        target_content: jsonContent(value),
       });
     }
     const completedAt = nowIso();
@@ -2261,7 +2266,7 @@ async function commit(options) {
       workspace_guards: finalGate.workspace_guards,
       state_targets: stateTargets,
       completed_record: completed,
-      completed_record_sha256: jsonFingerprint(completed),
+      completed_record_content: jsonContent(completed),
     };
     refreshLease(run);
     atomicWritePrivateJson(ACTIVE_PATH, run);
@@ -2358,7 +2363,7 @@ function help() {
       'gmail-job-reply-run.mjs supersede-ledger --run-id ID --reason-code CODE',
       'gmail-job-reply-run.mjs check FILE',
       'gmail-job-reply-run.mjs prepare FILE CANDIDATE',
-      'gmail-job-reply-run.mjs apply FILE CANDIDATE BASELINE_SHA256',
+      'gmail-job-reply-run.mjs apply FILE CANDIDATE BASELINE_FILE',
     ],
     categories: [...CATEGORIES],
     dispositions: [...DISPOSITIONS],

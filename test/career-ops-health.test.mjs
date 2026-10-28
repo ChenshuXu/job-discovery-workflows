@@ -13,6 +13,8 @@ function fixture(t, records) {
     export const getCareerOpsRoot = () => process.env.CAREER_OPS_ROOT || path.dirname(fileURLToPath(import.meta.url));
     export const resolveTrackerPath = root => process.env.CAREER_OPS_TRACKER || path.join(root, 'data/applications.md');`);
   writeFileSync(path.join(root, 'tracker-parse.mjs'), `
+export const parseMarkdownLinks = value => [...String(value ?? '').matchAll(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g)].map(match => ({label:match[1],target:match[2]}));
+
     export const resolveColumns = () => ({});
     export const normalizeTextKey = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
     export const extractReqNumber = s => s.match(/job id (\\S+)/)?.[1] || '';

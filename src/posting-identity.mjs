@@ -26,6 +26,33 @@ export function canonicalizePostingUrl(value) {
 const LOCALE_SEGMENT_RE = /^[a-z]{2}(?:[-_][a-z]{2})?$/i;
 const ID_LIKE_RE = /^[a-z0-9][a-z0-9._-]*\d[a-z0-9._-]*$/i;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Upstream listing IDs are opaque; the existing fingerprint intentionally folds case.
+export function listingIdentityFromUrl(value) {
+  if (typeof value !== 'string' || value !== value.trim() || /[\u0000-\u001f\u007f]/.test(value)) return null;
+  let url;
+  try { url = new URL(value); } catch { return null; }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.port) return null;
+  const greenhouse = ['boards.greenhouse.io', 'job-boards.greenhouse.io', 'boards.eu.greenhouse.io', 'job-boards.eu.greenhouse.io'].includes(url.hostname);
+  const triple = (provider, board, id) => ({ ats_provider: provider, board_slug: board, posting_id: id });
+  if (greenhouse && /^\/embed\/job_app\/?$/.test(url.pathname)) {
+    const boards = url.searchParams.getAll('for'), ids = url.searchParams.getAll('token');
+    if (boards.length !== 1 || ids.length !== 1 || /[%+]/.test(url.search)
+        || !/^[A-Za-z0-9_-]+$/.test(boards[0]) || !/^\d+$/.test(ids[0])) return null;
+    return triple('greenhouse', boards[0], ids[0]);
+  }
+  if (['for', 'token', 'gh_jid', 'ashby_jid'].some(key => url.searchParams.has(key))) return null;
+  if (greenhouse) {
+    const match = url.pathname.match(/^\/([A-Za-z0-9_-]+)\/jobs\/(\d+)\/?$/);
+    return match ? triple('greenhouse', match[1], match[2]) : null;
+  }
+  const provider = ['jobs.lever.co', 'jobs.eu.lever.co'].includes(url.hostname) ? 'lever'
+    : url.hostname === 'jobs.ashbyhq.com' ? 'ashby' : null;
+  if (!provider) return null;
+  const suffix = provider === 'lever' ? 'apply' : 'application';
+  const match = url.pathname.match(new RegExp(`^/([A-Za-z0-9_-]+)/([^/]+)(?:/${suffix})?/?$`));
+  return match && UUID_RE.test(match[2]) ? triple(provider, match[1], match[2]) : null;
+}
 const UUID_EDGE_RE = /(?:^|[-_])([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:$|[-_])/i;
 const LABELED_REQUISITION_RE = /(?:^|[-_])((?:ADOBUSR|JR|REQ|IRC|WJ|R)[-_]?\d[a-z0-9._-]*)$/i;
 const WORKDAY_REQUISITION_RE = /^(?:\d+(?:-\d+)*|(?:P|B|H|Q|REF|JREQ|JOBREQ|JR|R|REQ|IRC|WJ)[A-Z0-9]*(?:[-_][A-Z0-9]+)*)$/i;
@@ -35,6 +62,7 @@ const dropLocales = (segments) => segments.filter((segment) => !LOCALE_SEGMENT_R
 
 function workdayRequisition(segments) {
   const path = [...segments];
+  if (path.at(-2)?.toLowerCase() === 'apply' && path.at(-1)?.toLowerCase() === 'applymanually') path.pop();
   while (path.at(-1)?.toLowerCase() === 'apply') path.pop();
   const job = path.findLastIndex(segment => segment.toLowerCase() === 'job');
   if (job < 0 || job === path.length - 1) return '';
@@ -132,6 +160,18 @@ function fingerprint(value, legacyGeneric) {
     return /^ADOBUSR\d[A-Z0-9]*EXTERNAL[A-Z0-9]*$/i.test(requisition)
       ? build('phenom', 'adobe', requisition)
       : null;
+  }
+  if (!legacyGeneric && host === 'microsoft.eightfold.ai' && /^\/careers(?:\/apply)?$/i.test(url.pathname)) {
+    const ids = url.searchParams.getAll('pid');
+    // Microsoft's public pid is shared by its existing apply.careers URL.
+    return ids.length === 1 && /^\d+$/.test(ids[0])
+      ? build('generic', 'apply.careers.microsoft.com', ids[0]) : null;
+  }
+  if (!legacyGeneric && host === 'careers.ibm.com'
+      && dropLocales(segments).map(segment => segment.toLowerCase()).join('/') === 'careers/jobdetail') {
+    const ids = url.searchParams.getAll('jobId');
+    return ids.length === 1 && /^\d+$/.test(ids[0])
+      ? build('generic', host, ids[0]) : null;
   }
   const isGoogleCareers = host === 'careers.google.com'
     || (host === 'google.com' && segments.slice(0, 5).map(segment => segment.toLowerCase()).join('/') === 'about/careers/applications/jobs/results');

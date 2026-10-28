@@ -1,17 +1,15 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { careerOpsEnv, resolveCareerPaths } from './career-ops-paths.mjs';
 import { postingKey } from './posting-identity.mjs';
 
-const hash = value => createHash('sha256').update(value).digest('hex');
 
 export function careerBlacklistSnapshot(careerRoot) {
   const { blacklistFile } = resolveCareerPaths(careerRoot);
-  return { path: blacklistFile, sha256: existsSync(blacklistFile) ? hash(readFileSync(blacklistFile)) : null };
+  return { path: blacklistFile, content: existsSync(blacklistFile) ? String(readFileSync(blacklistFile)) : null };
 }
 
 export function assertCareerBlacklistUnchanged(careerRoot, expected) {
@@ -26,7 +24,7 @@ export function assertCareerBlacklistUnchanged(careerRoot, expected) {
 export function checkCareerBlacklist(careerRoot, records) {
   const paths = resolveCareerPaths(careerRoot);
   const snapshot = careerBlacklistSnapshot(careerRoot);
-  if (snapshot.sha256 === null) return { snapshot, matches: [] };
+  if (snapshot.content === null) return { snapshot, matches: [] };
   const code = `
     import { readFileSync } from 'node:fs';
     import { pathToFileURL } from 'node:url';
@@ -41,7 +39,7 @@ export function checkCareerBlacklist(careerRoot, records) {
     process.stdout.write(JSON.stringify(matches));
   `;
   const text = readFileSync(paths.blacklistFile, 'utf8');
-  if (hash(text) !== snapshot.sha256) throw new Error('Career-Ops blacklist changed while being read');
+  if (String(text) !== snapshot.content) throw new Error('Career-Ops blacklist changed while being read');
   const result = spawnSync(process.execPath, ['--permission', '--allow-fs-read=*', '--input-type=module', '-e', code], {
     cwd: paths.codeRoot, env: careerOpsEnv(paths, { NODE_OPTIONS: '' }), encoding: 'utf8', timeout: 30_000,
     input: JSON.stringify({ module: path.join(paths.codeRoot, 'scan.mjs'), text, records }),

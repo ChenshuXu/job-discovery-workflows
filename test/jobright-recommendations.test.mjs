@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildJobrightArtifacts, collectJobrightRecommendations, drainJobrightBatches, loadJobrightConfig, runJobrightRecommendations } from '../adapters/jobright_recommendations_scan.mjs';
+import { buildCanonicalFingerprintAudit } from '../src/canonical-url-fingerprint.mjs';
+import { buildJobrightArtifacts, collectJobrightRecommendations, drainJobrightBatches, loadJobrightConfig, runJobrightRecommendations } from '../src/adapters/jobright_recommendations_scan.mjs';
 
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const CONFIG = path.join(PROJECT_ROOT, 'config/jobright.json');
@@ -23,6 +24,30 @@ const IDS = {
 const OFFICIAL_URL = 'https://jobs.ashbyhq.com/exampleco/22222222-3333-4444-8555-666666666666';
 const OFFICIAL_KEY = 'ashby:exampleco:22222222-3333-4444-8555-666666666666';
 const ZIPRECRUITER_REDIRECT = `https://www.ziprecruiter.com/kn/${'A'.repeat(280)}-synthetic-redirect-1234567890`;
+
+test('query-ID acquisition reaches exact committed history through the real source CLIs', async () => {
+  const urls = ['https://microsoft.eightfold.ai/careers?pid=1970393557007489', 'https://careers.ibm.com/en_US/careers/JobDetail?jobId=125730'];
+  const keys = ['generic:apply.careers.microsoft.com:1970393557007489', 'generic:careers.ibm.com:125730'];
+  const fx = await runFixture('query-id-repair', {
+    filter_snapshot: acceptedFilter(), termination_reason: 'short_batch',
+    batches: [[{ jobright_id: IDS.first }, { jobright_id: IDS.second }]],
+    details: Object.fromEntries([IDS.first, IDS.second].map((id, i) => [id, {
+      company: ['Microsoft', 'IBM'][i], title: 'Backend Engineer', location: 'Seattle, WA',
+      employment_type: 'Full-time', original_url: urls[i], description: LONG,
+    }])),
+  });
+  const env = { ...process.env, JOB_DISCOVERY_ADAPTER_REGISTRY: fx.registry };
+  execFileSync(process.execPath, [COMBINE, '--run', fx.runRoot], { env });
+  execFileSync(process.execPath, [VERIFY, '--run', fx.runRoot], { env });
+  const acquisition = JSON.parse(readFileSync(path.join(fx.runRoot, 'acquisition.json')));
+  assert.deepEqual(acquisition.keys, keys.sort());
+  mkdirSync(path.join(fx.discoveryRoot, 'data'));
+  writeFileSync(path.join(fx.discoveryRoot, 'data/scan-history.tsv'), 'url\tdate\tsource\ttitle\tcompany\tstatus\tlocation\nhttps://apply.careers.microsoft.com/careers/job/1970393557007489\t2026-10-11\ttest\tEngineer\tMicrosoft\tadded\tSeattle\n');
+  const audit = buildCanonicalFingerprintAudit({ records: acquisition.acquired, careerRoot: fx.discoveryRoot, runId: 'query-id-repair' });
+  assert.deepEqual(audit.duplicate_keys, ['generic:apply.careers.microsoft.com:1970393557007489']);
+  const artifact = process.env.SCAN_REPAIR_E2E_ARTIFACT;
+  if (artifact) writeFileSync(artifact, JSON.stringify({ fixture_root: fx.discoveryRoot, acquisition, history: audit }, null, 2));
+});
 
 test('network diagnostics classify failures without retaining response values or parser/body errors', async t => {
   for (const name of ['drainEvents', 'cdp', 'wait']) {

@@ -419,7 +419,7 @@ test('the CLI writes, reads, and verifies one memory file', (t) => {
     scriptPath, 'remember', '--memory', memoryPath,
     '--key', 'preferences.sms_consent',
     '--label', 'Do you consent to receiving text messages?',
-    '--value', 'Yes', '--company', 'Acme', '--role', 'Engineer',
+    '--value', 'Yes', '--company', 'Acme', '--role', 'Engineer', '--expected-absent', 'true',
   ]);
   const found = JSON.parse(execFileSync(process.execPath, [
     scriptPath, 'lookup', '--memory', memoryPath,
@@ -447,10 +447,10 @@ test('the CLI maps kebab-case reuse and alias approval flags', (t) => {
     '--reuse-authorized', 'true',
   ];
 
-  execFileSync(process.execPath, [...common, '--label', 'Do you consent to receiving text messages?']);
+  const created = JSON.parse(execFileSync(process.execPath, [...common, '--label', 'Do you consent to receiving text messages?', '--expected-absent', 'true'], { encoding: 'utf8' }));
   execFileSync(process.execPath, [
     ...common,
-    '--label', 'May we send you SMS updates?', '--approve-alias', 'true',
+    '--label', 'May we send you SMS updates?', '--approve-alias', 'true', '--expected-revision', created.revision,
   ]);
   const found = JSON.parse(execFileSync(process.execPath, [
     scriptPath, 'lookup', '--memory', memoryPath,

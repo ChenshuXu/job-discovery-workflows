@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "max_post_age_hours": 24,
+  "ats": [
+    "greenhouse",
+    "lever",
+    "ashby"
+  ],
+  "limit_per_ats": 150,
+  "scan_timeout_ms": 1500000,
+  "http_timeout_ms": 45000,
+  "official_fetch_concurrency": 5,
+  "title_filter": {
+    "positive": [
+      "software engineer",
+      "backend engineer",
+      "platform engineer",
+      "infrastructure engineer",
+      "distributed systems engineer",
+      "ML platform engineer"
+    ],
+    "negative": [
+      "intern",
+      "frontend",
+      "front-end"
+    ]
+  },
+  "employer_exclusions": []
+}

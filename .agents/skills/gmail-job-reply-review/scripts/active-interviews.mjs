@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import {
   existsSync,
@@ -393,7 +392,7 @@ export function readInterviewProcessSummary(row, registerPath) {
   const text = lines.slice(start, next < 0 ? undefined : next).join('\n');
   const identities = [...text.matchAll(/^Identity: `([^`]+)`\s*$/gmu)].map(item => item[1]);
   if (identities.length !== 1 || identities[0] !== row.identity) fail(`Process summary section must identify exactly ${row.identity}`);
-  return { path: actualPath, text, sha256: sha256(fullText) };
+  return { path: actualPath, text, content: content(fullText) };
 }
 
 /** Ensure an admitted process is never deleted and reopened terminal history stays visible. */
@@ -424,8 +423,8 @@ export function assertInterviewProcessesPreserved(previousProcesses, markdown, {
   if (errors.length > 0) throw new ActiveInterviewsValidationError(errors);
 }
 
-function sha256(text) {
-  return createHash('sha256').update(text).digest('hex');
+function content(text) {
+  return String(text);
 }
 
 function runShlock(lockPath) {
@@ -444,7 +443,7 @@ function runShlock(lockPath) {
 /** Serialize every compliant writer for this canonical register. */
 export function withActiveInterviewsLock(filePath, callback) {
   const absolutePath = realpathSync(resolve(filePath));
-  const lockPath = join(tmpdir(), `active-interviews-${sha256(absolutePath).slice(0, 32)}.pid.lock`);
+  const lockPath = join(dirname(absolutePath), '.active-interviews.pid.lock');
   const acquired = runShlock(lockPath);
   if (!acquired) {
     throw new ActiveInterviewsLockError(

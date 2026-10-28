@@ -1,3 +1,4 @@
+import { validateChecks } from './validation-diagnostics.mjs';
 // The worker owns JD interpretation. Code checks evidence and result consistency,
 // then derives mechanical caps, decisions and presentation from that judgment.
 export { RESULT_SCHEMA_VERSION } from './scan-report-contract.mjs';
@@ -6,13 +7,14 @@ const ELIGIBILITY_STATUSES = new Set(['eligible', 'ineligible', 'needs_verificat
 const ELIGIBILITY_CATEGORIES = new Set(['no_sponsorship', 'work_authorization', 'citizenship', 'export_control',
   'security_clearance', 'public_trust', 'mandatory_unacceptable_location', 'employment_type', 'internal_only']);
 const LEGITIMACY_TIERS = new Set(['High Confidence', 'Proceed with Caution', 'Suspicious']);
+const DERIVED_FIELDS = ['score', 'hard_exclusion', 'hard_exclusion_evidence', 'report_allowed', 'report_decision', 'semantic_job_key', 'posting_context_key'];
 const AUTH_LABELS = {
   sponsors: '✅ Sponsors', no_sponsorship: '⛔ No sponsorship', unstated: '⚠️ Unstated',
   needs_verification: '⚠️ Verify sponsorship', not_needed: '➖ Not needed',
 };
 const RESULT_FIELDS = new Set(['posting_key', 'status', 'fit_score', 'level_signal', 'level_evidence',
   'eligibility_status', 'eligibility_category', 'eligibility_evidence', 'legitimacy_tier',
-  'rationale', 'report', 'work_authorization']);
+  'rationale', 'report', 'work_authorization', 'research']);
 const quoteFromEvidence = value => typeof value === 'string' ? value.trim().match(/^JD:\s*["“]([\s\S]+)["”]\.?$/)?.[1] : null;
 
 function requireQuote(evidence, jdText, label) {
@@ -48,23 +50,44 @@ export function deriveReportWorkAuthorization({ item, jdText, candidateText }) {
 export function applyScoringSafety({ item, jdText, threshold }) {
   const key = item?.posting_key;
   const fit = item?.fit_score;
-  if (typeof key !== 'string' || !key.trim() || typeof fit !== 'number' || !Number.isFinite(fit)
-      || fit < 1 || fit > 5 || Math.round(fit * 10) !== fit * 10) throw new Error(`${key || '<missing>'}: invalid fit_score`);
-  if (!LEVEL_SIGNALS.has(item.level_signal)) throw new Error(`${key}: invalid level_signal`);
-  if (!ELIGIBILITY_STATUSES.has(item.eligibility_status)) throw new Error(`${key}: invalid eligibility_status`);
-  if (!LEGITIMACY_TIERS.has(item.legitimacy_tier)) throw new Error(`${key}: invalid legitimacy_tier`);
-  if (['score', 'hard_exclusion', 'hard_exclusion_evidence', 'report_allowed', 'report_decision', 'semantic_job_key', 'posting_context_key'].some(field => Object.hasOwn(item, field))) throw new Error(`${key}: worker must not write derived legacy fields`);
-  const unknown = Object.keys(item).find(field => !RESULT_FIELDS.has(field));
-  if (unknown) throw new Error(`${key}: unsupported result field ${unknown}`);
-  if (item.status !== undefined && item.status !== 'EVALUATED') throw new Error(`${key}: invalid evaluated result`);
-  requireQuote(item.level_evidence, jdText, `${key}: level_evidence`);
-  if (item.eligibility_status === 'eligible') {
-    if (item.eligibility_category !== null || item.eligibility_evidence !== null) throw new Error(`${key}: eligible result must not carry eligibility category/evidence`);
-  } else {
-    if (!ELIGIBILITY_CATEGORIES.has(item.eligibility_category)) throw new Error(`${key}: invalid eligibility_category`);
-    requireQuote(item.eligibility_evidence, jdText, `${key}: eligibility_evidence`);
-  }
-
+  if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error(`${key || '<missing>'}: invalid result object`);
+  validateChecks({
+    fit_score: () => {
+      if (typeof key !== 'string' || !key.trim() || typeof fit !== 'number' || !Number.isFinite(fit)
+          || fit < 1 || fit > 5 || Math.round(fit * 10) !== fit * 10) throw new Error(`${key || '<missing>'}: invalid fit_score`);
+    },
+    level_signal: () => {
+      if (!LEVEL_SIGNALS.has(item.level_signal)) throw new Error(`${key}: invalid level_signal`);
+    },
+    eligibility_status: () => {
+      if (!ELIGIBILITY_STATUSES.has(item.eligibility_status)) throw new Error(`${key}: invalid eligibility_status`);
+    },
+    legitimacy_tier: () => {
+      if (!LEGITIMACY_TIERS.has(item.legitimacy_tier)) throw new Error(`${key}: invalid legitimacy_tier`);
+    },
+    derived_fields: () => {
+      if (DERIVED_FIELDS.some(field => Object.hasOwn(item, field))) throw new Error(`${key}: worker must not write derived legacy fields`);
+    },
+    unknown_field: () => {
+      const unknown = Object.keys(item).find(field => !RESULT_FIELDS.has(field) && !DERIVED_FIELDS.includes(field));
+      if (unknown) throw new Error(`${key}: unsupported result field ${unknown}`);
+    },
+    status: () => {
+      if (item.status !== undefined && item.status !== 'EVALUATED') throw new Error(`${key}: invalid evaluated result`);
+    },
+    level_evidence: () => {
+      requireQuote(item.level_evidence, jdText, `${key}: level_evidence`);
+    },
+    eligibility_evidence: () => {
+      if (!ELIGIBILITY_STATUSES.has(item.eligibility_status)) return;
+      if (item.eligibility_status === 'eligible') {
+        if (item.eligibility_category !== null || item.eligibility_evidence !== null) throw new Error(`${key}: eligible result must not carry eligibility category/evidence`);
+      } else {
+        if (!ELIGIBILITY_CATEGORIES.has(item.eligibility_category)) throw new Error(`${key}: invalid eligibility_category`);
+        requireQuote(item.eligibility_evidence, jdText, `${key}: eligibility_evidence`);
+      }
+    },
+  }, key + ': ');
   const fitScore = item.level_signal === 'staff_equivalent' ? Math.min(fit, 3.5) : fit;
   const hardExclusion = item.eligibility_status === 'ineligible';
   const score = hardExclusion ? Math.min(fitScore, 3.5) : fitScore;

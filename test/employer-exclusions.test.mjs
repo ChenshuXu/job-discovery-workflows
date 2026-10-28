@@ -12,6 +12,42 @@ const JOBRIGHT_RULES = JSON.parse(readFileSync(path.join(ROOT, 'config/jobright.
 // Synthetic excerpts retain only the short phrases needed by the configured matchers.
 const CASES = [
   {
+    id: 'publisher-explicit-employer-hiring',
+    company: 'Dice',
+    description: 'Jobright.ai is hiring a Software Engineer II for its example organization.',
+    expected: 'jobright-ai',
+  },
+  {
+    id: 'publisher-explicit-employer-hiring-an',
+    company: 'Example Publisher',
+    description: 'Jobright.ai is hiring an Infrastructure Engineer for its platform team.',
+    expected: 'jobright-ai',
+  },
+  {
+    id: 'hiring-technology-reference',
+    company: 'Acme Software',
+    description: 'Acme using AWS is hiring a Software Engineer.',
+    expected: null,
+  },
+  {
+    id: 'quoted-hiring-reference',
+    company: 'Acme Software',
+    description: 'Our examples include: Amazon is hiring a Software Engineer.',
+    expected: null,
+  },
+  {
+    id: 'negated-hiring-reference',
+    company: 'Acme Software',
+    description: 'Amazon is not hiring a Software Engineer for this role.',
+    expected: null,
+  },
+  {
+    id: 'hiring-partnership-reference',
+    company: 'Acme Software',
+    description: 'Jobright.ai is hiring a consulting firm to work with an engineer.',
+    expected: null,
+  },
+  {
     id: 'direct-company',
     company: 'Amazon Web Services',
     description: 'Build cloud infrastructure for customers.',
@@ -70,6 +106,18 @@ const CASES = [
     company: 'Third Party Board',
     description: 'Why AWS?\n\nAmazon is an equal opportunity employer.\n\nBuild sales-planning systems.',
     expected: 'amazon-aws',
+  },
+  {
+    id: 'employer-central-talent-pipeline',
+    company: 'AbilityLinks',
+    description: 'Amazon Web Services (AWS) is building a central pipeline of Software Development Engineer (SDE) talent for anticipated roles in 2026.',
+    expected: 'amazon-aws',
+  },
+  {
+    id: 'other-employer-central-talent-pipeline-using-aws',
+    company: 'Example Publisher',
+    description: 'Acme using AWS is building a central pipeline of engineering talent.',
+    expected: null,
   },
   {
     id: 'aws-is-only-technology',
@@ -166,7 +214,7 @@ from employer_exclusions import match_excluded_employer
 payload = json.load(sys.stdin)
 print(json.dumps([match_excluded_employer(item['company'], item['description'], payload['rules']) for item in payload['cases']]))
 `;
-  const python = JSON.parse(execFileSync('python3', ['-c', helper, path.join(ROOT, 'adapters')], {
+  const python = JSON.parse(execFileSync('python3', ['-c', helper, path.join(ROOT, 'src/adapters')], {
     input: JSON.stringify({ rules: RULES, cases: CASES }),
     encoding: 'utf8',
   }));
@@ -179,6 +227,6 @@ test('explicit empty employer policy is allowed in both runtimes; missing policy
   assert.deepEqual(validateEmployerExclusionRules([]), []);
   assert.equal(matchExcludedEmployer({ company: 'Example' }, []), null);
   assert.throws(() => validateEmployerExclusionRules(undefined), /must be an array/);
-  execFileSync('python3', ['-c', 'from employer_exclusions import validate_employer_exclusion_rules, match_excluded_employer; assert validate_employer_exclusion_rules([]) == []; assert match_excluded_employer("Example", "", []) is None'], { cwd: path.join(ROOT, 'adapters') });
-  assert.throws(() => execFileSync('python3', ['-c', 'from employer_exclusions import validate_employer_exclusion_rules; validate_employer_exclusion_rules(None)'], { cwd: path.join(ROOT, 'adapters'), stdio: 'pipe' }));
+  execFileSync('python3', ['-c', 'from employer_exclusions import validate_employer_exclusion_rules, match_excluded_employer; assert validate_employer_exclusion_rules([]) == []; assert match_excluded_employer("Example", "", []) is None'], { cwd: path.join(ROOT, 'src/adapters') });
+  assert.throws(() => execFileSync('python3', ['-c', 'from employer_exclusions import validate_employer_exclusion_rules; validate_employer_exclusion_rules(None)'], { cwd: path.join(ROOT, 'src/adapters'), stdio: 'pipe' }));
 });

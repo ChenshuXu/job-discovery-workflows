@@ -2,6 +2,13 @@ MIT License
 
 Copyright (c) 2026 Job Discovery contributors
 
+The requisition-note regular expression in test/daily-scan-rebuild.test.mjs
+is derived from Career-Ops merge-tracker.mjs at revision
+9d9f5d5f5fe0c9076eb39fa15149153437d834bf:
+https://github.com/career-ops-hq/career-ops/blob/9d9f5d5f5fe0c9076eb39fa15149153437d834bf/merge-tracker.mjs#L293
+
+Copyright (c) 2026 Santiago Fernández de Valderrama
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights

@@ -43,6 +43,9 @@
       "id": "data-paths",
       "failures": [
         "code/data roots conflated",
+        "absolute or relative CAREER_OPS_PROFILE ignored, or redirected when a child changes working directory",
+        "observational scan-history rows suppress a posting, or cancel independent committed evidence",
+        "balanced parentheses in report links break publication, lookup or health evidence",
         "environment and marker precedence diverge from official resolver",
         "relative tracker override targets wrong directory",
         "read and write paths or lock keys disagree",
@@ -101,6 +104,32 @@
         "healthy JD archive fixture lacks an archive while expecting success"
       ],
       "proof": "Frozen fixtures through actual planner, validator, merger, official writers, upstream reason analytics and expansion; negative cases preserve data and historical bytes."
+    },
+    {
+      "id": "ats-keywords-v7",
+      "failures": [
+        "missing/empty/duplicate/fabricated keywords",
+        "Java substring of JavaScript accepted",
+        "C++/C#/.NET corrupted by Markdown escaping",
+        "comma/newline/Markdown injection or excessive size",
+        "report total exceeds 6000 Unicode characters",
+        "historical v6 mutated or accepted for new writes",
+        "official matcher falls back or drops terms",
+        "expansion cannot read v7"
+      ],
+      "proof": "Actual planner, validator, merger, official writers, receipt and upstream keyword-match CLI; retained command logs and coverage JSON; v6 read-only with unchanged manifests."
+    },
+    {
+      "id": "requirements-and-listing-v8",
+      "failures": [
+        "missing or malformed importance list; inferred high; forged or spliced JD signals; duplicate/out-of-order requirements; silent high-importance truncation; empty and >12 high rows rejected",
+        "candidate match or importance changes global fit or report gate",
+        "lossless requirements lost in upstream parser or expansion; v7 reinterpreted as v8",
+        "ATS triple guessed from aggregate/custom/ambiguous URL or opaque case/id normalized",
+        "official compute/parser interface missing; writer drops listing_key; rollback damages unrelated history",
+        "native dedup cannot read persisted listing token"
+      ],
+      "proof": "Actual planner, validator, merger, official report/history/tracker writers, receipt and upstream requirements analytics/native dedup. Fault injection, historical manifests, command logs and source hashes."
     }
   ]
 }

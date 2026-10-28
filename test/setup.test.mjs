@@ -73,8 +73,7 @@ test('standalone Post Scan setup creates its shared config and checks its refere
   const root = path.join(dir, 'discovery'); mkdirSync(root);
   const examples = existsSync('release/overrides/config') ? 'release/overrides/config' : 'config';
   cpSync(examples, path.join(root, 'config'), { recursive: true, filter: file => file === examples || file.endsWith('.example.json') });
-  mkdirSync(path.join(root, 'linkedin-post-scan/config'), { recursive: true });
-  writeFileSync(path.join(root, 'linkedin-post-scan/config/post-scan.example.json'), JSON.stringify({
+  writeFileSync(path.join(root, 'config/linkedin-post-scan.example.json'), JSON.stringify({
     role_groups: { role: ['Engineer'] }, location_groups: { remote: ['US'] }, phrase_groups: { hiring: ['Hiring'] },
     paths: { career_ops_root: '../career-ops', cv: '../career-ops/cv.md', profile: '../career-ops/config/profile.yml', employer_exclusions: 'config/jobspy-ego.json', daily_scan_runtime: 'config/daily-scan-runtime.json' },
   }));

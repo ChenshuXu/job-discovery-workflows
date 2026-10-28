@@ -22,7 +22,7 @@ function fixture(t, { empty = false } = {}) {
   t.after(() => rmSync(runRoot, { recursive: true, force: true }));
   const assignments = { 'worker-1': empty ? [] : ['key'], 'worker-2': [] };
   const runtime = { worker: { model: 'requested', reasoning_effort: 'low' }, scheduler: { max_active_workers: 2, batch_size: 6 } };
-  json(path.join(runRoot, 'assignments.json'), { assignments, runtime, semantic_identities: { key: { semantic_job_key: 'jd', posting_context_key: 'context' } }, candidate_sources: [{ label: 'cv', path: '/private/path', sha256: 'candidate' }] });
+  json(path.join(runRoot, 'assignments.json'), { assignments, runtime, semantic_identities: { key: { semantic_job_key: 'jd', posting_context_key: 'context' } }, candidate_sources: [{ label: 'cv', path: '/private/path', content: 'candidate' }] });
   json(path.join(runRoot, 'acquisition.json'), { acquired: [{ primary_key: 'key', company: 'Example', title: 'Engineer', location: 'US' }], sources: [{ adapter: 'jobspy', status: 'SUCCESS', markdown_jobs: 1 }] });
   return runRoot;
 }

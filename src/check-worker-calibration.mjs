@@ -49,7 +49,7 @@ function outputSchema(caseIds) {
 export function buildCalibrationPrompt(fixture, runtime, candidateFiles, { careerRoot = careerOpsCodeRoot() } = {}) {
   const inputs = snapshotScoringInputs(careerRoot);
   candidateFiles ??= inputs.candidate_sources.map(source => source.path);
-  const rules = inputs.rule_sources.filter(source => !source.label.startsWith('job-discovery/') && source.sha256 !== null)
+  const rules = inputs.rule_sources.filter(source => !source.label.startsWith('job-discovery/') && source.content !== null)
     .map(source => `\n--- RULE SOURCE (not candidate evidence): ${source.label} ---\n${readFileSync(source.path, 'utf8')}`).join('\n');
   const scoring = readFileSync(path.join(ROOT, 'config/worker-scoring.md'), 'utf8');
   const locationPolicy = loadLocationPolicy(candidateFiles[1]);

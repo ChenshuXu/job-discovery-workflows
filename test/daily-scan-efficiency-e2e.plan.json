@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "scope": "Deterministic isolated workflow acceptance, no model calls or live acquisition",
+  "failures": [
+    "Long summaries must expose all errors through a complete artifact; missing artifacts fail",
+    "No-change wait must not request rereads or replacement workers; provider outages remain immediate",
+    "Employer affinity preserves exact keys, bounded capacity, deterministic ties and singleton publishers/ambiguity",
+    "Old assignments resume unchanged; empty and oversized employer groups remain valid",
+    "Reused pages retain original captures and per-posting actual queries; foreign, stale or unbound evidence fails",
+    "Independent quote, gaps, enum and keyword errors appear on the first rejected payload",
+    "Work authorization errors appear alongside report errors, and one repair passes without consuming another rejected attempt",
+    "Bad parent types stop dependent checks without masking unrelated errors",
+    "Identical rejected payloads do not consume another attempt; budget exhaustion requires the observed ledger",
+    "Candidate/rule drift, foreign ownership, old part tampering and final/part mismatch remain rejected",
+    "Frozen model, effort, research, report threshold and retry policy are unchanged",
+    "Reordered valid results reach canonical isolated commit with the same posting-key business content"
+  ]
+}

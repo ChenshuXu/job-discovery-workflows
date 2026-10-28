@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,11 +10,10 @@ const EXCLUSION_MANIFEST = {
   posting_keys: ['linkedin:linkedin.com:1000000001', 'linkedin:linkedin.com:1000000002'],
 };
 
-const hash = value => createHash('sha256').update(value).digest('hex');
 const write = (file, value) => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value)); };
 const read = file => readFileSync(file, 'utf8');
 const tree = root => Object.fromEntries(readdirSync(root, { recursive: true, withFileTypes: true }).filter(entry => entry.isFile()).map(entry => {
-  const file = path.join(entry.parentPath, entry.name); return [path.relative(root, file), hash(readFileSync(file))];
+  const file = path.join(entry.parentPath, entry.name); return [path.relative(root, file), String(readFileSync(file))];
 }));
 
 function fixture(t) {
@@ -49,17 +47,17 @@ function fixture(t) {
     options: { runRoot, careerRoot, interfaces, manifest: EXCLUSION_MANIFEST }, archiveRoot: path.join(careerRoot, 'data/daily-scan-corrections', runId, 'excluded-employers') };
 }
 
-test('excluded employer correction is dry-run by default and removes only two hash-bound owned records with recoverable backups', async t => {
+test('excluded employer correction is dry-run by default and removes only two owned records with exact content checks and recoverable backups', async t => {
   const fx = fixture(t), originalRun = tree(fx.runRoot), originalCareer = tree(fx.careerRoot);
   const plan = await repairExcludedScanPostings(fx.options);
   assert.equal(plan.applied, false); assert.equal(plan.effects.length, 2); assert.equal(plan.history_rows_before, 3); assert.equal(plan.history_rows_after, 1);
   assert.deepEqual(tree(fx.runRoot), originalRun); assert.deepEqual(tree(fx.careerRoot), originalCareer); assert.deepEqual(fx.events, []);
-  const applied = await repairExcludedScanPostings({ ...fx.options, apply: true, expectedPlanHash: plan.plan_sha256 });
+  const applied = await repairExcludedScanPostings({ ...fx.options, apply: true, expectedPlan: plan });
   assert.equal(applied.outcome.status, 'COMPLETE'); assert.deepEqual(tree(fx.runRoot), originalRun);
   assert.equal(read(fx.historyFile), fx.remainingHistory); assert.ok(fx.jdFiles.every(file => !existsSync(file)));
   assert.deepEqual(fx.events, ['commit', 'tracker', 'history', 'history-close', 'tracker-close', 'commit-close']);
-  for (const effect of applied.effects) assert.equal(hash(read(effect.archive_jd)), effect.jd_sha256);
-  for (const file of ['data/applications.md', 'reports/123-other.md', 'jds/other.md']) assert.equal(hash(read(path.join(fx.careerRoot, file))), originalCareer[file]);
+  for (const effect of applied.effects) assert.equal(String(read(effect.archive_jd)), effect.jd_content);
+  for (const file of ['data/applications.md', 'reports/123-other.md', 'jds/other.md']) assert.equal(String(read(path.join(fx.careerRoot, file))), originalCareer[file]);
   assert.equal(read(path.join(fx.archiveRoot, 'scan-history.removed.tsv')), plan.effects.map(effect => effect.history_raw).join(''));
   await assert.rejects(repairExcludedScanPostings(fx.options), /preexisting correction archive/);
 });
@@ -81,10 +79,10 @@ test('excluded employer correction fails closed on ambiguity, protected referenc
     assert.deepEqual(tree(fx.runRoot), before); assert.equal(existsSync(fx.archiveRoot), false);
   }
   const fx = fixture(t), plan = await repairExcludedScanPostings(fx.options);
-  await assert.rejects(repairExcludedScanPostings({ ...fx.options, apply: true }), /expected-plan-hash/);
+  await assert.rejects(repairExcludedScanPostings({ ...fx.options, apply: true }), /plan-file/);
   write(fx.historyFile, read(fx.historyFile) + '# concurrent note\n');
   const before = tree(fx.careerRoot);
-  await assert.rejects(repairExcludedScanPostings({ ...fx.options, apply: true, expectedPlanHash: plan.plan_sha256 }), /plan hash changed/);
+  await assert.rejects(repairExcludedScanPostings({ ...fx.options, apply: true, expectedPlan: plan }), /plan changed/);
   assert.deepEqual(tree(fx.careerRoot), before); assert.equal(existsSync(fx.archiveRoot), false);
 });
 
@@ -93,7 +91,7 @@ test('excluded employer correction narrowly rolls back a failed history write an
   const plan = await repairExcludedScanPostings(fx.options);
   let written = false;
   fx.options.interfaces.trackerUtils.writeFileAtomic = (file, text) => { write(file, text); if (!written) { written = true; throw new Error('injected after-write failure'); } };
-  await assert.rejects(repairExcludedScanPostings({ ...fx.options, apply: true, expectedPlanHash: plan.plan_sha256 }), /owned changes rolled back/);
+  await assert.rejects(repairExcludedScanPostings({ ...fx.options, apply: true, expectedPlan: plan }), /owned changes rolled back/);
   assert.equal(read(fx.historyFile), originalHistory); assert.deepEqual(fx.jdFiles.map(read), jdBefore); assert.deepEqual(tree(fx.runRoot), originalRun);
   assert.equal(JSON.parse(read(path.join(fx.archiveRoot, 'outcome.json'))).status, 'ROLLED_BACK');
 });

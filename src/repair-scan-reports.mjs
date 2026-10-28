@@ -3,28 +3,27 @@ import { resolveCareerPaths } from './career-ops-paths.mjs';
 // An explicit, hash-bound repair of reports from one already completed scan.
 // Raw parts and the original run's receipt/mapping/results are never rewritten.
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateWorkerParts } from './merge-worker-results.mjs';
-import { deriveReportWorkAuthorization } from './scoring-safety.mjs';
+import { applyScoringSafety, deriveReportWorkAuthorization } from './scoring-safety.mjs';
 import { resolveCompactReport } from './expand-scan-report.mjs';
-import { renderCompactReport, validateStructuredReport } from './scan-report-contract.mjs';
+import { renderCompactReport, validateStructuredReport, splitPermHistoryReference, appendPermHistoryReference } from './scan-report-contract.mjs';
 import { renderScanReports, renderScanReportDocument, reserveScanReportNumbers, releaseScanReportNumbers, scanReportStem, trackerIdentityNote } from './render-scan-reports.mjs';
 import { appendCandidateTracker, loadCareerInterfaces, removeOwnedTrackerRows, runCareerCommand } from './commit-scan.mjs';
 import { parseTracker, readReportIdentity, trackerNoteHasPostingKey } from './daily-scan-state.mjs';
 import { runPipelineCheck } from './verify-scan-receipt.mjs';
+import { auditPermHistory, renderPermHistoryReference } from './perm-history.mjs';
 
 
 const moduleRoot = path.dirname(fileURLToPath(import.meta.url));
-const hash = text => createHash('sha256').update(text).digest('hex');
 const read = file => readFileSync(file, 'utf8');
 const json = file => JSON.parse(read(file));
-const fileHash = file => hash(readFileSync(file));
+const fileContent = file => String(readFileSync(file));
 const reportDate = header => header.match(/^\*\*Date:\*\*\s*(\d{4}-\d{2}-\d{2})/m)?.[1];
 const exact = (values, label) => { if (values.length !== 1) throw new Error(`${label}: expected exactly one match, found ${values.length}`); return values[0]; };
-const manifestHash = manifest => hash(JSON.stringify(manifest));
+const manifestContent = manifest => String(JSON.stringify(manifest));
 const repairFile = (careerRoot, runId) => path.join(resolveCareerPaths(careerRoot).dataRoot, 'data/daily-scan-repairs', `${runId}-reports.json`);
 
 function validateManifest(manifest, runRoot) {
@@ -34,11 +33,20 @@ function validateManifest(manifest, runRoot) {
   for (const entry of manifest.entries) {
     if (!['Apply', 'Consider', 'Research first', 'Skip'].includes(entry.decision)
         || !(entry.report_number === null || Number.isSafeInteger(entry.report_number) && entry.report_number > 0)) throw new Error(`${entry.posting_key}: invalid desired effect`);
-    if (entry.remove_gap && (typeof entry.remove_gap !== 'object'
-        || Object.keys(entry.remove_gap).sort().join(',') !== 'explanation,locator,quote'
-        || Object.values(entry.remove_gap).some(value => typeof value !== 'string' || !value.trim()))) {
-      throw new Error('remove_gap requires the exact nonempty quote, locator and explanation');
+    for (const gap of [entry.remove_gap, entry.replace_gap?.original].filter(Boolean)) {
+      if (typeof gap !== 'object' || Object.keys(gap).sort().join(',') !== 'explanation,locator,quote'
+          || Object.values(gap).some(value => typeof value !== 'string' || !value.trim())) {
+        throw new Error('gap correction requires the exact nonempty quote, locator and explanation');
+      }
     }
+    if (entry.replace_gap && (Object.keys(entry.replace_gap).sort().join(',') !== 'explanation,original'
+        || typeof entry.replace_gap.explanation !== 'string' || !entry.replace_gap.explanation.trim())) throw new Error('replace_gap requires original and explanation');
+    for (const edit of [entry.replace_reason].filter(Boolean)) {
+      if (Object.keys(edit).sort().join(',') !== 'original,replacement'
+          || Object.values(edit).some(value => typeof value !== 'string' || !value.trim())) throw new Error('wording correction requires original and replacement');
+    }
+    if (entry.corrected_result && (!path.isAbsolute(entry.corrected_result.path ?? '')
+        || typeof entry.corrected_result.content !== 'string')) throw new Error('corrected_result requires an absolute path and content snapshot');
   }
 }
 
@@ -54,7 +62,8 @@ function correctedDocument(resolved, result) {
   const header = resolved.header
     .replace(/^(\*\*Score:\*\*\s*)[^\r\n]*/m, `$1${Number(result.score).toFixed(1)}/5  `)
     .replace(/^(\*\*Work Auth:\*\*\s*)[^\r\n]*/m, `$1${result.work_authorization.label}  `);
-  return `${header}${renderCompactReport({ result, record: result._record, runId: resolved.runId })}\n`;
+  const markdown = renderCompactReport({ result, record: result._record, runId: resolved.runId });
+  return `${header}${appendPermHistoryReference(markdown, splitPermHistoryReference(resolved.body).reference)}\n`;
 }
 
 function assertRowIdentity(row, record, reportPath) {
@@ -78,7 +87,17 @@ async function buildPlan({ runRoot, careerRoot, manifest, interfaces }) {
   const trackerText = read(trackerFile);
   const rows = parseTracker(trackerText, interfaces.trackerParser);
   const sources = new Set([assignmentsFile, path.join(runRoot, 'receipt.json'), path.join(runRoot, 'acquisition.json'), path.join(runRoot, 'rendered-reports.json'), ...plan.candidate_sources.map(source => source.path)]);
-  for (const name of ['repair-scan-reports.mjs', 'merge-worker-results.mjs', 'scoring-safety.mjs', 'scan-report-contract.mjs', 'render-scan-reports.mjs', 'commit-scan.mjs', 'verify-scan-receipt.mjs']) sources.add(path.join(moduleRoot, name));
+  let permHistory = null;
+  const baselineFile = path.join(runRoot, 'baseline.json');
+  if (existsSync(baselineFile) && json(baselineFile).perm_history) {
+    const scored = new Set(receipt.scored_keys);
+    auditPermHistory({ runRoot, run: { records: acquisition.acquired },
+      results: { byKey: new Map(acquisition.acquired.map(record => [record.primary_key, { status: scored.has(record.primary_key) ? 'EVALUATED' : 'FAILED' }])) },
+      reports: [], requirePersistence: false });
+    permHistory = json(path.join(runRoot, 'perm-history.json'));
+    for (const file of [baselineFile, path.join(runRoot, 'perm-history.json'), path.join(runRoot, 'perm-history.md'), path.join(moduleRoot, 'perm-history.mjs'), path.join(moduleRoot, 'perm-history.py')]) sources.add(file);
+  }
+  for (const name of ['repair-scan-reports.mjs', 'merge-worker-results.mjs', 'scoring-safety.mjs', 'scan-report-contract.mjs', 'render-scan-reports.mjs', 'commit-scan.mjs', 'verify-scan-receipt.mjs', 'scoring-inputs.mjs', 'scoring-research.mjs', 'perm-employers.mjs']) sources.add(path.join(moduleRoot, name));
   const byWorker = new Map();
   const reserveNumbers = nextNumbers(careerRoot, rows, manifest.entries.filter(entry => entry.report_number === null).length);
   const selected = [];
@@ -89,14 +108,30 @@ async function buildPlan({ runRoot, careerRoot, manifest, interfaces }) {
     if (!receipt.committed_evaluated_keys?.includes(key)) throw new Error(`${key}: original run did not persist a successful evaluation`);
     const record = exact(acquisition.acquired.filter(record => record.primary_key === key), `${key}: acquisition`);
     const worker = exact(Object.keys(plan.assignments).filter(worker => plan.assignments[worker].includes(key)), `${key}: assignment`);
-    if (!byWorker.has(worker)) byWorker.set(worker, validateWorkerParts(runRoot, worker, { collectItemErrors: true }));
+    if (!byWorker.has(worker)) byWorker.set(worker, validateWorkerParts(runRoot, worker, { collectItemErrors: true, checkPermLive: false }));
     const replay = byWorker.get(worker);
     const errors = replay.itemErrors.filter(error => error.startsWith(`${key}:`));
     if (errors.length) throw new Error(errors.join('; '));
     const part = exact(replay.parts.filter(part => part.artifact.results.some(item => item.posting_key === key)), `${key}: raw part`);
-    const raw = exact(part.artifact.results.filter(item => item.posting_key === key), `${key}: raw result`);
+    let raw = exact(part.artifact.results.filter(item => item.posting_key === key), `${key}: raw result`);
     if (String(raw.status ?? 'EVALUATED').toUpperCase() !== 'EVALUATED') throw new Error(`${key}: failed raw entry cannot be report-repaired`);
-    const result = structuredClone(exact(replay.results.filter(item => item.posting_key === key), `${key}: replay`));
+    let result = structuredClone(exact(replay.results.filter(item => item.posting_key === key), `${key}: replay`));
+    if (entry.corrected_result) {
+      const file = entry.corrected_result.path;
+      if (fileContent(file) !== entry.corrected_result.content) throw new Error(`${key}: corrected result hash changed`);
+      const corrected = json(file);
+      const allowed = new Set(['eligibility_status', 'eligibility_category', 'eligibility_evidence', 'rationale', 'report']);
+      for (const field of new Set([...Object.keys(raw), ...Object.keys(corrected)])) {
+        const addedUnstatedAuth = field === 'work_authorization' && raw[field] === undefined && !raw.report && corrected.report
+          && JSON.stringify(corrected[field]) === JSON.stringify({ value: 'unstated', quote: null });
+        if (!allowed.has(field) && !addedUnstatedAuth && JSON.stringify(raw[field]) !== JSON.stringify(corrected[field])) throw new Error(`${key}: correction cannot change ${field}`);
+      }
+      if (raw.report && JSON.stringify(raw.report) !== JSON.stringify(corrected.report)) throw new Error(`${key}: existing report edits require explicit wording corrections`);
+      result = { ...applyScoringSafety({ item: corrected, jdText: read(path.join(runRoot, record.jd_path)), threshold: plan.runtime.reporting.full_report_threshold }),
+        semantic_job_key: record.semantic_job_key, posting_context_key: record.posting_context_key };
+      raw = corrected;
+      sources.add(file);
+    }
     if (result.report_decision !== entry.decision) throw new Error(`${key}: replay decision ${result.report_decision} does not match approved ${entry.decision}`);
     const jdFile = path.resolve(runRoot, record.jd_path);
     if (!jdFile.startsWith(`${runRoot}${path.sep}`)) throw new Error(`${key}: source JD escapes run`);
@@ -106,17 +141,37 @@ async function buildPlan({ runRoot, careerRoot, manifest, interfaces }) {
     if (!existsSync(persistedJd) || read(persistedJd) !== jdText) throw new Error(`${key}: persisted source JD differs from the original run`);
     sources.add(persistedJd);
     const originalResult = exact(json(path.join(runRoot, 'results', `${worker}.json`)).results.filter(item => item.posting_key === key), `${key}: original final result`);
-    if (result.report_decision === 'Skip') {
+    if (result.report_decision === 'Skip' && entry.report_number !== null) {
       if (entry.report_number === null || !result.hard_exclusion || !originalResult.report) throw new Error(`${key}: only an existing evidenced hard-stop report may be retired`);
       result.report = { ...structuredClone(originalResult.report), reason: result.rationale, discard_reasons: [result.rationale] };
     }
-    if (!result.report) throw new Error(`${key}: original raw report payload is required; repair never rescores or invents one`);
+    if (!result.report && entry.corrected_result && entry.report_number === null && !originalResult.report) {
+      if (entry.remove_gap || entry.replace_gap || entry.replace_reason) throw new Error(`${key}: absent report cannot have report wording edits`);
+      result.work_authorization = null;
+      selected.push({ entry, record, result, effect: { posting_key: key, operation: 'evaluation-only', report_number: null, report_path: null,
+        old_score: originalResult.score, new_score: result.score, old_decision: originalResult.report_decision, new_decision: result.report_decision,
+        report_allowed: false, hard_exclusion: result.hard_exclusion, corrected_evaluation: result,
+        tracker: { changed: false, note: null } } });
+      continue;
+    }
+    if (!result.report) throw new Error(`${key}: source-locked report payload is required; repair never rescores or invents one`);
     if (entry.remove_gap) {
       const index = result.report.gaps.findIndex(gap => JSON.stringify(gap) === JSON.stringify(entry.remove_gap));
       if (index < 0 || result.report.gaps.filter(gap => JSON.stringify(gap) === JSON.stringify(entry.remove_gap)).length !== 1) throw new Error(`${key}: approved raw gap no longer matches exactly`);
       result.report.gaps.splice(index, 1);
     }
-    validateStructuredReport(result.report, { jdText, eligibilityStatus: result.eligibility_status, schemaVersion: plan.result_schema_version, decision: result.report_decision, label: `${key}: repaired report` });
+    if (entry.replace_gap) {
+      const matches = result.report.gaps.filter(gap => JSON.stringify(gap) === JSON.stringify(entry.replace_gap.original));
+      if (matches.length !== 1) throw new Error(`${key}: approved raw gap no longer matches exactly`);
+      matches[0].explanation = entry.replace_gap.explanation;
+    }
+    if (entry.replace_reason) {
+      if (result.report.reason !== entry.replace_reason.original) throw new Error(`${key}: approved report reason no longer matches exactly`);
+      result.report.reason = entry.replace_reason.replacement;
+    }
+    validateStructuredReport(result.report, { jdText, resumeText: plan.candidate_sources.find(source => source.label === 'cv.md')?.content,
+      requireHiringManagerReview: plan.hiring_manager_review_version === 1,
+      research: result.research, eligibilityStatus: result.eligibility_status, schemaVersion: plan.result_schema_version, decision: result.report_decision, label: `${key}: repaired report` });
     result.work_authorization = deriveReportWorkAuthorization({ item: raw, jdText, candidateText });
     const existingMatches = reportFiles.filter(name => {
       const identity = readReportIdentity(read(path.join(resolveCareerPaths(careerRoot).dataRoot, 'reports', name)));
@@ -133,7 +188,8 @@ async function buildPlan({ runRoot, careerRoot, manifest, interfaces }) {
       if (existsSync(path.join(resolveCareerPaths(careerRoot).dataRoot, 'data/daily-scan-repairs', manifest.run_id, 'report-backups', path.basename(reportPath)))) throw new Error(`${key}: preexisting repair backup requires review`);
       oldText = resolved.original;
       const date = reportDate(resolved.header);
-      if (!date || oldText !== renderScanReportDocument({ result: originalResult, record, number: String(number).padStart(3, '0'), date, runId: manifest.run_id })) throw new Error(`${key}: existing report changed from original rendered evidence`);
+      const permReference = renderPermHistoryReference(permHistory, record, path.join(resolveCareerPaths(careerRoot).dataRoot, reportPath), runRoot);
+      if (!date || oldText !== renderScanReportDocument({ result: originalResult, record, number: String(number).padStart(3, '0'), date, runId: manifest.run_id, permReference, permReportLayout: permHistory?.report_layout })) throw new Error(`${key}: existing report changed from original rendered evidence`);
       oldRow = exact(rows.filter(row => row.report_path === reportPath), `${key}: tracker report binding`);
       assertRowIdentity(oldRow, record, reportPath);
       if (oldRow.status !== 'Evaluated' || oldRow.parsed.pdf !== '❌' || oldRow.notes !== trackerIdentityNote(record)
@@ -146,9 +202,12 @@ async function buildPlan({ runRoot, careerRoot, manifest, interfaces }) {
           || rows.some(row => trackerNoteHasPostingKey(row.notes, key) || row.url === record.primary_url)) throw new Error(`${key}: restore target already has a report or tracker row`);
       if (result.report_allowed !== true || result.hard_exclusion || result.score < plan.runtime.reporting.full_report_threshold) throw new Error(`${key}: restore target is not a candidate`);
       number = reserveNumbers.shift();
-      const date = `${manifest.run_id.slice(0, 4)}-${manifest.run_id.slice(4, 6)}-${manifest.run_id.slice(6, 8)}`;
+      const dateParts = manifest.run_id.match(/^(?:perm-)?(\d{4})(\d{2})(\d{2})-/);
+      if (!dateParts) throw new Error(`${key}: restore requires a dated scan run id`);
+      const date = dateParts.slice(1).join('-');
       reportPath = `reports/${scanReportStem(record, number)}-${date}.md`;
-      newText = renderScanReportDocument({ result, record, number: String(number).padStart(3, '0'), date, runId: manifest.run_id });
+      const permReference = renderPermHistoryReference(permHistory, record, path.join(resolveCareerPaths(careerRoot).dataRoot, reportPath), runRoot);
+      newText = renderScanReportDocument({ result, record, number: String(number).padStart(3, '0'), date, runId: manifest.run_id, permReference, permReportLayout: permHistory?.report_layout });
     }
     const status = result.report_decision === 'Skip' ? 'SKIP' : 'Evaluated';
     const trackerChanged = oldRow !== null && (Number(oldRow.parsed.score.replace('/5', '')) !== result.score || oldRow.status !== status);
@@ -157,27 +216,28 @@ async function buildPlan({ runRoot, careerRoot, manifest, interfaces }) {
     const note = trackerChanged ? `Daily Scan ${manifest.run_id} report audit correction: ${result.rationale || result.report_decision} (original run preserved).` : null;
     selected.push({ entry, record, result, oldText, newText, oldRow, effect: {
       posting_key: key, operation: entry.report_number === null ? 'restore' : 'correct', report_number: number, report_path: reportPath,
-      old_report_sha256: oldText === null ? null : hash(oldText), new_report_sha256: hash(newText),
+      old_report_content: oldText === null ? null : String(oldText), new_report_content: String(newText),
       original_raw_fit_score: raw.fit_score, old_score: originalResult.score, new_score: result.score,
       old_decision: originalResult.report_decision, new_decision: result.report_decision,
       report_allowed: result.report_allowed, hard_exclusion: result.hard_exclusion,
       gap_removal: entry.remove_gap ?? null,
-      tracker: { old_row_sha256: oldRow ? hash(oldRow.raw) : null, status, changed: trackerChanged, note },
+      gap_correction: entry.replace_gap ?? null,
+      corrected_evaluation: entry.corrected_result ? result : null,
+      tracker: { old_row_content: oldRow ? String(oldRow.raw) : null, status, changed: trackerChanged, note },
     } });
   }
-  const sourceHashes = [...sources].sort().map(file => ({ path: file, sha256: fileHash(file) }));
+  const sourceSnapshots = [...sources].sort().map(file => ({ path: file, content: fileContent(file) }));
   const output = {
     schema_version: 1, run_id: manifest.run_id, run_root: runRoot, career_ops_root: careerRoot,
-    manifest_sha256: manifestHash(manifest), tracker_path: trackerFile, tracker_sha256: hash(trackerText),
-    reports_catalog_sha256: hash(JSON.stringify(readdirSync(path.join(resolveCareerPaths(careerRoot).dataRoot, 'reports')).sort())),
-    source_hashes: sourceHashes, effects: selected.map(item => item.effect), original_run_untouched: true,
+    manifest_content: manifestContent(manifest), tracker_path: trackerFile, tracker_content: String(trackerText),
+    reports_catalog_content: String(JSON.stringify(readdirSync(path.join(resolveCareerPaths(careerRoot).dataRoot, 'reports')).sort())),
+    source_snapshots: sourceSnapshots, effects: selected.map(item => item.effect), original_run_untouched: true,
   };
-  output.plan_sha256 = hash(JSON.stringify(output));
-  return { output, selected, trackerFile, plan, run: { root: runRoot, records: selected.map(item => item.record), errors: [] } };
+  return { output, selected, trackerFile, plan, permHistory, run: { root: runRoot, records: selected.map(item => item.record), errors: [] } };
 }
 
 function verifySources(plan) {
-  for (const source of plan.source_hashes) if (!existsSync(source.path) || fileHash(source.path) !== source.sha256) throw new Error(`source changed since repair plan: ${source.path}`);
+  for (const source of plan.source_snapshots) if (!existsSync(source.path) || fileContent(source.path) !== source.content) throw new Error(`source changed since repair plan: ${source.path}`);
 }
 
 async function replaceRow({ trackerFile, expected, replacement, interfaces, ledger = '', onReplaced = () => {} }) {
@@ -195,7 +255,7 @@ async function replaceRow({ trackerFile, expected, replacement, interfaces, ledg
       appendFileSync(ledgerFile, ledger);
       if (read(ledgerFile) !== beforeLedger + ledger) throw new Error('canonical status ledger append postcondition failed');
     }
-    return { before_sha256: hash(beforeLedger), after_sha256: hash(beforeLedger + ledger), appended_sha256: hash(ledger), appended_lines: ledger.split('\n').filter(Boolean).length, appended: ledger };
+    return { before_content: String(beforeLedger), after_content: String(beforeLedger + ledger), appended_content: String(ledger), appended_lines: ledger.split('\n').filter(Boolean).length, appended: ledger };
   } finally { transaction.close(); }
 }
 
@@ -230,11 +290,12 @@ async function applyPlan(value, interfaces, receiptFile) {
     for (const item of selected) {
       verifySources(plan);
       const { effect, record, result } = item;
-      const target = path.join(resolveCareerPaths(careerRoot).dataRoot, effect.report_path);
       const completed = { ...effect, report_written: false, row_written: false, backup: null, row_after: null };
       journal.completed.push(completed); save();
+      if (effect.operation === 'evaluation-only') continue;
+      const target = path.join(resolveCareerPaths(careerRoot).dataRoot, effect.report_path);
       if (effect.operation === 'correct') {
-        if (fileHash(target) !== effect.old_report_sha256) throw new Error(`${effect.posting_key}: report changed before correction`);
+        if (fileContent(target) !== effect.old_report_content) throw new Error(`${effect.posting_key}: report changed before correction`);
         mkdirSync(backupRoot, { recursive: true });
         completed.backup = path.join(backupRoot, path.basename(target));
         writeFileSync(completed.backup, item.oldText, { flag: 'wx' });
@@ -262,10 +323,10 @@ async function applyPlan(value, interfaces, receiptFile) {
             return reserved;
           };
           const rendered = renderScanReports({ runRoot: plan.run_root, careerRoot, date: reportDate(item.newText),
-            includeKeys: [effect.posting_key], writeOutput: false, additionsDir, validated: { run: value.run, results: restoreResults }, reserveBatch });
+            includeKeys: [effect.posting_key], writeOutput: false, additionsDir, validated: { run: value.run, results: restoreResults, permHistory: value.permHistory }, reserveBatch });
           const report = rendered.reports[0];
           completed.report_written = true; save();
-          if (report.report_path !== effect.report_path || fileHash(target) !== effect.new_report_sha256) throw new Error(`${effect.posting_key}: restored report does not match approved plan`);
+          if (report.report_path !== effect.report_path || fileContent(target) !== effect.new_report_content) throw new Error(`${effect.posting_key}: restored report does not match approved plan`);
           const addition = exact(readdirSync(additionsDir).filter(name => name.endsWith('.tsv')), 'restore tracker addition');
           const row = await appendCandidateTracker({ careerRoot, trackerFile, trackerParser: interfaces.trackerParser,
             openTrackerTransaction: interfaces.trackerUtils.openTrackerTransaction, postingKey: effect.posting_key, record, report, additionFile: path.join(additionsDir, addition) });
@@ -280,19 +341,23 @@ async function applyPlan(value, interfaces, receiptFile) {
     if (journal.pipeline_after.exit_code !== 0 || journal.pipeline_after.errors !== 0 || journal.pipeline_after.warnings !== 0) throw new Error(`report repair post-write pipeline failed: exit=${journal.pipeline_after.exit_code}, errors=${journal.pipeline_after.errors}, warnings=${journal.pipeline_after.warnings}`);
     verifySources(plan);
     const finalRows = parseTracker(read(trackerFile), interfaces.trackerParser);
-    for (const item of journal.completed) if (fileHash(path.join(resolveCareerPaths(careerRoot).dataRoot, item.report_path)) !== item.new_report_sha256
-      || finalRows.filter(row => row.raw === item.row_after).length !== 1) throw new Error(`${item.posting_key}: final report/row hash mismatch`);
+    for (const item of journal.completed) {
+      if (item.operation === 'evaluation-only') continue;
+      if (fileContent(path.join(resolveCareerPaths(careerRoot).dataRoot, item.report_path)) !== item.new_report_content
+          || finalRows.filter(row => row.raw === item.row_after).length !== 1) throw new Error(`${item.posting_key}: final report/row hash mismatch`);
+    }
     journal.status = 'COMPLETE'; save();
     return journal;
   } catch (error) {
     for (const completed of [...journal.completed].reverse()) {
       try {
         const item = selected.find(item => item.effect.posting_key === completed.posting_key);
+        if (completed.operation === 'evaluation-only') continue;
         const target = path.join(resolveCareerPaths(careerRoot).dataRoot, completed.report_path);
         // Check the whole owned savepoint before compensating either surface.
         // A user edit to its report must not silently roll its row back first.
-        if (completed.report_written && fileHash(target) !== completed.new_report_sha256) throw new Error('report changed after repair; refusing rollback overwrite');
-        if (completed.report_written && completed.operation === 'correct' && fileHash(completed.backup) !== completed.old_report_sha256) throw new Error('report backup hash mismatch');
+        if (completed.report_written && fileContent(target) !== completed.new_report_content) throw new Error('report changed after repair; refusing rollback overwrite');
+        if (completed.report_written && completed.operation === 'correct' && fileContent(completed.backup) !== completed.old_report_content) throw new Error('report backup hash mismatch');
         if (completed.row_written) {
           if (completed.operation === 'restore') await removeOwnedTrackerRows(trackerFile, [completed.row_after], interfaces.trackerUtils.openTrackerTransaction);
           else {
@@ -300,7 +365,7 @@ async function applyPlan(value, interfaces, receiptFile) {
             const preview = previewRow({ careerRoot, trackerFile, row: current, score: item.effect.old_score, status: item.oldRow.status,
               note: `Daily Scan ${plan.run_id} report repair rolled back after failure; original report restored.`, interfaces });
             completed.rollback_ledger = await replaceRow({ trackerFile, expected: completed.row_after, ...preview, interfaces });
-            completed.rollback_row_sha256 = hash(preview.replacement);
+            completed.rollback_row_content = String(preview.replacement);
           }
         }
         if (completed.report_written) {
@@ -324,7 +389,7 @@ async function applyPlan(value, interfaces, receiptFile) {
   }
 }
 
-export async function repairScanReports({ runRoot, careerRoot, manifest, apply = false, expectedPlanHash = null }) {
+export async function repairScanReports({ runRoot, careerRoot, manifest, apply = false, expectedPlan = null }) {
   runRoot = path.resolve(runRoot); careerRoot = path.resolve(careerRoot);
   validateManifest(manifest, runRoot);
   const interfaces = await loadCareerInterfaces(careerRoot);
@@ -332,17 +397,20 @@ export async function repairScanReports({ runRoot, careerRoot, manifest, apply =
   const receiptFile = repairFile(careerRoot, manifest.run_id);
   if (existsSync(receiptFile)) {
     const prior = json(receiptFile);
-    if (prior.status !== 'COMPLETE' || prior.plan.manifest_sha256 !== manifestHash(manifest)) throw new Error(`existing report repair journal needs review: ${receiptFile}`);
+    if (prior.status !== 'COMPLETE' || prior.plan.manifest_content !== manifestContent(manifest)) throw new Error(`existing report repair journal needs review: ${receiptFile}`);
     const rows = parseTracker(read(prior.plan.tracker_path), interfaces.trackerParser);
-    for (const item of prior.completed) if (fileHash(path.join(resolveCareerPaths(careerRoot).dataRoot, item.report_path)) !== item.new_report_sha256 || !rows.some(row => row.raw === item.row_after)) throw new Error('completed report repair state changed; refusing automatic reapply');
+    for (const item of prior.completed) {
+      if (item.operation === 'evaluation-only') continue;
+      if (fileContent(path.join(resolveCareerPaths(careerRoot).dataRoot, item.report_path)) !== item.new_report_content || !rows.some(row => row.raw === item.row_after)) throw new Error('completed report repair state changed; refusing automatic reapply');
+    }
     return { status: 'ALREADY_APPLIED', receipt_file: receiptFile, plan: prior.plan };
   }
   if (!apply) return { status: 'DRY_RUN', plan: (await buildPlan({ runRoot, careerRoot, manifest, interfaces })).output };
-  if (!expectedPlanHash) throw new Error('--apply requires the reviewed --plan-sha256 from a dry run');
+  if (!expectedPlan) throw new Error('--apply requires the reviewed --plan-file from a dry run');
   const lock = await interfaces.pipelineLock.acquirePipelineLock(path.join(resolveCareerPaths(careerRoot).dataRoot, '.daily-scan-commit'), { timeoutMs: 60_000, staleMs: 10 * 60_000 });
   try {
     const value = await buildPlan({ runRoot, careerRoot, manifest, interfaces });
-    if (value.output.plan_sha256 !== expectedPlanHash) throw new Error('repair plan changed; dry-run and review again');
+    if (JSON.stringify(value.output) !== JSON.stringify(expectedPlan)) throw new Error('repair plan changed; dry-run and review again');
     return await applyPlan(value, interfaces, receiptFile);
   } finally { lock.release(); }
 }
@@ -350,8 +418,8 @@ export async function repairScanReports({ runRoot, careerRoot, manifest, apply =
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const arg = name => { const index = process.argv.indexOf(name); return index < 0 ? null : process.argv[index + 1]; };
   try {
-    if (!arg('--run') || !arg('--career-ops') || !arg('--manifest')) throw new Error('Usage: repair-scan-reports.mjs --run runs/<completed-run> --career-ops <root> --manifest <json> [--apply --plan-sha256 <reviewed hash>]');
+    if (!arg('--run') || !arg('--career-ops') || !arg('--manifest')) throw new Error('Usage: repair-scan-reports.mjs --run runs/<completed-run> --career-ops <root> --manifest <json> [--apply --plan-file <reviewed JSON file>]');
     console.log(JSON.stringify(await repairScanReports({ runRoot: arg('--run'), careerRoot: arg('--career-ops'), manifest: json(arg('--manifest')),
-      apply: process.argv.includes('--apply'), expectedPlanHash: arg('--plan-sha256') }), null, 2));
+      apply: process.argv.includes('--apply'), expectedPlan: arg('--plan-file') ? (json(arg('--plan-file')).plan ?? json(arg('--plan-file'))) : null }), null, 2));
   } catch (error) { console.error(error.stack || error.message); process.exitCode = 1; }
 }

@@ -1,0 +1,16 @@
+{
+  "scope": "Real planner, merger, canonical persistence, compact parser and expansion with fictional candidate/JD data only",
+  "failures": [
+    "New plans omit the review policy; unknown policy versions silently pass",
+    "A report candidate omits either answer, supplies unsupported fields or exceeds the concern limit",
+    "A rejection reason cites another JD, an invented resume quote or a profile/custom-rule source instead of cv.md",
+    "A documented gap has no resume quote; a missing-documentation concern is presented as proven inability",
+    "No evidence-supported rejection reason causes invented concerns instead of an honest empty list",
+    "Multiline quotes and Markdown metacharacters damage the report or escape their evidence context",
+    "Reports below threshold acquire reports or review payloads; new reviews change scores or decisions",
+    "The answers disappear during canonical persistence, parsing or report expansion, or appear twice",
+    "Historical v8 reports are backfilled or fail inspection because they have no review",
+    "Production candidate files, reports, Career-Ops system code or shared dependencies change"
+  ],
+  "acceptance": "A unique .local artifact directory retains CLI logs, assertions, fictional inputs, compact and expanded reports; browser QA uses an isolated data root"
+}

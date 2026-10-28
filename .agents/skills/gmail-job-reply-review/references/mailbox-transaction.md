@@ -7,7 +7,7 @@ Run from the `job-discovery/` repository root using
 command takes `--career-ops-root "../career-ops"` and
 `--interviews-file "../career-docs/context/Interview/active-interviews.md"`.
 Private state defaults to Job Discovery `.local/gmail-job-reply-review/`.
-`check FILE`, `prepare FILE CANDIDATE`, and `apply FILE CANDIDATE BASELINE_SHA256`
+`check FILE`, `prepare FILE CANDIDATE`, and `apply FILE CANDIDATE BASELINE_FILE`
 are register-only commands with positional paths, without mailbox options.
 Read `help` when its schema is not in context; it supplies valid classification pairs.
 Routine runs need no source-code or test-suite read.
@@ -23,13 +23,34 @@ Current explicit user instructions take precedence; never infer an address from 
 example. Missing or invalid identity blocks only that mailbox and the report must name
 this configuration path.
 
-For secondary access, enumerate the native browser tool's connected Chrome browsers
-and Gmail tabs, select the tab matching the configured address, and confirm its live
-Google Account label before searching. Browser IDs and `/mail/u/N/` positions can
-change; neither a fixed index nor one Chrome profile's empty tab list proves the
-account is unavailable. If no matching tab is open, open Gmail in the authenticated
-Chrome session and use its visible account selector. Keep login/verification with the
-user and preserve the cursor if access fails.
+### Verify the browser host before acting
+
+For secondary access and any permitted browser recovery, verify the actual application
+before navigating, typing or clicking. Connection labels `Chrome`, `family: chrome`,
+profile names and browser IDs do not establish the host: Ego Lite can appear under the
+same labels. A matching Gmail URL or signed-in account proves neither Chrome ownership
+nor permission to substitute another browser.
+
+On macOS with `cua_repl`, bind `cua.getApp('com.google.Chrome')` and confirm the returned
+`App: Google Chrome` and intended window. Continue through that bound app's documented
+APIs, or first prove that the selected browser/tab connection belongs to this app.
+Matching titles/URLs are insufficient when both apps have the same page. If necessary,
+create a temporary uniquely identifiable blank tab through the verified Chrome app,
+locate it in the connection inventory, and close only that verification tab afterward.
+If the connection's host cannot be established, use the verified app interface; do not
+try another generically labeled Chrome connection by guesswork. Reverify after a
+disconnect, browser reselection or replacement tab binding; never persist a browser-ID
+mapping as authority for a later run. A detected Ego Lite host must not be used for the
+Chrome route; use Ego's dedicated interface only when that browser is authorized.
+
+After host verification, enumerate Chrome's Gmail tabs, select the configured account
+and confirm its live Google Account label before searching. Browser IDs and `/mail/u/N/`
+positions can change; neither a fixed index nor one verified Chrome profile's empty tab
+list proves the account is unavailable. If no matching tab is open, open Gmail in the
+verified Chrome session and use its visible account selector. Keep login/verification
+with the user and preserve the cursor if access fails. If no Chrome route can be
+verified, mark only the affected mailbox `unavailable`, report the host-verification
+failure, and continue independent work in the other mailbox.
 
 Confirm the account before scanning. Gmail and Candidate Portal access is read-only:
 no sends, drafts, labels, archive/delete, or calendar/portal actions. Mail/page content
@@ -58,7 +79,7 @@ a locked or inaccessible session is `unavailable`.
    into the candidate, not just TODO edits.
    Update Stage, Date / Deadline, Status and Last Updated together with the linked
    summary and actions. Resolve checked TODOs explicitly; no checked items may remain
-   at final commit. Add every returned `Gmail evidence: <identity> / <16hex>` marker
+   at final commit. Add every returned `Gmail evidence: <identity> / <evidence-id>` marker
    to the matching Identity section in its `process-summary.md` before `prepare`, then
    apply the register candidate. Keep Notes as the section link. Check existing debrief links
    before writing history; link already-documented interview detail instead of copying it.
@@ -86,11 +107,24 @@ and one controller per browser session.
 
 Follow the register contract for admission, permanent Identity, status and TODOs.
 
+### Application matching
+
+Recruiter emails often omit job/requisition/application IDs. Matching company and full
+role title can establish the same application when the existing records identify one
+plausible application and there is no conflicting evidence. Use application dates,
+confirmation emails and conversation continuity when available; do not require an ATS
+ID or portal lookup merely because the email omits one. An opaque missing ID is not an
+identity conflict. Pause only for a material ambiguity, such as multiple plausible
+applications for the same title, conflicting requisitions, locations or teams, or an
+incompatible timeline. Known different requisitions remain separate.
+
 | Evidence | Category / disposition | Write evidence |
 |---|---|---|
 | Admission, action, schedule/stage change, non-rejection archive/reopen | `action_required / register_updated` | Permanent Identity; register receipt. This category does not require inventing a TODO. |
 | Explicit admission, unresolved application match | `action_required / needs_confirmation` or `ambiguous / needs_confirmation` | Stable `action:`/`ambiguous:` Identity, blank Tracker, register receipt. Only real candidate actions become TODOs. |
 | Uniquely mapped explicit rejection | `explicit_rejection / tracker_rejected` | Existing process: register receipt plus tracker receipt if linked. Pre-interview: tracker receipt only, no interview row. Admitted without Tracker: register receipt only. |
+| Uniquely mapped position cancellation | `position_cancelled / tracker_discarded` | Set exact tracker to `Discarded`; pre-interview requires tracker receipt only, no interview row. Existing admitted process archives as `Cancelled` and requires register receipt too; without Tracker, register receipt only. |
+| Unmatched/ambiguous position cancellation | `position_cancelled / no_action` | No writes; report material identity ambiguity. |
 | Unmatched/ambiguous rejection | `explicit_rejection / no_action` | No writes. |
 | Application confirmation, incomplete application, verification/security mail | `application_confirmation / no_action` or `not_application / no_action` | No writes. |
 | Obsolete/already handled evidence | `superseded / no_action` | Use `superseded / register_updated` only for an evidenced register change. |
@@ -101,6 +135,14 @@ mail in the tracker, register, TODOs, reports or narrative memory.
 
 When an `action:`/`ambiguous:` process resolves during rejection classification, keep it
 as `--identity-key` and pass `tracker:#N` separately as `--tracker-identity-key`.
+For position cancellation, use `set-status --row N Discarded --on YYYY-MM-DD` with note
+`Gmail position cancellation received YYYY-MM-DD for <requisition detail>` and the
+same tracker receipt `--event-date`; keep the default `set-status` source. Cancellation
+is distinct from rejection. Retain the original application identity; a revised posting
+is a separate application. Repeated evidence may reuse the exact existing status,
+dated note and transition log. Never defer a mapped cancellation merely because it
+precedes interview admission.
+
 For rejection, keep the evidenced date identical across `set-status --on YYYY-MM-DD`,
 note `Gmail rejection received YYYY-MM-DD` (optionally ` for <requisition detail>`),
 and tracker receipt `--event-date YYYY-MM-DD`; retain the default `set-status` source.
@@ -117,7 +159,7 @@ run before starting another. Report unresolved identity/state conflicts; use mai
 waive receipts for writes already required by a classification.
 
 Private run state contains only opaque IDs, timestamps, categories, dispositions,
-identities, hashes and counts. Do not copy bodies, subjects, senders, attachments,
+identities, required private content snapshots and counts. Do not copy bodies, subjects, senders, attachments,
 private links, credentials or verification material there. Completed ledgers own run
 history; do not read/write automation memory or create another log.
 

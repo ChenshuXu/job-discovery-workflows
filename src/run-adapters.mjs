@@ -1,14 +1,14 @@
 #!/usr/bin/env node
-import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadRunProfile } from './adapter-registry.mjs';
 import { observeScanUsage, recordScanSourceAttempt } from './scan-usage.mjs';
+import { compactSummary } from './scan-summary.mjs';
 
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const digestFile = file => createHash('sha256').update(readFileSync(file)).digest('hex');
+const readConfigContent = file => readFileSync(file, 'utf8');
 
 function commandFor(discoveryRoot, runRoot, definition) {
   if (!Array.isArray(definition.command) || !definition.command.length || !definition.config) throw new Error('enabled adapter lacks its frozen command/config');
@@ -66,11 +66,20 @@ export function archiveAttempt(runRoot, adapterId) {
   return path.relative(runRoot, archived);
 }
 
-function runOne({ adapterId, definition, discoveryRoot, runRoot }) {
+function runOne({ adapterId, definition, discoveryRoot, runRoot, attempt }) {
   const argv = commandFor(discoveryRoot, runRoot, definition);
   const startedAt = new Date();
   const started = performance.now();
-  const result = spawnSync(argv[0], argv.slice(1), { cwd: discoveryRoot, env: process.env, stdio: 'inherit' });
+  mkdirSync(path.join(runRoot, 'adapter-attempts'), { recursive: true });
+  const stdoutPath = path.join('adapter-attempts', `${adapterId}-attempt-${attempt}.stdout.log`);
+  const stderrPath = path.join('adapter-attempts', `${adapterId}-attempt-${attempt}.stderr.log`);
+  const handles = [];
+  let result;
+  try {
+    handles.push(openSync(path.join(runRoot, stdoutPath), 'wx', 0o600));
+    handles.push(openSync(path.join(runRoot, stderrPath), 'wx', 0o600));
+    result = spawnSync(argv[0], argv.slice(1), { cwd: discoveryRoot, env: process.env, stdio: ['ignore', ...handles] });
+  } finally { for (const handle of handles) closeSync(handle); }
   const exitCode = result.status ?? 1;
   observeScanUsage(() => recordScanSourceAttempt(runRoot, { adapter_id: adapterId, started_at: startedAt.toISOString(), completed_at: new Date().toISOString(), wall_ms: Math.round(performance.now() - started), exit_code: exitCode }));
   let summary;
@@ -80,6 +89,8 @@ function runOne({ adapterId, definition, discoveryRoot, runRoot }) {
     argv,
     exit_code: exitCode,
     status: summary?.status ?? 'MISSING',
+    stdout_path: stdoutPath,
+    stderr_path: stderrPath,
     ...(result.error ? { error: result.error.message } : {}),
   };
 }
@@ -94,26 +105,35 @@ function requireBaselineProfile(runRoot) {
   return loadRunProfile(runRoot);
 }
 
-export function runAdapters({ runRoot, discoveryRoot = PROJECT_ROOT, retry } = {}) {
+export function runAdapters({ runRoot, discoveryRoot = PROJECT_ROOT, retry, retryAuthorization } = {}) {
   const root = path.resolve(runRoot);
   const discovery = path.resolve(discoveryRoot);
   if (path.dirname(root) !== path.join(discovery, 'runs')) throw new Error(`run must be directly under ${path.join(discovery, 'runs')}`);
+  if (existsSync(path.join(root, 'receipt.json')) || existsSync(path.join(root, 'rendered-reports.json'))) throw new Error('source acquisition is closed for this run');
   const profile = requireBaselineProfile(root);
   if (retry && !profile.adapters.includes(retry)) throw new Error(`retry adapter is not enabled in this run: ${retry}`);
 
   for (const adapterId of profile.adapters) {
     const definition = profile.adapter_definitions[adapterId];
-    if (!definition.command || !definition.config || !definition.config_sha256) throw new Error(`${adapterId}: baseline lacks frozen command/config`);
+    if (!definition.command || !definition.config || !definition.config_content) throw new Error(`${adapterId}: baseline lacks frozen command/config`);
     const configFile = path.resolve(discovery, definition.config);
-    if (!existsSync(configFile) || digestFile(configFile) !== definition.config_sha256) throw new Error(`${adapterId}: source config changed after baseline capture`);
+    if (!existsSync(configFile) || readConfigContent(configFile) !== definition.config_content) throw new Error(`${adapterId}: source config changed after baseline capture`);
   }
 
   let archivedAttempt = null;
+  let authorization = null;
+  if (retryAuthorization) {
+    authorization = JSON.parse(readFileSync(path.resolve(retryAuthorization), 'utf8'));
+    if (!retry || authorization.run_id !== path.basename(root) || authorization.adapter !== retry
+        || authorization.authorized_by !== 'user' || typeof authorization.instruction !== 'string' || !authorization.instruction.trim()) {
+      throw new Error('retry authorization must contain the explicit user instruction for this run and adapter');
+    }
+  }
   if (retry) {
     let priorSummary;
     try { priorSummary = summaryFor(root, retry); } catch {}
     if (priorSummary?.status === 'SUCCESS') throw new Error(`${retry}: successful source is not retryable`);
-    if (priorSummary?.status === 'FAILED' && priorSummary.retryable === false) throw new Error(`${retry}: source failure is explicitly non-retryable`);
+    if (priorSummary?.status === 'FAILED' && priorSummary.retryable === false && !authorization) throw new Error(`${retry}: source failure is explicitly non-retryable`);
     archivedAttempt = archiveAttempt(root, retry);
   }
 
@@ -126,7 +146,7 @@ export function runAdapters({ runRoot, discoveryRoot = PROJECT_ROOT, retry } = {
       systemErrors.push(`${adapterId}: source artifacts already exist; use --retry for an eligible failure`);
       continue;
     }
-    const result = runOne({ adapterId, definition: profile.adapter_definitions[adapterId], discoveryRoot: discovery, runRoot: root });
+    const result = runOne({ adapterId, definition: profile.adapter_definitions[adapterId], discoveryRoot: discovery, runRoot: root, attempt: retry ? 2 : 1 });
     commandResults.push(result);
     if (result.exit_code !== 0 && result.status === 'SUCCESS') systemErrors.push(`${adapterId}: command exited ${result.exit_code} but summary reports SUCCESS`);
   }
@@ -140,16 +160,25 @@ export function runAdapters({ runRoot, discoveryRoot = PROJECT_ROOT, retry } = {
   if (successful.length < profile.minimum_successful_adapters) {
     systemErrors.push(`daily profile requires ${profile.minimum_successful_adapters} successful adapter(s), got ${successful.length}`);
   }
-  if (systemErrors.length) throw new Error([...new Set(systemErrors)].join('\n'));
-  return {
-    status: successful.length === profile.adapters.length ? 'SUCCESS' : 'DEGRADED',
+  const output = {
+    status: systemErrors.length ? 'FAILED' : successful.length === profile.adapters.length ? 'SUCCESS' : 'DEGRADED',
     profile_id: profile.profile_id,
     adapters: profile.adapters,
     successful_adapters: successful,
     minimum_successful_adapters: profile.minimum_successful_adapters,
     ...(retry ? { retried_adapter: retry, archived_attempt: archivedAttempt } : {}),
+    ...(authorization ? { retry_authorization: authorization } : {}),
     command_results: commandResults,
+    outcomes,
+    system_errors: [...new Set(systemErrors)],
   };
+  const artifact = path.join(root, 'source-run.json');
+  writeFileSync(artifact + '.tmp', JSON.stringify(output, null, 2) + '\n', { mode: 0o600 });
+  renameSync(artifact + '.tmp', artifact);
+  if (systemErrors.length) {
+    const error = new Error(output.system_errors.join('\n')); error.artifact = artifact; throw error;
+  }
+  return output;
 }
 
 function option(name) {
@@ -168,10 +197,20 @@ if (isCli) {
     if (!run) throw new Error('Usage: node src/run-adapters.mjs --run runs/<run-id> [--dry-run | --retry <adapter-id>]');
     const dryRun = process.argv.includes('--dry-run');
     const retry = option('--retry');
+    const retryAuthorization = option('--retry-authorization');
     if (dryRun && retry) throw new Error('--dry-run and --retry cannot be combined');
+    if (retryAuthorization && (!retry || dryRun)) throw new Error('--retry-authorization requires --retry');
     const result = dryRun
       ? previewAdapterCommands({ runRoot: run })
-      : runAdapters({ runRoot: run, retry });
-    console.log(JSON.stringify(result, null, 2));
-  } catch (error) { console.error(error.stack || error.message); process.exitCode = 1; }
+      : runAdapters({ runRoot: run, retry, retryAuthorization });
+    console.log(JSON.stringify(dryRun || process.argv.includes('--full') ? result : compactSummary({ stage: 'sources', status: result.status,
+      artifact: path.join(path.resolve(run), 'source-run.json'), counts: { successful: result.successful_adapters.length, required: result.minimum_successful_adapters,
+        adapters: Object.fromEntries(result.outcomes.map(s => [s.adapter, { status: s.status, jobs: s.markdown_jobs, errors: s.errors }])) },
+      errors: result.outcomes.filter(s => s.status === 'FAILED').map(s => `${s.adapter}: ${s.status}; errors=${s.errors}; retryable=${s.retryable ?? 'unclassified'}; see sources/${s.adapter}/summary.json`),
+      errorCount: result.outcomes.reduce((n, s) => n + s.errors, 0) })));
+  } catch (error) {
+    if (error.artifact && !process.argv.includes('--full')) console.error(JSON.stringify(compactSummary({ stage: 'sources', status: 'FAILED', artifact: error.artifact, errors: error.message.split('\n') })));
+    else console.error(error.stack || error.message);
+    process.exitCode = 1;
+  }
 }

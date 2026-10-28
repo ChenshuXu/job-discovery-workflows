@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "scope": "Local PERM download/import/offline query and independent preview; no Daily Scan or Career-Ops writes",
+  "failure_modes": [
+    "Missing, HTML, truncated XLSX/layout files",
+    "Missing/duplicate required headers, unknown statuses, empty data sheets",
+    "Missing or invalid dates; negative durations are excluded but cases retained",
+    "Duplicate cumulative quarters for a fiscal year; FY2025 requires full Q4",
+    "Duplicate cases across releases; latest decision then release wins",
+    "Conflicting same-release same-date case rows block publication",
+    "Suffix-only, substring, parent/subsidiary and same-name/different-location matches must not silently aggregate",
+    "Missing cache; invalid current/manifest/database; offline query must remain read-only",
+    "Concurrent writer lock; failed imports must preserve previous pointer",
+    "Data paths through symlinks or outside checkout are rejected",
+    "Unverified scored-company selection cannot generate a preview",
+    "Official HTTPS hosts/redirects only; download signatures and length checked",
+    "Alias duplicate normalized source names, invalid statuses/scopes, empty verified targets, invalid target names/locations, and dangling evidence IDs must fail before statistics",
+    "Missing/out-of-bounds/symlink evidence, absent quotes or invalid URLs/dates must fail closed",
+    "Posting-scoped aliases require the original verified posting key and URL; same short brand with another job cannot inherit statistics",
+    "Multiple verified target entities remain separate; no implicit parent/subsidiary aggregate",
+    "Saved preview freezes registry and evidence; later changes cannot reinterpret or overwrite it",
+    "Company-history identities must use company scope; absent disclosures must not require an invented address, while existing records still require explicit locations"
+  ],
+  "acceptance": [
+    "Synthetic two-year workbook import yields hand-calculated four-status counts, rates, quartiles and complete dimension groups",
+    "Cross-release correction deduplicates; latest-decision-year attribution retained",
+    "Exact legal matches only; trade-only candidates require independent identity evidence; suffix candidates remain suggestions; ambiguous names have no statistics",
+    "Every failure preserves current pointer and prior offline query",
+    "Preview validates scored evidence presence and emits JSON, Markdown, manifest and selection",
+    "All fixtures and command/stdout/stderr/assertion evidence remain in isolated reproducible artifact",
+    "Evidence-backed alias query respects company or original posting scope; disclosed records always need explicit target locations",
+    "Alias preview freezes registry/evidence content while preserving original company and posting provenance",
+    "All registry corruption cases fail before trusted statistics and retain existing previews unchanged",
+    "Import, aliases, query and preview work without content checksums; output excludes legacy checksum fields while source quotes and posting scope remain enforced"
+  ]
+}

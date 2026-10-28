@@ -1,45 +1,48 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import { validateDailyScanRuntime, workerIdsForRuntime } from './daily-scan-runtime.mjs';
 import { isAllowedLocationDecision } from './location-scope.mjs';
 import { validateStructuredReport, renderCompactReport } from './scan-report-contract.mjs';
 import { applyScoringSafety, deriveReportWorkAuthorization, RESULT_SCHEMA_VERSION } from './scoring-safety.mjs';
 import { validateScoringInputs } from './scoring-inputs.mjs';
+import { validatePermRun } from './perm-employers.mjs';
+import { validateResearch } from './scoring-research.mjs';
+import { validateChecks } from './validation-diagnostics.mjs';
+import { compactSummary } from './scan-summary.mjs';
 
 function readJson(file) {
   try { return JSON.parse(readFileSync(file, 'utf8')); }
   catch (error) { throw new Error(`invalid JSON ${file}: ${error.message}`); }
 }
 
-const digest = value => createHash('sha256').update(value).digest('hex');
 const canonical = value => Array.isArray(value) ? value.map(canonical)
   : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
-const evaluationHash = item => digest(JSON.stringify(canonical(item)));
+const evaluationContent = item => String(JSON.stringify(canonical(item)));
 const evidenceFile = (root, worker) => path.join(root, 'results', `${worker}.validation-evidence.json`);
 
 function validationContext(root, worker, plan) {
   const moduleRoot = path.dirname(fileURLToPath(import.meta.url));
   return {
     schema_version: 1, run_id: plan.run_id, worker,
-    assignments_sha256: digest(readFileSync(path.join(root, 'assignments.json'))),
-    acquisition_sha256: digest(readFileSync(path.join(root, 'acquisition.json'))),
-    validator_sha256: digest(Buffer.concat(['merge-worker-results.mjs', 'scoring-safety.mjs', 'scan-report-contract.mjs', 'scoring-inputs.mjs']
+    assignments_content: String(readFileSync(path.join(root, 'assignments.json'))),
+    acquisition_content: String(readFileSync(path.join(root, 'acquisition.json'))),
+    validator_content: String(Buffer.concat(['merge-worker-results.mjs', 'scoring-safety.mjs', 'scan-report-contract.mjs', 'scoring-inputs.mjs', 'scoring-research.mjs', 'validation-diagnostics.mjs']
       .map(name => readFileSync(path.join(moduleRoot, name))))),
   };
 }
 
 function validateRejectedAttempts(key, evidence) {
   const attempts = evidence?.attempts;
-  if (!Array.isArray(attempts) || !attempts.length || !(evidence.jd_sha256 === null || /^[a-f0-9]{64}$/.test(evidence.jd_sha256 ?? ''))
+  if (!Array.isArray(attempts) || !attempts.length || !(evidence.jd_content === null || typeof evidence.jd_content === 'string')
       || attempts.some(attempt => !attempt?.rejected_result || Array.isArray(attempt.rejected_result)
         || attempt.rejected_result.posting_key !== key
         || String(attempt.rejected_result.status ?? 'EVALUATED').toUpperCase() !== 'EVALUATED'
-        || attempt.evaluation_sha256 !== evaluationHash(attempt.rejected_result)
+        || attempt.evaluation_content !== evaluationContent(attempt.rejected_result)
         || typeof attempt.error !== 'string' || !attempt.error.startsWith(`${key}:`))
-      || new Set(attempts.map(attempt => attempt.evaluation_sha256)).size !== attempts.length) {
+      || new Set(attempts.map(attempt => attempt.evaluation_content)).size !== attempts.length) {
     throw new Error(`${key}: invalid validation evidence`);
   }
   return attempts;
@@ -74,25 +77,27 @@ function validateForCli(runDir, worker, options = {}) {
     let changed = false;
     for (const failure of itemFailures) {
       const key = failure.posting_key;
-      const entry = evidence.failures[key] ??= { jd_sha256: failure.jd_sha256, attempts: [] };
-      if (entry.jd_sha256 !== failure.jd_sha256) throw new Error(`${key}: validation JD evidence changed`);
-      const hash = evaluationHash(failure.rejected_result);
-      if (!entry.attempts.some(attempt => attempt.evaluation_sha256 === hash)) {
-        entry.attempts.push({ evaluation_sha256: hash, error: failure.error, rejected_result: failure.rejected_result });
+      const entry = evidence.failures[key] ??= { jd_content: failure.jd_content, attempts: [] };
+      if (entry.jd_content !== failure.jd_content) throw new Error(`${key}: validation JD evidence changed`);
+      const hash = evaluationContent(failure.rejected_result);
+      if (!entry.attempts.some(attempt => attempt.evaluation_content === hash)) {
+        entry.attempts.push({ evaluation_content: hash, error: failure.error, rejected_result: failure.rejected_result });
         changed = true;
       }
     }
     if (changed) {
       for (const part of value.parts) {
-        if (evaluationHash(readJson(part.file)) !== evaluationHash(part.artifact)) throw new Error(`${worker}: part changed during validation`);
+        if (evaluationContent(readJson(part.file)) !== evaluationContent(part.artifact)) throw new Error(`${worker}: part changed during validation`);
       }
       if ((existsSync(file) ? readFileSync(file, 'utf8') : null) !== before) throw new Error(`${worker}: validation evidence changed concurrently`);
       const staged = `${file}.tmp-${process.pid}`;
-      writeFileSync(staged, `${JSON.stringify(evidence, null, 2)}\n`, { flag: 'wx' });
+      writeFileSync(staged, `${JSON.stringify(evidence, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
       renameSync(staged, file);
     }
   }
-  if (value.itemErrors.length) throw new Error(value.itemErrors.join('\n'));
+  if (value.itemErrors.length) {
+    const error = new Error(value.itemErrors.join('\n')); error.validation = value; throw error;
+  }
   return value;
 }
 
@@ -101,14 +106,16 @@ export function validateWorkerParts(runDir, worker, options = {}) {
   const planFile = path.join(root, 'assignments.json');
   const plan = readJson(planFile);
   plan.runtime = validateDailyScanRuntime(plan.runtime, `${planFile} runtime`);
-  const historical = options.allowLegacy === true && [4, 5].includes(plan.result_schema_version);
+  const historical = options.allowLegacy === true && [4, 5, 6, 7].includes(plan.result_schema_version);
   const legacy = historical && plan.result_schema_version === 4;
-  if (plan.result_schema_version !== RESULT_SCHEMA_VERSION && !historical) throw new Error(`${planFile}: result_schema_version must be ${RESULT_SCHEMA_VERSION}; historical v4/v5 requires explicit read-only inspection`);
-  const candidateText = validateScoringInputs(plan, { allowLegacy: historical });
+  if (plan.result_schema_version !== RESULT_SCHEMA_VERSION && !historical) throw new Error(`${planFile}: result_schema_version must be ${RESULT_SCHEMA_VERSION}; historical v4/v5/v6/v7 requires explicit read-only inspection`);
+  if (plan.hiring_manager_review_version !== undefined && plan.hiring_manager_review_version !== 1) throw new Error(`${planFile}: unsupported hiring_manager_review_version`);
+  const candidateText = validateScoringInputs(plan, { allowLegacy: options.allowLegacy === true, checkPermLive: options.checkPermLive !== false });
   if (!workerIdsForRuntime(plan.runtime).includes(worker)) throw new Error(`invalid worker id: ${worker}`);
   const assigned = (plan.assignments?.[worker] ?? []).map(String);
   const acquisition = readJson(path.join(root, 'acquisition.json'));
   const records = new Map((acquisition.acquired ?? []).map(record => [String(record.primary_key), record]));
+  validatePermRun(root, acquisition, [...records.values()]);
   const recorded = existsSync(evidenceFile(root, worker)) ? readJson(evidenceFile(root, worker)) : null;
   const batchSize = plan.runtime.scheduler.batch_size;
   const parts = [];
@@ -116,6 +123,7 @@ export function validateWorkerParts(runDir, worker, options = {}) {
   const rawResultKeys = [];
   const itemErrors = [];
   const itemFailures = [];
+  const itemDiagnostics = [];
   const expectedParts = Math.ceil(assigned.length / batchSize);
   const throughPart = options.throughPart == null ? expectedParts : Number(options.throughPart);
   const minimumParts = expectedParts === 0 && options.throughPart == null ? 0 : 1;
@@ -131,7 +139,7 @@ export function validateWorkerParts(runDir, worker, options = {}) {
     if (JSON.stringify(returnedKeys) !== JSON.stringify(expectedKeys)) throw new Error(`${worker}: part ${index + 1} keys do not match assigned batch`);
     for (const item of artifact.results) {
       let canRecordFailure = false;
-      let jdHash = null;
+      let jdContent = null;
       try {
         const key = String(item.posting_key ?? '');
         const record = records.get(key);
@@ -157,22 +165,22 @@ export function validateWorkerParts(runDir, worker, options = {}) {
             const attempts = validateRejectedAttempts(key, item.validation_evidence);
             const last = attempts.at(-1);
             if (item.validation_evidence.run_id !== plan.run_id || item.validation_evidence.worker !== worker
-                || attempts.length !== item.attempts || last.evaluation_sha256 !== evaluationHash(item.rejected_result)
+                || attempts.length !== item.attempts || last.evaluation_content !== evaluationContent(item.rejected_result)
                 || last.error !== item.error) throw new Error(`${key}: invalid terminal validation evidence`);
             if (!priorEvaluation
-                || evaluationHash(priorEvaluation) !== evaluationHash({ jd_sha256: item.validation_evidence.jd_sha256, attempts })) {
+                || evaluationContent(priorEvaluation) !== evaluationContent({ jd_content: item.validation_evidence.jd_content, attempts })) {
               throw new Error(`${key}: terminal validation evidence does not match recorded failures`);
             }
             {
-              const contextFields = ['schema_version', 'run_id', 'worker', 'assignments_sha256', 'acquisition_sha256', 'validator_sha256'];
+              const contextFields = ['schema_version', 'run_id', 'worker', 'assignments_content', 'acquisition_content', 'validator_content'];
               const jdFile = path.join(root, record.jd_path);
-              const currentJdHash = existsSync(jdFile) ? digest(readFileSync(jdFile)) : null;
+              const currentJdContent = existsSync(jdFile) ? String(readFileSync(jdFile)) : null;
               if (contextFields.some(field => recorded?.[field] !== item.validation_evidence[field])
                   || recorded.schema_version !== 1 || recorded.run_id !== plan.run_id || recorded.worker !== worker
-                  || recorded.assignments_sha256 !== digest(readFileSync(planFile))
-                  || recorded.acquisition_sha256 !== digest(readFileSync(path.join(root, 'acquisition.json')))
-                  || !/^[a-f0-9]{64}$/.test(recorded.validator_sha256 ?? '')
-                  || currentJdHash !== item.validation_evidence.jd_sha256) {
+                  || recorded.assignments_content !== String(readFileSync(planFile))
+                  || recorded.acquisition_content !== String(readFileSync(path.join(root, 'acquisition.json')))
+                  || typeof recorded.validator_content !== 'string'
+                  || currentJdContent !== item.validation_evidence.jd_content) {
                 throw new Error(`${key}: terminal validation evidence context or JD changed`);
               }
             }
@@ -191,21 +199,40 @@ export function validateWorkerParts(runDir, worker, options = {}) {
         if (!existsSync(jdFile)) throw new Error(`${key}: JD file missing`);
         const threshold = plan.runtime.reporting.full_report_threshold;
         const jdText = readFileSync(jdFile, 'utf8');
-        jdHash = digest(jdText);
-        const derived = applyScoringSafety({ item, jdText, threshold });
+        jdContent = String(jdText);
+        if (plan.research_version !== undefined && ![0, 1].includes(plan.research_version)) throw new Error(`${key}: unsupported research version`);
+        let derived, workAuthorization;
+        validateChecks({
+          research: () => {
+            if (plan.research_version === 0 && Object.hasOwn(item, 'research')) throw new Error(`${key}: external research is disabled for this plan`);
+            if (plan.research_version === 1 || item.research !== undefined) validateResearch(item.research, {
+              postingKey: key, company: record.company, notBefore: plan.research_not_before, report: item.report,
+            });
+          },
+          scoring: () => { derived = applyScoringSafety({ item, jdText, threshold }); },
+          report: () => {
+            if (item.report && typeof item.report === 'object' && !Array.isArray(item.report)) validateStructuredReport(item.report, {
+              jdText, resumeText: plan.candidate_sources.find(source => source.label === 'cv.md')?.content,
+              requireHiringManagerReview: plan.hiring_manager_review_version === 1, research: item.research,
+              eligibilityStatus: item.eligibility_status, schemaVersion: plan.result_schema_version,
+              decision: derived?.report_decision, label: `${key}: report`,
+            });
+          },
+          work_authorization: () => {
+            if (item.report || item.work_authorization !== undefined) workAuthorization = deriveReportWorkAuthorization({ item, jdText, candidateText });
+          },
+        });
         const result = { ...derived, semantic_job_key: identity.semantic_job_key, posting_context_key: identity.posting_context_key };
         if (result.report_allowed !== Boolean(result.report)) throw new Error(`${key}: report payload must exist exactly for report candidates`);
-        if (result.report_allowed) {
-          validateStructuredReport(result.report, { jdText, eligibilityStatus: item.eligibility_status, schemaVersion: plan.result_schema_version, decision: result.report_decision, label: `${key}: report` });
-          result.work_authorization = deriveReportWorkAuthorization({ item, jdText, candidateText });
-          renderCompactReport({ result, record, runId: plan.run_id });
-        }
-        if (!result.report_allowed && item.work_authorization !== undefined) result.work_authorization = deriveReportWorkAuthorization({ item, jdText, candidateText });
+        if (workAuthorization !== undefined) result.work_authorization = workAuthorization;
+        if (result.report_allowed) renderCompactReport({ result, record, runId: plan.run_id });
         results.push(result);
       } catch (error) {
         if (!options.collectItemErrors) throw error;
         itemErrors.push(error.message);
-        if (canRecordFailure) itemFailures.push({ posting_key: item.posting_key, jd_sha256: jdHash, error: error.message, rejected_result: item });
+        itemDiagnostics.push(...(error.issues ?? [{ field: 'result', code: 'INVALID_RESULT', message: error.message }])
+          .map(issue => ({ ...issue, posting_key: item.posting_key })));
+        if (canRecordFailure) itemFailures.push({ posting_key: item.posting_key, jd_content: jdContent, error: error.message, rejected_result: item });
       }
     }
     parts.push({ file, artifact });
@@ -213,7 +240,37 @@ export function validateWorkerParts(runDir, worker, options = {}) {
   const unique = new Set(rawResultKeys);
   const validatedAssigned = assigned.slice(0, Math.min(throughPart * batchSize, assigned.length));
   if (unique.size !== rawResultKeys.length || JSON.stringify(rawResultKeys) !== JSON.stringify(validatedAssigned)) throw new Error(`${worker}: part union has duplicate, omitted, or out-of-order keys`);
-  return { root, plan, assigned, parts, results, itemErrors, itemFailures };
+  return { root, plan, assigned, parts, results, itemErrors, itemFailures, itemDiagnostics };
+}
+
+function diagnosticOutput(error, run, worker, full) {
+  const value = error.validation;
+  if (!value) {
+    const artifact = run && path.join(path.resolve(run), 'assignments.json');
+    if (!full && artifact && existsSync(artifact)) return compactSummary({ stage: 'worker-validation', status: 'FAILED', artifact, errors: [error.message] });
+    return { status: 'FAILED', diagnostics: [{ posting_key: null, field: 'run', code: 'INVALID_RUN', message: full ? error.message : [...error.message].slice(0, 500).join('') }],
+      truncated: !full && [...error.message].length > 500 };
+  }
+  const ledgerPath = evidenceFile(value.root, worker);
+  const ledger = existsSync(ledgerPath) ? readJson(ledgerPath) : null;
+  const diagnostics = value.itemDiagnostics.map(issue => {
+    const count = ledger?.failures?.[issue.posting_key]?.attempts.length ?? 0;
+    return { ...issue, field: issue.field.replace(`${issue.posting_key}: `, ''),
+      recorded_attempts: count, remaining_attempts: Math.max(0, value.plan.runtime.failure.per_job_retry_limit + 1 - count) };
+  });
+  const output = { status: 'FAILED', worker, diagnostics };
+  if (full) return output;
+  let artifact = path.join(value.root, 'assignments.json');
+  if (!existsSync(path.join(value.root, 'receipt.json')) && !existsSync(path.join(value.root, 'results', worker + '.json'))) {
+    artifact = path.join(value.root, 'results', worker + '.validation-diagnostics.json');
+    const inputs = [path.join(value.root, 'assignments.json'), path.join(value.root, 'acquisition.json'), ...value.parts.map(part => part.file)];
+    output.input_sha256 = Object.fromEntries(inputs.map(file => [path.relative(value.root, file), createHash('sha256').update(readFileSync(file)).digest('hex')]));
+    const staged = artifact + `.tmp-${process.pid}`;
+    writeFileSync(staged, JSON.stringify(output, null, 2) + '\n', { mode: 0o600 }); renameSync(staged, artifact);
+  }
+  // Finalized runs are read-only; --json --full expands directly from the inputs.
+  return compactSummary({ stage: 'worker-validation', status: 'FAILED', artifact,
+    counts: { worker, failed_postings: value.itemErrors.length }, errors: diagnostics.map(issue => issue.message) });
 }
 
 function writeWorkerResults(value, worker) {
@@ -225,6 +282,10 @@ function writeWorkerResults(value, worker) {
     results: value.results,
   };
   const file = path.join(value.root, 'results', `${worker}.json`);
+  if (existsSync(path.join(value.root, 'receipt.json'))) {
+    if (!existsSync(file) || evaluationContent(readJson(file)) !== evaluationContent(output)) throw new Error(`${worker}: finalized result differs from validated parts`);
+    return { file, output, part_count: value.parts.length, result_count: value.results.length };
+  }
   const staged = `${file}.tmp-${process.pid}`;
   writeFileSync(staged, `${JSON.stringify(output, null, 2)}\n`);
   renameSync(staged, file);
@@ -269,7 +330,7 @@ export function failWorkerResult(runDir, worker, key, attempts, noRepairReason) 
   if (observed.length !== attempts) throw new Error(`${key}: observed rejected evaluations (${observed.length}) do not match requested attempts (${attempts})`);
   const failure = validation.itemFailures.find(item => item.posting_key === key);
   const last = observed.at(-1);
-  if (!failure || failure.jd_sha256 !== history.jd_sha256 || last.evaluation_sha256 !== evaluationHash(rejected)
+  if (!failure || failure.jd_content !== history.jd_content || last.evaluation_content !== evaluationContent(rejected)
       || last.error !== errors.join('; ')) throw new Error(`${key}: current rejected evaluation does not match validation evidence`);
   const { failures, ...context } = evidence;
   const result = { posting_key: key, status: 'FAILED', attempts: observed.length, error: last.error, report: null,
@@ -278,31 +339,38 @@ export function failWorkerResult(runDir, worker, key, attempts, noRepairReason) 
   artifact.results[slot] = result;
   if (readFileSync(file, 'utf8') !== before) throw new Error(`${key}: part changed during validation`);
   const staged = `${file}.tmp-${process.pid}`;
-  writeFileSync(staged, `${JSON.stringify(artifact, null, 2)}\n`, { flag: 'wx' });
+  writeFileSync(staged, `${JSON.stringify(artifact, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
   renameSync(staged, file);
   return { file, result, changed: true };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const jsonMode = process.argv.includes('--json'), full = process.argv.includes('--full');
+  const runAt = process.argv.indexOf('--run'), workerAt = process.argv.indexOf('--worker');
+  const run = runAt >= 0 ? process.argv[runAt + 1] : null;
+  const worker = workerAt >= 0 ? process.argv[workerAt + 1] : null;
   try {
-    const runAt = process.argv.indexOf('--run');
-    const workerAt = process.argv.indexOf('--worker');
     const throughAt = process.argv.indexOf('--validate-through-part');
     const failAt = process.argv.indexOf('--fail-key');
     const attemptsAt = process.argv.indexOf('--attempts');
     const noRepairAt = process.argv.indexOf('--no-repair-reason');
     if (noRepairAt >= 0 && (failAt < 0 || !process.argv[noRepairAt + 1] || process.argv[noRepairAt + 1].startsWith('--'))) throw new Error('--no-repair-reason requires --fail-key and a reason');
-    const run = runAt >= 0 ? process.argv[runAt + 1] : null;
-    const worker = workerAt >= 0 ? process.argv[workerAt + 1] : null;
     if (!run || !worker) throw new Error('Usage: node src/merge-worker-results.mjs --run runs/<run-id> --worker worker-N');
     if (failAt >= 0) {
       if (throughAt >= 0 || attemptsAt < 0) throw new Error('--fail-key requires --attempts and cannot be combined with --validate-through-part');
-      console.log(JSON.stringify(failWorkerResult(run, worker, process.argv[failAt + 1], Number(process.argv[attemptsAt + 1]), noRepairAt >= 0 ? process.argv[noRepairAt + 1] : undefined), null, 2));
+      const result = failWorkerResult(run, worker, process.argv[failAt + 1], Number(process.argv[attemptsAt + 1]), noRepairAt >= 0 ? process.argv[noRepairAt + 1] : undefined);
+      console.log(JSON.stringify(jsonMode && !full ? compactSummary({ stage: 'worker-failure', status: 'FAILED', artifact: result.file, counts: { worker, posting_key: process.argv[failAt + 1] } }) : result));
     } else if (throughAt >= 0) {
       const value = validateForCli(run, worker, { throughPart: process.argv[throughAt + 1] });
       console.log(JSON.stringify({ worker, validated_parts: value.parts.length, result_count: value.results.length }, null, 2));
     } else {
-      console.log(JSON.stringify(writeWorkerResults(validateForCli(run, worker), worker), null, 2));
+      const result = writeWorkerResults(validateForCli(run, worker), worker);
+      console.log(JSON.stringify(full ? result : compactSummary({ stage: 'worker-merge', status: 'COMPLETE', artifact: result.file,
+        counts: { worker, validated_parts: result.part_count, results: result.result_count, failed: result.output.results.filter(row => row.status === 'FAILED').length } })));
     }
-  } catch (error) { console.error(error.stack || error.message); process.exitCode = 1; }
+  } catch (error) {
+    if (jsonMode) console.log(JSON.stringify(diagnosticOutput(error, run, worker, full)));
+    else console.error(error.stack || error.message);
+    process.exitCode = 1;
+  }
 }

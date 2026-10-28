@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,12 +28,11 @@ const REPORT_MANIFEST = {
   ],
 };
 
-const hash = text => createHash('sha256').update(text).digest('hex');
 const read = file => readFileSync(file, 'utf8');
 const write = (file, value) => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value, null, 2) + '\n'); };
 function snapshot(root) {
   return Object.fromEntries(readdirSync(root, { recursive: true, withFileTypes: true }).filter(item => item.isFile())
-    .map(item => { const file = path.join(item.parentPath ?? item.path, item.name); return [path.relative(root, file), hash(readFileSync(file))]; }).sort(([a], [b]) => a.localeCompare(b)));
+    .map(item => { const file = path.join(item.parentPath ?? item.path, item.name); return [path.relative(root, file), String(readFileSync(file))]; }).sort(([a], [b]) => a.localeCompare(b)));
 }
 
 function careerWriters(career) {
@@ -58,6 +56,8 @@ console.log('Pipeline Health: '+(errors?1:0)+' errors, '+(warnings?1:0)+' warnin
 if(nonzero)process.exitCode=1;
 `);
   write(path.join(career, 'tracker-parse.mjs'), `
+export const parseMarkdownLinks = value => [...String(value ?? '').matchAll(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g)].map(match => ({label:match[1],target:match[2]}));
+
 const aliases = { '#':'num', date:'date', company:'company', role:'role', score:'score', status:'status', pdf:'pdf', report:'report', notes:'notes', url:'url' };
 export function resolveColumns(lines) {
   for (const line of lines) { const columns = {}; line.split('|').forEach((cell, index) => { if (aliases[cell.trim().toLowerCase()]) columns[aliases[cell.trim().toLowerCase()]] = index; }); if (columns.num && columns.status) return columns; }
@@ -131,7 +131,7 @@ function fixture(t) {
   for (const directory of ['reports', 'data', 'batch/tracker-additions']) mkdirSync(path.join(careerRoot, directory), { recursive: true });
   careerWriters(careerRoot);
   const candidateFiles = { 'cv.md': 'Master of Science in Computer Science\nBachelor of Science in Computer Science\n', 'config/profile.yml': 'visa_status: "H-1B"\nneeds_sponsorship: true\n', 'modes/_profile.md': '# Profile\n' };
-  const candidateSources = Object.entries(candidateFiles).map(([label, text]) => { const file = path.join(careerRoot, label); write(file, text); return { label, path: file, sha256: hash(text) }; });
+  const candidateSources = Object.entries(candidateFiles).map(([label, text]) => { const file = path.join(careerRoot, label); write(file, text); return { label, path: file, content: String(text) }; });
   write(path.join(careerRoot, 'templates/discard-reasons.yml'), '{"reasons":[{"id":"tech_stack_mismatch","when":"Core stack does not fit."}]}');
   write(path.join(careerRoot, 'modes/_shared.md'), '# Canonical scoring fixture\n');
   const candidateText = Object.entries(candidateFiles).map(([label, text]) => `\n--- ${label} ---\n${text}`).join('');
@@ -159,7 +159,7 @@ function fixture(t) {
           ? { status: 'unknown', source: null, observation: 'Evidence is absent.', question: `Confirm ${key}.` }
           : { status: 'supported', source: 'cv.md/CV', observation: 'Fixture evidence.', question: null }])),
       confidence_gaps: ['Confirm compensation.', 'Confirm culture.'],
-      risk_summary: { classification: 'clear', culture: 'not_evaluated', interview_redflags: 'not_evaluated', ai_infra: 'consistent' }, discard_reasons: [], fixed_term_evidence: null, advertised_comp: null, company_confidential_evidence: null };
+      risk_summary: { classification: 'clear', culture: 'not_evaluated', interview_redflags: 'not_evaluated', ai_infra: 'consistent' }, requirement_importance: [], keywords: ['backend'], discard_reasons: [], fixed_term_evidence: null, advertised_comp: null, company_confidential_evidence: null };
     const item = { posting_key: key, work_authorization: { value: 'unstated', quote: null }, fit_score: index === 2 ? 4.4 : 4.2, level_signal: 'target', level_evidence: `JD: "**Role:** ${title}"`,
       eligibility_status: 'eligible', eligibility_category: null, eligibility_evidence: null, legitimacy_tier: 'High Confidence', rationale: 'Original baseline rationale.', report };
     if ([0, 1, 4].includes(index)) {
@@ -182,11 +182,11 @@ function fixture(t) {
     acquisition.acquired.push(record); raw.push(item); final.push(old);
   }
   write(path.join(runRoot, 'acquisition.json'), acquisition);
-  write(path.join(runRoot, 'assignments.json'), { run_id: manifest.run_id, result_schema_version: 6, career_ops_root: careerRoot, ...snapshotScoringInputs(careerRoot), runtime, location_policy: locationPolicy,
+  write(path.join(runRoot, 'assignments.json'), { run_id: manifest.run_id, result_schema_version: 8, career_ops_root: careerRoot, ...snapshotScoringInputs(careerRoot), runtime, location_policy: locationPolicy,
     assignments: { 'worker-1': raw.map(item => item.posting_key) }, primary_urls: Object.fromEntries(acquisition.acquired.map(record => [record.primary_key, record.primary_url])),
     semantic_identities: Object.fromEntries(acquisition.acquired.map(record => [record.primary_key, { semantic_job_key: record.semantic_job_key, posting_context_key: record.posting_context_key }])) });
-  write(path.join(runRoot, 'results/worker-1.part-1.json'), { result_schema_version: 6, worker: 'worker-1', part: 1, results: raw });
-  write(path.join(runRoot, 'results/worker-1.json'), { result_schema_version: 6, worker: 'worker-1', results: final });
+  write(path.join(runRoot, 'results/worker-1.part-1.json'), { result_schema_version: 8, worker: 'worker-1', part: 1, results: raw });
+  write(path.join(runRoot, 'results/worker-1.json'), { result_schema_version: 8, worker: 'worker-1', results: final });
   write(path.join(runRoot, 'receipt.json'), { status: 'COMPLETE', run_id: manifest.run_id, terminal_equation: { valid: true }, committed_evaluated_keys: raw.map(item => item.posting_key) });
   write(path.join(runRoot, 'rendered-reports.json'), { run_id: manifest.run_id, reports: mappings });
   write(path.join(careerRoot, 'data/applications.md'), tracker);
@@ -199,6 +199,72 @@ function fixture(t) {
 const invoke = (fx, options = {}) => repairScanReports({ runRoot: fx.runRoot, careerRoot: fx.careerRoot, manifest: fx.manifest, ...options });
 const trackerRows = async fx => parseTracker(read(path.join(fx.careerRoot, 'data/applications.md')), await loadCareerTrackerParser(fx.careerRoot));
 
+test('bounded wording correction preserves evidence and rejects changed originals', async t => {
+  const fx = fixture(t);
+  const entry = fx.manifest.entries[2];
+  const original = entry.remove_gap;
+  delete entry.remove_gap;
+  entry.replace_gap = { original, explanation: 'Only the unverified product-specific depth remains a gap.' };
+  entry.replace_reason = { original: fx.raw[2].report.reason, replacement: 'Relevant backend ownership with product-specific depth to verify.' };
+  const before = snapshot(fx.runRoot);
+  const { plan } = await invoke(fx);
+  const result = await invoke(fx, { apply: true, expectedPlan: plan });
+  assert.equal(result.status, 'COMPLETE');
+  assert.deepEqual(snapshot(fx.runRoot), before);
+  const text = read(path.join(fx.careerRoot, fx.mappings[2].report_path));
+  assert.ok(text.includes(entry.replace_gap.explanation));
+  assert.ok(text.includes(original.quote));
+  assert.ok(text.includes(entry.replace_reason.replacement));
+  assert.equal(result.completed[2].new_score, plan.effects[2].old_score);
+  const changed = fixture(t);
+  changed.manifest.entries[2].replace_gap = { original: { ...changed.manifest.entries[2].remove_gap, quote: 'not the original quote' }, explanation: 'Replacement' };
+  delete changed.manifest.entries[2].remove_gap;
+  await assert.rejects(invoke(changed), /approved raw gap/);
+  const changedText = fixture(t);
+  changedText.manifest.entries[2].replace_reason = { original: 'not the original reason', replacement: 'Replacement' };
+  await assert.rejects(invoke(changedText), /approved report reason/);
+});
+
+test('source-locked judgment correction records below-threshold evidence without rewriting history', async t => {
+  const fx = fixture(t);
+  const index = 3;
+  const raw = fx.raw[index];
+  Object.assign(raw, { fit_score: 3.2, report: null, eligibility_status: 'ineligible',
+    eligibility_category: 'employment_type', eligibility_evidence: 'JD: "**Employment Type:** Full-time"' });
+  write(path.join(fx.runRoot, 'results/worker-1.part-1.json'), { result_schema_version: 8, worker: 'worker-1', part: 1, results: fx.raw });
+  fx.manifest.entries = [{ ...fx.manifest.entries[index], decision: 'Skip' }];
+  const corrected = { ...raw, eligibility_status: 'needs_verification', rationale: 'Employment relationship requires confirmation.' };
+  const file = path.join(fx.root, 'corrected.json'); write(file, corrected);
+  fx.manifest.entries[0].corrected_result = { path: file, content: String(readFileSync(file)) };
+  const originalRun = snapshot(fx.runRoot);
+  const { plan } = await invoke(fx);
+  assert.equal(plan.effects[0].operation, 'evaluation-only');
+  const result = await invoke(fx, { apply: true, expectedPlan: plan });
+  assert.equal(result.status, 'COMPLETE');
+  assert.equal(result.completed[0].corrected_evaluation.eligibility_status, 'needs_verification');
+  assert.equal(result.completed[0].corrected_evaluation.hard_exclusion, false);
+  assert.deepEqual(snapshot(fx.runRoot), originalRun);
+  assert.equal((await invoke(fx, { apply: true, expectedPlan: plan })).status, 'ALREADY_APPLIED');
+  const high = fixture(t);
+  const candidateReport = high.raw[3].report;
+  Object.assign(high.raw[3], { report: null, eligibility_status: 'ineligible', eligibility_category: 'employment_type', eligibility_evidence: 'JD: "**Employment Type:** Full-time"' });
+  delete high.raw[3].work_authorization;
+  write(path.join(high.runRoot, 'results/worker-1.part-1.json'), { result_schema_version: 8, worker: 'worker-1', part: 1, results: high.raw });
+  high.manifest.entries = [{ ...high.manifest.entries[3], decision: 'Research first' }];
+  const highFile = path.join(high.root, 'corrected.json');
+  write(highFile, { ...high.raw[3], eligibility_status: 'needs_verification', report: candidateReport, work_authorization: { value: 'unstated', quote: null } });
+  high.manifest.entries[0].corrected_result = { path: highFile, content: String(readFileSync(highFile)) };
+  const { plan: highPlan } = await invoke(high);
+  assert.equal(highPlan.effects[0].operation, 'restore');
+  const restored = await invoke(high, { apply: true, expectedPlan: highPlan });
+  assert.equal(restored.completed[0].new_decision, 'Research first');
+  assert.equal(restored.completed[0].corrected_evaluation.work_authorization.value, 'unstated');
+  const bad = fixture(t); const changed = { ...bad.raw[3], fit_score: 4.9 };
+  const badFile = path.join(bad.root, 'bad.json'); write(badFile, changed);
+  bad.manifest.entries[3].corrected_result = { path: badFile, content: String(readFileSync(badFile)) };
+  await assert.rejects(invoke(bad), /cannot change fit_score/);
+});
+
 test('report correction dry run has seven exact effects and makes no filesystem changes', async t => {
   const fx = fixture(t); const before = snapshot(fx.root);
   const { status, plan } = await invoke(fx);
@@ -208,14 +274,14 @@ test('report correction dry run has seven exact effects and makes no filesystem 
   assert.equal(plan.effects[0].report_allowed, false); assert.equal(plan.effects[0].hard_exclusion, true); assert.equal(plan.effects[0].tracker.status, 'SKIP');
   assert.equal(plan.effects[2].old_score, 4.4); assert.equal(plan.effects[2].new_score, 4.4);
   for (const effect of plan.effects.slice(3)) { assert.equal(effect.old_score, 3.5); assert.equal(effect.new_score, effect.original_raw_fit_score); }
-  await assert.rejects(invoke(fx, { apply: true }), /reviewed --plan-sha256/);
+  await assert.rejects(invoke(fx, { apply: true }), /reviewed --plan-file/);
 });
 
 test('apply uses headed additions, preserves report IDs/source run/unrelated state, and is idempotent', async t => {
   const fx = fixture(t); const originalRun = snapshot(fx.runRoot); const oldReports = fx.mappings.map(mapping => read(path.join(fx.careerRoot, mapping.report_path)));
   const unrelatedRow = (await trackerRows(fx))[0].raw;
   const { plan } = await invoke(fx);
-  const result = await invoke(fx, { apply: true, expectedPlanHash: plan.plan_sha256 });
+  const result = await invoke(fx, { apply: true, expectedPlan: plan });
   assert.equal(result.status, 'COMPLETE'); assert.deepEqual(snapshot(fx.runRoot), originalRun);
   assert.equal(result.tracker_synced,true);for (const pipeline of [result.pipeline_before, result.pipeline_after]) assert.deepEqual({errors:pipeline.errors,warnings:pipeline.warnings,exit_code:pipeline.exit_code},{errors:0,warnings:0,exit_code:0});
   assert.equal(read(path.join(fx.careerRoot,'data/synced-tracker.md')),read(path.join(fx.careerRoot,'data/applications.md')));
@@ -238,7 +304,7 @@ test('apply uses headed additions, preserves report IDs/source run/unrelated sta
     careerRoot: fx.careerRoot, parser: await loadCareerTrackerParser(fx.careerRoot), asOfDate: '2026-09-15', ttlDays: 7, statusLogText: read(path.join(fx.careerRoot,'data/status-log.tsv')) });
   assert.equal(retention.cleaned.length, 6);
   assert.deepEqual(retention.protected, [{ tracker_number: 101, reason: 'MANUAL_NOTE' }]);
-  const applied = snapshot(fx.root); assert.equal((await invoke(fx, { apply: true, expectedPlanHash: plan.plan_sha256 })).status, 'ALREADY_APPLIED'); assert.deepEqual(snapshot(fx.root), applied);
+  const applied = snapshot(fx.root); assert.equal((await invoke(fx, { apply: true, expectedPlan: plan })).status, 'ALREADY_APPLIED'); assert.deepEqual(snapshot(fx.root), applied);
 });
 
 test('report correction refuses wrong identity, user edits, protected rows, and preexisting restore rows', async t => {
@@ -255,13 +321,13 @@ test('report correction refuses wrong identity, user edits, protected rows, and 
 
 test('candidate hash changes, mutated source after planning, occupied numbers, and prior backup fail closed', async t => {
   {
-    const fx=fixture(t);write(path.join(fx.careerRoot,'cv.md'),'changed');await assert.rejects(invoke(fx),/candidate source hash changed/);
+    const fx=fixture(t);write(path.join(fx.careerRoot,'cv.md'),'changed');await assert.rejects(invoke(fx),/candidate source content changed/);
   }
   for (const mutate of [
     fx=>{const file=path.join(fx.runRoot,fx.acquisition.acquired[3].jd_path);write(file,read(file)+'\nAdditional source text.\n');},
     fx=>write(path.join(fx.careerRoot,'reports/2817-RESERVED.md'),'other writer owns this reservation'),
   ]) {
-    const fx=fixture(t);const {plan}=await invoke(fx);mutate(fx);const before=snapshot(fx.root);await assert.rejects(invoke(fx,{apply:true,expectedPlanHash:plan.plan_sha256}),/repair plan changed|persisted source JD differs/);assert.deepEqual(snapshot(fx.root),before);
+    const fx=fixture(t);const {plan}=await invoke(fx);mutate(fx);const before=snapshot(fx.root);await assert.rejects(invoke(fx,{apply:true,expectedPlan:plan}),/repair plan changed|persisted source JD differs/);assert.deepEqual(snapshot(fx.root),before);
   }
   const fx=fixture(t);write(path.join(fx.careerRoot,'data/daily-scan-repairs',fx.manifest.run_id,'report-backups',path.basename(fx.mappings[0].report_path)),'preexisting');await assert.rejects(invoke(fx),/preexisting repair backup/);
 });
@@ -269,7 +335,7 @@ test('candidate hash changes, mutated source after planning, occupied numbers, a
 test('failed restore compensates only owned rows/reports and retains exact backups and audit notes', async t => {
   const fx=fixture(t);write(path.join(fx.careerRoot,'FAIL_MERGE'),fx.manifest.entries[5].posting_key);
   const beforeRun=snapshot(fx.runRoot);const beforeReports=fx.mappings.map(mapping=>read(path.join(fx.careerRoot,mapping.report_path)));const unrelated=(await trackerRows(fx))[0].raw;
-  const {plan}=await invoke(fx);await assert.rejects(invoke(fx,{apply:true,expectedPlanHash:plan.plan_sha256}),/owned changes compensated/);
+  const {plan}=await invoke(fx);await assert.rejects(invoke(fx,{apply:true,expectedPlan:plan}),/owned changes compensated/);
   assert.deepEqual(snapshot(fx.runRoot),beforeRun);assert.equal((await trackerRows(fx)).length,4);assert.equal((await trackerRows(fx))[0].raw,unrelated);
   for(const [index,mapping] of fx.mappings.entries())assert.equal(read(path.join(fx.careerRoot,mapping.report_path)),beforeReports[index]);
   assert.match(read(path.join(fx.careerRoot,'data/applications.md')),/repair rolled back after failure/);
@@ -282,7 +348,7 @@ test('failed restore compensates only owned rows/reports and retains exact backu
 
 test('concurrent row mutation is rejected by CAS and unrelated writes survive compensation', async t => {
   const fx=fixture(t);write(path.join(fx.careerRoot,'INJECT_RACE'),'once');const old=read(path.join(fx.careerRoot,fx.mappings[0].report_path));
-  const {plan}=await invoke(fx);await assert.rejects(invoke(fx,{apply:true,expectedPlanHash:plan.plan_sha256}),/tracker concurrent row precondition/);
+  const {plan}=await invoke(fx);await assert.rejects(invoke(fx,{apply:true,expectedPlan:plan}),/tracker concurrent row precondition/);
   assert.equal(read(path.join(fx.careerRoot,fx.mappings[0].report_path)),old);
   const tracker=read(path.join(fx.careerRoot,'data/applications.md'));assert.match(tracker,/external unrelated update/);assert.match(tracker,/\| 101 \| 2026-09-06 \|/);assert.doesNotMatch(tracker,/\| SKIP \|/);
 });
@@ -290,7 +356,7 @@ test('concurrent row mutation is rejected by CAS and unrelated writes survive co
 test('compensation refuses an externally edited report before reverting its owned tracker row', async t => {
   const fx=fixture(t);write(path.join(fx.careerRoot,'FAIL_MERGE'),fx.manifest.entries[3].posting_key);
   write(path.join(fx.careerRoot,'INJECT_REPORT_RACE'),fx.mappings[0].report_path);
-  const {plan}=await invoke(fx);await assert.rejects(invoke(fx,{apply:true,expectedPlanHash:plan.plan_sha256}),/rollback needs attention:.*report changed after repair/);
+  const {plan}=await invoke(fx);await assert.rejects(invoke(fx,{apply:true,expectedPlan:plan}),/rollback needs attention:.*report changed after repair/);
   assert.match(read(path.join(fx.careerRoot,fx.mappings[0].report_path)),/Concurrent user report edit/);
   assert.equal((await trackerRows(fx)).find(row=>row.number===101).status,'SKIP');
 });
@@ -304,14 +370,14 @@ test('manifest gap rewrite is exact, bound to the exact reviewed finding, and ne
 test('preflight pipeline rejects nonzero exit or reported errors before any report writes', async t => {
   for(const flag of ['PIPELINE_NONZERO_EXIT','PIPELINE_ERRORS','PIPELINE_WARNINGS']) {
     const fx=fixture(t);write(path.join(fx.careerRoot,flag),'enabled');const {plan}=await invoke(fx);const before=snapshot(fx.root);
-    await assert.rejects(invoke(fx,{apply:true,expectedPlanHash:plan.plan_sha256}),/preflight pipeline failed/);assert.deepEqual(snapshot(fx.root),before);
+    await assert.rejects(invoke(fx,{apply:true,expectedPlan:plan}),/preflight pipeline failed/);assert.deepEqual(snapshot(fx.root),before);
   }
 });
 
 test('tracker sync and post-write pipeline failures compensate owned changes and synchronize restored state', async t => {
   for(const flag of ['FAIL_SYNC_ONCE','POST_PIPELINE_NONZERO_EXIT','POST_PIPELINE_ERRORS','POST_PIPELINE_WARNINGS']) {
     const fx=fixture(t);write(path.join(fx.careerRoot,flag),'enabled');const originals=fx.mappings.map(mapping=>read(path.join(fx.careerRoot,mapping.report_path)));
-    const {plan}=await invoke(fx);await assert.rejects(invoke(fx,{apply:true,expectedPlanHash:plan.plan_sha256}),/report repair failed:.*(?:tracker\.mjs failed|post-write pipeline failed)/);
+    const {plan}=await invoke(fx);await assert.rejects(invoke(fx,{apply:true,expectedPlan:plan}),/report repair failed:.*(?:tracker\.mjs failed|post-write pipeline failed)/);
     assert.equal((await trackerRows(fx)).length,4);assert.equal((await trackerRows(fx)).find(row=>row.number===101).status,'Evaluated');
     for(const [index,mapping] of fx.mappings.entries())assert.equal(read(path.join(fx.careerRoot,mapping.report_path)),originals[index]);
     const journal=JSON.parse(read(path.join(fx.careerRoot,'data/daily-scan-repairs',`${fx.manifest.run_id}-reports.json`)));

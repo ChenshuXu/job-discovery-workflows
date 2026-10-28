@@ -2,7 +2,7 @@
 
 ## Shared invariants
 
-Load `linkedin-post-scan/config/post-scan.json`. Writing modes initialize the local SQLite database, purge expired tombstones, and acquire the single-run lock. `status` branches before all three operations, opens the existing database as immutable, and never renders a report. Runtime state belongs only in the ignored database and temporary run directory. Reports are stable Markdown views of that state.
+Load `config/linkedin-post-scan.json`. Writing modes initialize the local SQLite database, purge expired tombstones, and acquire the single-run lock. `status` branches before all three operations, opens the existing database as immutable, and never renders a report. Runtime state belongs in `.local/linkedin-post-scan/`, with handoff runs in its `runs/` subdirectory. Reports are stable Markdown views under `.local/outputs/linkedin-post-scan/`. Do not create a root-level `linkedin-post-scan/` directory.
 
 The operational boundary is observation and pre-Send preparation only, with no automatic external submission.
 
@@ -25,7 +25,7 @@ Deep-check only quick-screen survivors. A processed post object must include cur
 - exact job: `route: "EXACT_JOB"`, exact `posting_key`, official URL, employer, title, location, post-to-job evidence, and complete JD text;
 - outreach: `route: "AUTO_PREPARE_READY"`, Post Signal dimensions/total, verified member/profile identity, authority, and a draft grounded in the post and current CV;
 - review: `route: "REVIEW"`, score in `[3.5, 4.0)` and exactly one material missing fact;
-- exclusion: `route: "EXCLUDED"`, stable reason code only. The database retains only a salted Post-ID hash tombstone for eight days.
+- exclusion: `route: "EXCLUDED"`, stable reason code only. The database retains only a exact Post-ID tombstone for eight days.
 
 Unchanged body hashes update `last_seen_at` without another model call. Changed bodies update the existing Post and may be rerouted. Non-exact opportunity identity is the deterministic hash of Post URN, route kind, and normalized employer/title; rerouting supersedes the previous active non-exact route. Exact posting keys hand off once; a contact/opportunity pair has one active outreach action, and later scans never regress a prepared outreach to ready.
 
@@ -52,3 +52,5 @@ The narrow visible-state recorder allows only ready to prepared, ready/prepared 
 ## Reporting
 
 Maintain one `YYYY-MM-DD.md` per Pacific date and a minimal `latest.md` link. Stable identities replace rows rather than append duplicates. Sections are Summary, Direct Apply, Worth Contacting, Review, Completed, and full Connect/DM drafts. Every retained detail row links its canonical `Source Post`; `POST_IDENTITY_UNRESOLVED` appears only in Review with an explicitly labeled navigation clue. Direct Apply requires the persisted report object and matching tracker identity. Excluded posts appear as counts only.
+
+Database v2 compares saved post bodies directly and uses exact public identities for new records. Existing opportunity/contact IDs and prepared outreach are preserved. Legacy opaque exclusion IDs cannot be matched without their old digest algorithm; they remain for historical counts until their original eight-day expiry. A revisited excluded post is classified again and receives an exact-ID tombstone. Read-only status supports both database versions without migration.

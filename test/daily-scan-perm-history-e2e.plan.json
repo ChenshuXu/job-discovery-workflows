@@ -1,0 +1,39 @@
+{
+  "scope": "Fictional local PERM disclosures + real Daily Scan and official Career-Ops writers in disposable workspaces",
+  "failure_modes": [
+    "Disabled or absent PERM history setting still snapshots local data, requires company research, writes references or changes work authorization",
+    "Non-boolean PERM history settings silently enable research, or changing the live switch reinterprets an already frozen run",
+    "Automatic company review changes scoring inputs, old baselines/reports, unrelated aliases or the frozen disclosure revision",
+    "Missing/partial review silently skips unmatched scored employers, or ambiguous identities are published without asking the user",
+    "Research source failures prevent otherwise valid scan persistence, or post-review registry/evidence edits change the frozen result",
+    "An unverified, posting-only or unrelated alias is accepted as an automatic company-history update",
+    "A company-history reference implies the current posting legal employer is verified or works only for the preview posting",
+    "Reference data changes assignments, scores, hard exclusions, decisions or reporting threshold",
+    "Low-score or hard-excluded evaluated postings lack reference information",
+    "Aliases extend beyond verified posting key and URL or combine unrelated legal entities",
+    "Missing cache or Python blocks otherwise valid scoring",
+    "Current pointer, aliases or evidence refresh silently changes an in-progress run",
+    "Frozen manifest, result artifact, posting binding or report summary drifts without detection",
+    "Reference appears outside Work Authorization, duplicates, swallows model prose or bypasses compact body budget",
+    "Report expansion loses or rewrites Work Authorization/reference, duplicates it in the appendix or changes Machine Summary",
+    "Resumed legacy baselines are silently reinterpreted as the new body layout",
+    "Report links break when current aliases change or assume every job has a report",
+    "Repeated commit/audit overwrites old reports, reads live current state or introduces SHA-256"
+  ],
+  "acceptance": [
+    "PERM history defaults off in active, fixture and public example configuration; explicit opt-in retains the existing complete reference workflow",
+    "Disabled runs commit without PERM snapshots, review requirements or reference artifacts, even after the live setting is enabled; enabled frozen runs finish after it is disabled",
+    "Evidence-backed company-history aliases work for different exact postings while preserving original work authorization and explicitly leaving posting legal employer unconfirmed",
+    "Baseline freezes immutable dataset revision, alias registry and exact quoted evidence",
+    "Worker assignments and merged result payloads exclude PERM data",
+    "All evaluated postings have one exact posting key/URL binding, including low-score and hard exclusions",
+    "New baselines freeze work-authorization-v1, including unavailable snapshots; old baselines retain metadata layout",
+    "Formal reports preserve the original Work Authorization text, then append exactly one nested reference with annual counts, duration quantiles/sample sizes, recent dates, dimension summaries, sources and caveats",
+    "PERM outcome table has three columns so all statuses remain readable without changing upstream wide-grid CSS",
+    "Absent, ambiguous, scope-mismatched and unavailable results never pretend zero applications",
+    "A changed artifact rejects before Career-Ops writes; receipt audits report summaries and scored coverage",
+    "Compact parsing preserves original scoring-body limits; malformed, moved, duplicated and forged references are rejected",
+    "Expansion and explicit repair retain the frozen reference exactly once and preserve original authorization; legacy header references stay unchanged",
+    "Official tracker/history conservation and all previous report bytes remain unchanged"
+  ]
+}

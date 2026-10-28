@@ -22,7 +22,8 @@ export function parseTracker(text, parser) {
     const row = parser.parseTrackerRow(line, columns);
     if (!row) return [];
     const parts = line.split('|').map(value => value.trim());
-    const reportPath = String(row.report ?? '').match(/(?:\.\.\/)?(reports\/[^\s)]+\.md)/)?.[1] ?? null;
+    const reportPath = parser.parseMarkdownLinks(String(row.report ?? ''))
+      .map(link => link.target.match(/(?:^|\/)(reports\/.+\.md)$/)?.[1]).find(Boolean) ?? null;
     return [{
       number: Number(row.num),
       status: row.status,

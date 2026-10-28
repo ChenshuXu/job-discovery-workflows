@@ -1,5 +1,4 @@
 import { resolveCareerPaths, careerOpsEnv } from './career-ops-paths.mjs';
-import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import {
   existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync,
@@ -18,7 +17,7 @@ const RECOVERY_NAME = '.daily-scan-retention-recovery';
 const RETENTION_STATUSES = new Set(['evaluated', 'skip', 'discarded']);
 const retentionStatus = value => String(value ?? '').trim().toLowerCase().replace(/^skipped$/, 'skip');
 
-const sha256 = value => createHash('sha256').update(value).digest('hex');
+const content = value => String(value);
 const readOptional = file => existsSync(file) ? readFileSync(file, 'utf8') : '';
 const safeKey = key => key.replace(/[^A-Za-z0-9._-]/g, '-');
 
@@ -120,6 +119,31 @@ function protectedItem(row, reason) {
   return { tracker_number: row.number, reason };
 }
 
+function retentionNoteReason(note, expectedNote) {
+  if (note === expectedNote) return null;
+  if (!note.startsWith(`${expectedNote};`)) return 'MANUAL_NOTE';
+  const extra = note.slice(expectedNote.length + 1).trim();
+  const unsubmitted = /\b(?:discarded without submitting|no submission|no application created|application not submitted|form not submitted|no submit)\b/i.test(extra);
+  const cancelled = /\bdiscarded without submitting\b/i.test(extra);
+  let evidence = extra.replace(/\b(?:application|form) (?:was )?not submitted\b|\bno application (?:was )?submitted\b/gi, '');
+  if (cancelled) evidence = evidence.replace(/\bno [^;]*receipt[^;]*|only a password-reset email was found, not an application receipt/gi, '');
+  // A closure or cancellation must never erase a real or uncertain earlier process.
+  if (/\b(?:applied|interview|intro call|phone screen|recruiter|assessment|assignment|submitted|uncertain|unconfirmed|ambiguous|no confirmation|no acceptance evidence|delivery failed)\b|\b(?:application|submission|submit)\b[^;]*\b(?:confirmed|confirmation|received|accepted|sent|completed|successful|successfully|receipt)\b/i.test(evidence)) {
+    return 'APPLICATION_OR_INTERVIEW_NOTE';
+  }
+  if (/\b(?:verify before applying|identity_review)\b/i.test(extra)) return 'MANUAL_NOTE';
+  const retryCleared = extra.match(/retry_on=[^;\s.]+/gi)?.at(-1)?.toLowerCase() === 'retry_on=clear';
+  const ordinary = extra.split(';').map(value => value.trim().replace(/\.+$/, '')).filter(Boolean).every(clause =>
+    /\b(?:posting (?:is |was )?closed|job has closed|job removed|no longer accepting applications|job (?:is )?no longer available|the job you are looking for is not available|page not found|page no longer exists|page does not exist|page you are looking for does not exist|returned 404|is unavailable:.*no job details\/apply control)\b/i.test(clause)
+    || /^(?:no submission(?: made| attempted)?|no application created(?:, no_retry)?|no application submitted|application not submitted|form not submitted|no submit|no_retry|no live apply control|no live application channel remains|unnamed end client and no official external channel|(?:closed on|verified) \d{4}-\d{2}-\d{2}|residual Apply link was not used|separate frozen posting \d+ remains independently reviewable|R\d+)$/i.test(clause)
+    || /^Ego Apply closeout: truthful .+work-authorization blocker$/i.test(clause)
+    || /^Daily Scan \d{8}-\d{6} report audit correction: The role explicitly does not provide required visa sponsorship\. \(original run preserved\)$/i.test(clause)
+    || (unsubmitted && /^(?:ATS blocked: .*Ineligible to apply.*|Gmail draft reminder received .+|.*rejected (?:the )?submission .+|Ego Apply closeout: possible-spam rejection .+|Permanent eligibility mismatch: .+|No submit: .+|Permanent ineligibility confirmed .+|candidate does not have that authorization\. No submission)$/i.test(clause))
+    || (cancelled && /^(?:User discarded without submitting|Official .*(?:form is live|is live and prepared|Workday tenant is live|blocked submission at .+)|(?:a |required |waiting for ).+|saved credential autofill was rejected.+|no .+receipt (?:for .+ )?found.*|no receipt for .+|only a password-reset email was found, not an application receipt|retry_on=clear)$/i.test(clause))
+    || (cancelled && retryCleared && /^retry_on=\d{4}-\d{2}-\d{2}$/i.test(clause)));
+  return ordinary && extra ? null : 'MANUAL_NOTE';
+}
+
 export function buildEvaluatedRetentionPlan({
   trackerText, scanHistoryText, careerRoot, parser, asOfDate, ttlDays,
   statusLogText = '', followupsText = '', pdfIndexText = '', activeInterviewsText = '', pipelineText = '',
@@ -162,8 +186,9 @@ export function buildEvaluatedRetentionPlan({
       protectedRows.push(protectedItem(row, 'INVALID_POSTING_KEY'));
       continue;
     }
-    if (row.notes !== expectedNote) {
-      protectedRows.push(protectedItem(row, 'MANUAL_NOTE'));
+    const noteReason = retentionNoteReason(row.notes, expectedNote);
+    if (noteReason) {
+      protectedRows.push(protectedItem(row, noteReason));
       continue;
     }
     const history = String(statusLogText).split(/\r?\n/).map(line => line.split('\t'))
@@ -262,10 +287,10 @@ export function buildEvaluatedRetentionPlan({
       tracker_raw: row.raw,
       report_path: row.report_path,
       report_file: reportFile,
-      report_sha256: sha256(reportText),
+      report_content: content(reportText),
       jd_path: jdRelative,
       jd_file: jdFile,
-      jd_sha256: sha256(jdText),
+      jd_content: content(jdText),
       posting_key: key,
       posting_url: url,
       run_id: runId,
@@ -378,9 +403,9 @@ function auditValue(runRoot, plan) {
       posting_url: item.posting_url,
       run_id: item.run_id,
       report_path: item.report_path,
-      report_sha256: item.report_sha256,
+      report_content: item.report_content,
       jd_path: item.jd_path,
-      jd_sha256: item.jd_sha256,
+      jd_content: item.jd_content,
     })),
     protected: plan.protected,
   };
@@ -392,8 +417,8 @@ function createRecovery(recoveryRoot, auditFile, careerRoot, trackerFile, scanHi
   writeFileSync(path.join(recoveryRoot, 'tracker.before'), trackerText, { flag: 'wx' });
   writeFileSync(path.join(recoveryRoot, 'scan-history.before'), historyText, { flag: 'wx' });
   const files = cleaned.flatMap((item, index) => [
-    { target: item.report_file, backup: path.join(recoveryRoot, 'files', `${index}-report.md`), sha256: item.report_sha256 },
-    { target: item.jd_file, backup: path.join(recoveryRoot, 'files', `${index}-jd.md`), sha256: item.jd_sha256 },
+    { target: item.report_file, backup: path.join(recoveryRoot, 'files', `${index}-report.md`), content: item.report_content },
+    { target: item.jd_file, backup: path.join(recoveryRoot, 'files', `${index}-jd.md`), content: item.jd_content },
   ]);
   const manifest = { schema_version: 1, audit_file: auditFile, career_root: careerRoot, tracker_file: trackerFile, scan_history_file: scanHistoryFile, files };
   createJson(path.join(recoveryRoot, 'manifest.json'), manifest);
@@ -414,7 +439,7 @@ function restoreFiles(manifest) {
   for (const item of manifest.files) {
     const targetExists = existsSync(item.target);
     const backupExists = existsSync(item.backup);
-    if (targetExists && sha256(readFileSync(item.target)) !== item.sha256) throw new Error(`recovery target changed: ${item.target}`);
+    if (targetExists && content(readFileSync(item.target)) !== item.content) throw new Error(`recovery target changed: ${item.target}`);
     if (!targetExists && !backupExists) throw new Error(`recovery file missing from both locations: ${item.target}`);
     if (!targetExists) {
       mkdirSync(path.dirname(item.target), { recursive: true });
@@ -497,7 +522,7 @@ export async function cleanupExpiredEvaluated({
         const manifest = createRecovery(recoveryRoot, auditFile, career, api.trackerFile, paths.scanHistory, trackerText, historyText, plan.cleaned);
         try {
           for (const item of manifest.files) {
-            if (!isRegularFile(item.target) || sha256(readFileSync(item.target)) !== item.sha256) throw new Error(`cleanup artifact changed after validation: ${item.target}`);
+            if (!isRegularFile(item.target) || content(readFileSync(item.target)) !== item.content) throw new Error(`cleanup artifact changed after validation: ${item.target}`);
             renameSync(item.target, item.backup);
           }
           transaction.replace(nextTracker);

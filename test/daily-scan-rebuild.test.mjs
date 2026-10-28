@@ -20,6 +20,7 @@ import { collectHistoricalSemanticContexts } from '../src/posting-history.mjs';
 import { loadScanResults } from '../src/scan-results.mjs';
 import { renderCompactReport, readCompactReportSummary } from '../src/scan-report-contract.mjs';
 import { loadLocationPolicy } from '../src/location-scope.mjs';
+import { researchFixture } from './fixtures/scoring-research.mjs';
 
 const LONG = 'Build reliable distributed backend systems, APIs, databases, observability, testing, and production services with cross-functional ownership. '.repeat(4);
 
@@ -66,6 +67,8 @@ export const resolveTrackerPathForWrite = resolveTrackerPath;
   write(path.join(career, 'data/applications.md'), '# Applications Tracker\n\n| # | Date | Company | Role | Score | Status | PDF | Report | Notes |\n|---|---|---|---|---|---|---|---|---|\n');
   write(path.join(career, 'data/scan-history.tsv'), 'url\tdate\tsource\ttitle\tcompany\tstatus\tlocation\n');
   write(path.join(career, 'tracker-parse.mjs'), `
+export const parseMarkdownLinks = value => [...String(value ?? '').matchAll(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g)].map(match => ({label:match[1],target:match[2]}));
+
 const aliases = { '#':'num', num:'num', date:'date', company:'company', empresa:'company', via:'via', role:'role', puesto:'role', location:'location', score:'score', status:'status', pdf:'pdf', report:'report', notes:'notes', url:'url' };
 const legacy = { num:1,date:2,company:3,role:4,score:5,status:6,pdf:7,report:8,notes:9 };
 export function resolveColumns(lines) {
@@ -134,12 +137,16 @@ const start = Math.max(0, ...reportNums, ...trackerNums) + 1;
 for (let n = start; n < start + count; n++) writeFileSync('reports/' + String(n).padStart(3, '0') + '-RESERVED.md', 'reserved');
 console.log(count === 1 ? String(start) : start + '-' + (start + count - 1));
 `);
+  write(path.join(career, 'listing-fingerprint.mjs'), `
+export function computeListingFingerprint({strong}) { return { listing_key: 'listing_v1_' + Buffer.from(JSON.stringify([strong.ats_provider,strong.board_slug,strong.posting_id])).toString('hex').slice(-64).padStart(64,'0') }; }
+`);
+  write(path.join(career, 'lib/scan-history-columns.mjs'), `export function parseScanHistoryLine(line) { const cells=line.split('\\t'); return {url:cells[0], status:cells[5], listing_key:cells[14] || ''}; }`);
   write(path.join(career, 'scan.mjs'), `
 import { appendFileSync } from 'node:fs';
 const historyFile = process.env.CAREER_OPS_SCAN_HISTORY || 'data/scan-history.tsv';
 export async function appendToScanHistory(offers, date, status) {
   await new Promise(resolve => setImmediate(resolve));
-  appendFileSync(historyFile, offers.map(o => [o.url,date,o.source,o.title,o.company,status,o.location].join('\\t')).join('\\n') + '\\n');
+  appendFileSync(historyFile, offers.map(o => [o.url,date,o.source,o.title,o.company,status,o.location,'','','','','','','',o.listingKey || ''].join('\\t')).join('\\n') + '\\n');
 }
 export function appendScanRunSummary(c, file = 'data/scan-runs.tsv') { appendFileSync(file, JSON.stringify(c) + '\\n'); }
 `);
@@ -169,12 +176,12 @@ function report() {
   return {
     archetype: 'Senior Backend Engineer', reason: 'Backend ownership aligns strongly.',
     evidence: [{ source: 'jd', quote: 'distributed backend systems', explanation: 'Matches target scope.' }],
-    gaps: [], risk_level: 'Low', confidence: 'High',
+    gaps: [], hiring_manager_review: { summary: 'No supported refusal reason in fixture evidence.', concerns: [] }, risk_level: 'Low', confidence: 'High',
     score_evidence: Object.fromEntries(['cv_match', 'north_star', 'compensation', 'culture', 'red_flags'].map(dimension => [dimension,
       { status: 'supported', source: 'JD: distributed backend systems', observation: `Fixture supports ${dimension}.`, question: null }])),
     confidence_gaps: [],
     risk_summary: { classification: 'clear', culture: 'not_evaluated', interview_redflags: 'not_evaluated', ai_infra: 'consistent' },
-    discard_reasons: [], fixed_term_evidence: null, advertised_comp: null, company_confidential_evidence: null,
+    requirement_importance: [], keywords: ['backend'], discard_reasons: [], fixed_term_evidence: null, advertised_comp: null, company_confidential_evidence: null,
   };
 }
 
@@ -191,6 +198,7 @@ function writeWorkerResults(run, createResult) {
       const excluded = value.hard_exclusion === true;
       return {
         posting_key: key,
+        ...(plan.research_version === 1 ? { research: researchFixture(key, record.company) } : {}),
         fit_score: value.score,
         work_authorization: value.work_authorization ?? { value: 'unstated', quote: null },
         level_signal: 'target',

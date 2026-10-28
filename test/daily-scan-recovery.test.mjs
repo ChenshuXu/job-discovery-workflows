@@ -1,21 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { snapshotAdapterProfile } from '../src/adapter-registry.mjs';
 import { sourceRecord, writeAcquisition } from '../src/combine.mjs';
 import { semanticIdentity } from '../src/semantic-jd-identity.mjs';
 import { prepareFailedScanRecovery } from '../src/prepare-failed-scan-recovery.mjs';
 import { validateRun } from '../src/run-contract.mjs';
 
-const hash = value => createHash('sha256').update(value).digest('hex');
 const write = (file, value) => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, typeof value === 'string' || Buffer.isBuffer(value) ? value : JSON.stringify(value)); };
 const json = file => JSON.parse(readFileSync(file));
 const tree = root => Object.fromEntries(readdirSync(root, { recursive: true, withFileTypes: true }).filter(x => x.isFile()).map(x => {
-  const file = path.join(x.parentPath, x.name); return [path.relative(root, file), hash(readFileSync(file))];
+  const file = path.join(x.parentPath, x.name); return [path.relative(root, file), String(readFileSync(file))];
 }));
 const policy = { local_metros: ['Seattle'], remote_country: 'United States', require_structured_remote: true, ambiguous_action: 'exclude' };
 const body = 'Build distributed backend services, reliable APIs, testing, observability and production systems with engineering partners. '.repeat(3);
@@ -28,8 +27,8 @@ function fixture(t) {
   const revision = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   const gitFile = file => execFileSync('git', ['show', `${revision}:${file}`]);
   const profile = snapshotAdapterProfile();
-  profile.registry_sha256 = hash(gitFile('config/discovery-adapters.v1.json'));
-  for (const value of Object.values(profile.adapter_definitions)) value.config_sha256 = hash(gitFile(value.config));
+  profile.registry_content = String(gitFile('config/discovery-adapters.v1.json'));
+  for (const value of Object.values(profile.adapter_definitions)) value.config_content = String(gitFile(value.config));
   const runtime = JSON.parse(gitFile('config/daily-scan-runtime.json'));
   const failedKey = 'greenhouse:example:12345', failedUrl = 'https://boards.greenhouse.io/example/jobs/12345';
   const linkedKey = 'linkedin:linkedin.com:11111111', linkedUrl = 'https://www.linkedin.com/jobs/view/11111111';
@@ -55,7 +54,7 @@ function fixture(t) {
   }
   write(path.join(source, 'acquisition.json'), acquired);
   const candidateSources = Object.entries({ 'cv.md': '# CV\n', 'config/profile.yml': `location:\n  scan_policy: ${JSON.stringify(policy)}\n`, 'modes/_profile.md': '# Profile\n' }).map(([label, text]) => {
-    const file = path.join(career, label); write(file, text); return { label, path: file, sha256: hash(text) };
+    const file = path.join(career, label); write(file, text); return { label, path: file, content: String(text) };
   });
   write(path.join(career, 'path-resolver.mjs'), `import path from 'node:path';\nexport const getCareerOpsRoot = () => process.env.CAREER_OPS_ROOT || ${JSON.stringify(career)};\nexport const resolveTrackerPath = root => process.env.CAREER_OPS_TRACKER || path.join(root, 'data/applications.md');\nexport const resolveTrackerPathForWrite = resolveTrackerPath;\n`);
   write(path.join(career, 'tracker-parse.mjs'), 'export const resolveColumns = () => ({}); export const parseTrackerRow = () => null;\n');
@@ -98,8 +97,8 @@ test('failed recovery selects only terminal failures and preserves original sour
   const origin = json(result.origin);
   assert.equal(origin.retention_performed, false);
   assert.equal(origin.source_files.length, 2);
-  assert.ok(origin.original_code.every(item => hash(readFileSync(path.join(fx.destination, item.snapshot))) === item.sha256));
-  assert.ok(origin.inputs.some(item => item.path === 'receipt.json' && item.sha256 === before['receipt.json']));
+  assert.ok(origin.original_code.every(item => String(readFileSync(path.join(fx.destination, item.snapshot))) === item.content));
+  assert.ok(origin.inputs.some(item => item.path === 'receipt.json' && item.content === before['receipt.json']));
   assert.deepEqual(tree(fx.source), before);
   assert.deepEqual(tree(fx.career), careerBefore);
   assert.deepEqual(readdirSync(path.join(fx.destination, 'results')), []);
@@ -114,7 +113,7 @@ test('failed recovery fails closed on candidate drift, source-body drift and mis
     [fx => write(path.join(fx.career, 'cv.md'), '# changed\n'), /candidate source hash changed/],
     [fx => { const file = path.join(fx.source, 'jobs/greenhouse-example-12345.md'); write(file, `${readFileSync(file, 'utf8')}changed\n`); }, /frozen JD or semantic identity changed/],
     [fx => { const file = path.join(fx.source, 'triage/canonical-url-resolutions.json'), value = json(file); value.results.shift(); write(file, value); }, /source lineage is missing jobright/],
-    [fx => { const file = path.join(fx.source, 'baseline.json'), value = json(file); value.adapter_profile.adapter_definitions.jobright.config_sha256 = '0'.repeat(64); write(file, value); }, /source config\/revision provenance mismatch/],
+    [fx => { const file = path.join(fx.source, 'baseline.json'), value = json(file); value.adapter_profile.adapter_definitions.jobright.config_content = '0'.repeat(64); write(file, value); }, /source config\/revision provenance mismatch/],
   ]) {
     const fx = fixture(t); change(fx);
     const before = tree(fx.source);
@@ -132,4 +131,55 @@ test('recovery planning respects a newly committed exact key without resetting t
   assert.equal(result.assigned_count, 0);
   assert.equal(json(path.join(fx.destination, 'acquisition.json')).historical_duplicate_count, 1);
   assert.deepEqual(tree(fx.source), before);
+});
+
+test('recovery accepts the collector directory migration but rejects command and provenance drift', async t => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'recovery-layout-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = fileURLToPath(new URL('..', import.meta.url));
+  for (const relative of ['src', '.agents', 'config']) {
+    cpSync(path.join(project, relative === 'config' ? 'test/fixtures/config' : relative), path.join(root, relative), { recursive: true });
+  }
+  for (const name of readdirSync(path.join(project, 'config')).filter(name => name.endsWith('.md'))) {
+    cpSync(path.join(project, 'config', name), path.join(root, 'config', name));
+  }
+  const registryFile = path.join(root, 'config/discovery-adapters.v1.json');
+  const current = readFileSync(registryFile, 'utf8');
+  write(registryFile, current.replaceAll('src/adapters/', 'adapters/'));
+  const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'pipe' });
+  git('init', '-q'); git('add', 'src', 'config');
+  git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'Before collector migration');
+  const revision = String(git('rev-parse', 'HEAD')).trim();
+  const { snapshotAdapterProfile: freeze } = await import(pathToFileURL(path.join(root, 'src/adapter-registry.mjs')).href);
+  const historical = freeze();
+  write(registryFile, current);
+  const { prepareFailedScanRecovery: recover } = await import(pathToFileURL(path.join(root, 'src/prepare-failed-scan-recovery.mjs')).href);
+  for (const [name, change] of [
+    ['unchanged', () => {}],
+    ['interpreter', profile => { profile.adapter_definitions.jobspy.command[0] = 'different-python'; }],
+    ['arguments', profile => { profile.adapter_definitions.jobspy.command.push('--different'); }],
+    ['entrypoint', profile => { profile.adapter_definitions.jobspy.command[1] = 'adapters/other.py'; }],
+    ['config', profile => { profile.adapter_definitions.jobspy.config_content = '{}'; }],
+    ['registry', profile => { profile.registry_content += '\n'; }],
+  ]) {
+    const fx = fixture(t), baselineFile = path.join(fx.source, 'baseline.json');
+    const baseline = json(baselineFile);
+    baseline.adapter_profile = structuredClone(historical); change(baseline.adapter_profile); write(baselineFile, baseline);
+    const before = tree(fx.source), careerBefore = tree(fx.career);
+    const options = { ...fx.options, sourceRevision: revision };
+    if (name === 'unchanged') {
+      const result = recover(options);
+      assert.equal(result.selected_count, 1);
+      assert.equal(result.assigned_count, 1);
+      assert.deepEqual(validateRun(fx.destination).errors, []);
+      assert.deepEqual(json(path.join(fx.destination, 'baseline.json')).adapter_profile.adapter_definitions.jobspy.command,
+        ['python3', 'src/adapters/jobspy_linkedin_scan.py']);
+      assert.equal(readFileSync(path.join(fx.destination, 'provenance/original/config/discovery-adapters.v1.json'), 'utf8'), historical.registry_content);
+    } else {
+      assert.throws(() => recover(options), /provenance mismatch/, name);
+      assert.equal(existsSync(fx.destination), false, name);
+    }
+    assert.deepEqual(tree(fx.source), before, name);
+    assert.deepEqual(tree(fx.career), careerBefore, name);
+  }
 });

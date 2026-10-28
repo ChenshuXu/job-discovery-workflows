@@ -7,7 +7,7 @@ description: Scan recent LinkedIn recruitment posts through Ego Lite, route exac
 
 For modes requiring live pages, use `ego-browser` for every observation or action. Keep browser automation in temporary heredocs; never add a reusable LinkedIn page script to the repository. `status` needs no browser.
 
-Read the relevant mode in [references/workflow-contract.md](references/workflow-contract.md); `status` needs only Shared invariants. Use `linkedin-post-scan/config/post-scan.json` as the only Post Scan configuration and `linkedin-post-scan/src/cli.mjs` for deterministic state changes.
+Read the relevant mode in [references/workflow-contract.md](references/workflow-contract.md); `status` needs only Shared invariants. Use `config/linkedin-post-scan.json` as the only Post Scan configuration and `src/linkedin-post-scan/cli.mjs` for deterministic state changes.
 
 ## Modes
 

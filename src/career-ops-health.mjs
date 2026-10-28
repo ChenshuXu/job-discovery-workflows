@@ -38,7 +38,7 @@ export function resolveTitleWarnings({ careerRoot, trackerFile, messages, dataRo
   const paths = dataRoot && reportsRoot ? { dataRoot, reportsRoot, trackerFile } : resolveCareerPaths(careerRoot);
   const tracker = trackerFile ? path.resolve(careerRoot, trackerFile) : paths.trackerFile;
   if (!existsSync(tracker)) return { resolved: [], unresolved: messages };
-  const { parseTrackerRow, resolveColumns, extractReqNumber, normalizeTextKey } = require(path.join(careerRoot, 'tracker-parse.mjs'));
+  const { parseTrackerRow, resolveColumns, extractReqNumber, normalizeTextKey, parseMarkdownLinks } = require(path.join(careerRoot, 'tracker-parse.mjs'));
   const lines = readFileSync(tracker, 'utf8').split(/\r?\n/);
   const columns = resolveColumns(lines);
   const rows = lines.map(line => parseTrackerRow(line, columns)).filter(Boolean);
@@ -54,7 +54,7 @@ export function resolveTitleWarnings({ careerRoot, trackerFile, messages, dataRo
         members = ids.map(id => {
           const row = byNumber.get(id);
           if (!row) return null;
-          const link = String(row.report).match(/\]\(([^)]+)\)/)?.[1];
+          const link = parseMarkdownLinks(String(row.report))[0]?.target;
           if (link) {
             const file = [path.resolve(path.dirname(tracker), link), path.resolve(paths.dataRoot, link)].find(existsSync);
             const evidence = file ? reportEvidence(file) : null;
@@ -158,13 +158,15 @@ function healthSnapshot(paths, trackerFile) {
     copy(reportsRoot);
     copy(trackerFile);
     copy(portalsFile);
+    copy(paths.profileFile);
     // External tracker layouts can link outside the data root. Mirror both
     // canonical link lookup locations without changing the tracker contents.
-    if (existsSync(trackerFile)) for (const match of readFileSync(trackerFile, 'utf8').matchAll(/\]\(([^)]+)\)/g)) {
-      for (const base of [path.dirname(trackerFile), paths.dataRoot]) copy(path.join(base, match[1]));
+    const { parseMarkdownLinks } = createRequire(import.meta.url)(path.join(paths.codeRoot, 'tracker-parse.mjs'));
+    if (existsSync(trackerFile)) for (const link of parseMarkdownLinks(readFileSync(trackerFile, 'utf8'))) {
+      for (const base of [path.dirname(trackerFile), paths.dataRoot]) copy(path.join(base, link.target));
     }
     return { root, codeRoot: mirror(paths.codeRoot), dataRoot: mirror(paths.dataRoot), trackerFile: mirror(trackerFile),
-      reportsRoot: mirror(reportsRoot), portalsFile: mirror(portalsFile) };
+      reportsRoot: mirror(reportsRoot), portalsFile: mirror(portalsFile), profileFile: mirror(paths.profileFile) };
   } catch (error) { rmSync(root, { recursive: true, force: true }); throw error; }
 }
 
@@ -180,7 +182,7 @@ export function checkCareerOpsHealth(careerRoot, trackerFile = null) {
     const env = careerOpsEnv(paths, { NODE_OPTIONS: '', CAREER_OPS_CODE_ROOT: snapshot.codeRoot,
       CAREER_OPS_ROOT: snapshot.dataRoot, CAREER_OPS_DATA_DIR: snapshot.dataRoot,
       CAREER_OPS_TRACKER: snapshot.trackerFile, CAREER_OPS_REPORTS: snapshot.reportsRoot,
-      CAREER_OPS_PORTALS: snapshot.portalsFile });
+      CAREER_OPS_PORTALS: snapshot.portalsFile, CAREER_OPS_PROFILE: snapshot.profileFile });
     const result = spawnSync(process.execPath, ['--permission', '--allow-fs-read=*', `--allow-fs-write=${snapshot.root}`,
       path.join(snapshot.codeRoot, 'verify-pipeline.mjs')], { cwd: snapshot.codeRoot, encoding: 'utf8', env });
     const output = `${result.stdout || ''}\n${result.stderr || ''}`;

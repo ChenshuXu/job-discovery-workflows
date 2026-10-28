@@ -3,8 +3,8 @@
 [中文](README.zh-CN.md)
 
 [Job Discovery Workflows](https://github.com/ChenshuXu/job-discovery-workflows).
-All existing workflows are included. Licensed under [MIT](LICENSE), with
-[third-party notices](THIRD_PARTY_NOTICES.md). Bounded installation, host, account and
+All existing workflows are included. The [MIT license](LICENSE) includes the
+upstream compatibility-code attribution. Bounded installation, host, account and
 Word checks are recorded below, together with the remaining release limitations.
 
 ## Built with
@@ -19,13 +19,13 @@ contributors for the tools that make these workflows possible.
 | [Ego Lite](https://github.com/citrolabs/ego-lite) | Provides the browser and `ego-browser` integration for authenticated job discovery, research and application workflows. |
 
 These dependencies are installed separately. See [dependency setup](#external-dependencies)
-and [third-party notices](THIRD_PARTY_NOTICES.md) for installation details and licenses.
+for installation details and the upstream repositories for their licenses.
 
 ## Features
 
 | Workflow | Dependencies |
 | --- | --- |
-| Daily Scan: JobSpy, LinkedIn search/recommendations, Jobright; scoring, deduplication, reports, retention, recovery and usage | Career-Ops, candidate profile, agent host; tools for each enabled source |
+| Daily Scan: JobSpy, LinkedIn search/recommendations, Jobright, official ATS; scoring, deduplication, reports, retention, recovery and usage | Career-Ops, candidate profile, agent host; tools for each enabled source |
 | Expand compact reports | Career-Ops |
 | Single/batch applications and private answer management | Career-Ops, Ego Lite browser, interview register |
 | Report-bound Word resumes | Career-Ops, your compatible DOCX template, zip/unzip; Word on macOS for page verification |
@@ -34,7 +34,14 @@ and [third-party notices](THIRD_PARTY_NOTICES.md) for installation details and l
 | Application and interview process charts | Career-Ops, Career Docs, Node.js, Python 3 with Pillow, a font covering the chart text |
 | Recruiting-post scan and outreach preparation | Career-Ops, Ego Lite browser, Node SQLite; stops before Send |
 | Standalone Google ATS search | SerpAPI key; separate from Daily Scan |
-| Report and excluded-posting repairs | Career-Ops, completed run, explicit reviewed manifest and plan hash |
+| Report and excluded-posting repairs | Career-Ops, completed run, explicit reviewed manifest and plan snapshot |
+
+Official ATS discovery is an optional Daily Scan source (`official-ats`), configured in
+`config/official-ats.json`. It reuses the installed Career-Ops scanner in an isolated
+data root, fetches complete official JDs and preserves the existing downstream gates.
+Greenhouse, Lever and Ashby are supported, with a default 24-hour window and 150
+companies per ATS. Workday is excluded because upstream discovery merges recruiting
+sites before handoff. Run `npm run test:official-ats` for the isolated integration check.
 
 ## Set up with your agent
 
@@ -45,6 +52,9 @@ Set up Job Discovery using this README. Inspect my existing workspace first, ask
 missing CV/search/account information, install missing dependencies and create only
 missing setup files. Preserve my existing data. Run setup-check and the documented
 checks, then report what is ready and exactly what I still need to provide or change.
+If I select PERM history information, have the AI download and validate the required
+official data inside job-discovery/.local/perm-history/ before using that information;
+report missing data or failed validation as an unmet requirement.
 Do not start a scan, retention cleanup, schedule, application or message during setup.
 ```
 
@@ -60,7 +70,9 @@ Do not start a scan, retention cleanup, schedule, application or message during 
    `CAREER_OPS_CODE_ROOT` select the executable Career-Ops checkout. Candidate files,
    reports and application data resolve through its official resolver:
    `CAREER_OPS_ROOT` / `CAREER_OPS_DATA_DIR`, then `.career-ops-data`, then the checkout.
-   `CAREER_OPS_TRACKER` selects an alternate tracker. Other workflows take their existing
+   `CAREER_OPS_TRACKER` selects an alternate tracker. `CAREER_OPS_PROFILE` selects an
+   alternate profile; relative paths resolve from the invoking working directory and
+   child commands receive the resolved absolute path. Other workflows take their existing
    path flags/config fields; these setup-check flags do not configure them automatically.
 2. **Collect missing facts in one short exchange.** Ask for the user's CV or its local
    path, which workflows/sources to enable, target role terms and seniority, desired
@@ -71,7 +83,7 @@ Do not start a scan, retention cleanup, schedule, application or message during 
    does not mean no interviews. Do not request passwords, cookies or one-time codes.
    Reuse explicit answers already supplied and complete independent setup while waiting.
 3. **Install missing tools.** Follow the dependency instructions below. Use JobSpy main.
-   Install Career-Ops and Ego Lite only if missing, make the eight bundled Skills available
+   Install Career-Ops and Ego Lite only if missing, make the nine bundled Skills available
    and load required external Skills. Setup permission does not authorize upgrading,
    resetting or replacing an existing installation. The user handles login/verification
    through the browser's normal flow. Never put credentials in setup reports or Git.
@@ -93,6 +105,7 @@ Do not start a scan, retention cleanup, schedule, application or message during 
    inspecting them. Do not replace an existing configuration with an example. Keep source
    search settings and the profile's location policy consistent. Create only the missing
    Career Docs skeleton; existing register changes use the Gmail Skill's canonical writer.
+   If PERM history information is selected, follow the data initialization requirements below.
 6. **Check, correct, repeat.** Run the checks below, fix routine setup errors and rerun
    affected checks. Ask the user only for unavailable facts, accounts or material choices.
    Do not silently change their target region or disable requested functionality to make
@@ -102,6 +115,137 @@ Do not start a scan, retention cleanup, schedule, application or message during 
    result. List files created/changed and unresolved questions. Never call a workflow ready
    merely because files exist. Setup ends here; an actual run is a separate user action.
 
+### PERM history data initialization
+
+Local download, indexing, verified company-name mappings and Daily Scan reference
+enrichment are implemented for new runs. Historical reports are not backfilled. Before using PERM
+information, the AI must download the official FY2025 full-year and latest available
+FY2026 cumulative PERM disclosure files and record layouts, then validate/import them.
+All downloads, temporary files, indexes, manifests and previews stay under this checkout's
+`job-discovery/.local/perm-history/`, covered by the existing `.local/` Git ignore rule.
+Do not place the data in Career-Ops, outside Job Discovery or in the public package.
+
+Use Python 3 with the optional importer dependency in an isolated environment (or reuse
+an existing compatible interpreter). From Job Discovery:
+
+```bash
+python3 -m venv .local/perm-history/venv
+.local/perm-history/venv/bin/python -m pip install -r requirements-perm-history.txt
+.local/perm-history/venv/bin/python src/perm-history.py refresh
+.local/perm-history/venv/bin/python src/perm-history.py query --company 'COMPANY AS SCORED'
+```
+
+`refresh` discovers the current official releases, downloads and validates the files,
+imports SQLite and publishes a version only after validation succeeds. Reuse a validated
+local version; only initialization or an explicit refresh accesses the official source.
+`query` and `preview` are offline and use only Python's standard library. For an
+independent preview, supply a JSON selection with `companies`, each containing `company`
+and `scored_evidence` entries with an existing report `path`:
+
+```bash
+python3 src/perm-history.py preview --companies .local/perm-history/companies.json --id sample
+```
+
+The preview writes `selection.json`, `preview.json`, `preview.md`, `manifest.json` and
+pending raw-workbook spot-check locators to `.local/perm-history/previews/sample/`.
+Keep report/posting identity in the selection; previews never write Career-Ops reports.
+The selection producer must validate company, numeric score and exact posting identity
+with the canonical report parser; the preview tool checks source-file presence, evidence quotes and posting scope.
+An optional `selection_validation: {path}` references that producer validation artifact.
+For a previously downloaded valid source manifest, `import --manifest PATH` rebuilds a
+version locally. Record the release/cutoff, import audit and a repeatable query
+before declaring the information ready. Current `setup`/`setup-check` commands do not
+perform these PERM checks automatically; the AI must run this explicit procedure.
+
+An evidence-backed company-name mapping is imported through the canonical writer:
+
+```bash
+python3 src/perm-history.py aliases-import --file .local/perm-history/alias-bundle.json
+python3 src/perm-history.py query --company 'COMPANY AS SCORED' --posting-key 'EXACT POSTING KEY' --posting-url 'EXACT POSTING URL'
+```
+
+Import replaces the complete registry; include existing mappings that must remain.
+Use `aliases-import --merge --file ...` for automatic research updates containing only
+the newly confirmed entries; merging happens under the existing writer lock and retains
+unrelated entries. The replacement mode remains available for an explicitly complete bundle.
+The bundle uses `schema_version: 1` and `aliases`. Each alias records `source_company`,
+`status`, `relationship_type`, an explicit company or posting `scope`, `source_evidence_ids`,
+legal-name/location `targets` and `evidence`. Evidence includes the HTTPS source URL,
+a snapshot path relative to `.local/perm-history/`, an exact quote and a dated
+`checked_at`. Import validates those snapshots, quotes, references and target locations
+before publishing `.local/perm-history/employer-aliases.json`. The AI can verify clear
+official evidence directly; ambiguous relationships remain unresolved. Name similarity,
+legal suffixes and trade names alone do not verify identity. Related legal entities stay
+separate; group totals are not inferred.
+
+Use `relationship_type: company_history_reference` with company scope when official
+evidence connects a recruitment brand to a named historical legal entity. This mapping
+can be reused by new postings; it does not confirm their contracting employer or current
+sponsorship. Reports retain this distinction and any reviewed entity exclusions in
+`reason`. Addresses are the selected historical DOL employer locations, not necessarily
+the current headquarters or job location. Keep posting-only mappings narrow. Publishers
+such as Dice must not be mapped globally to a client found in one JD.
+
+New Daily Scans automatically ask the coordinator to research unmatched scored companies
+after scoring and before commit. Clear official evidence is published directly; material
+identity ambiguity is asked of the user and kept pending if unresolved. Source failures
+and missing evidence do not change scores, filters or report thresholds. The
+`review-perm-companies.mjs prepare` / `freeze` phase saves a separate, immutable
+`perm-company-review.json` using the original disclosure revision; it does not rewrite
+the baseline or old reports. See the [automatic review procedure](.agents/skills/career-ops-daily-linkedin-scan/references/workflow-contract.md#automatic-perm-company-review).
+
+For this relationship only, `locations: []` is permitted when the exact legal name has
+no records in the current local releases. It preserves a verified identity without
+inventing an address or zero applications. If a later refresh introduces records for
+that legal name, review and explicitly select their locations before reimporting the
+registry. Company-history mappings require company scope; existing mapping types retain
+their explicit location requirement.
+
+Posting-scoped mappings require both `--posting-key` and `--posting-url` to match their
+verified context. A missing or different context returns an explicit status without
+statistics. `preview` obtains this context from each original `scored_evidence` entry;
+keep both fields in the selection. Every new preview freezes the mapping registry and
+its evidence snapshots inside its own directory. Create a new preview ID
+after mapping changes; existing previews and Career-Ops reports remain unchanged.
+
+Only a unique normalized exact legal-name match, or a verified mapping with disclosed
+records in its explicit legal-name/location scope, produces statistics. A verified legal
+identity with no matching disclosure records retains its identity evidence and reports
+`not_found`; it does not report zero applications. Missing data means unavailable; an
+unconfirmed match or no disclosed records does not establish no sponsorship. The
+disclosures cannot provide complete application or pending counts. Historical
+certifications do not establish current PERM support for the employer or specific role.
+
+Daily Scan PERM history is optional and **disabled by default**. Set
+`perm_history.enabled` to `true` in `config/daily-scan-runtime.json` before a new
+baseline to enable it. With the setting false or absent, the scan skips PERM data
+snapshots, local queries, company research/questions and report references.
+Changing the live setting does not alter frozen runs or existing reports. Original
+Work Authorization and the separate PERM employer allowlist keep their existing behavior.
+
+Enabled Daily Scan baselines freeze the available local dataset revision,
+verified alias registry and evidence text. After scoring, the serialized commit creates
+`runs/<run-id>/perm-history.json` and `perm-history.md` for every evaluated posting,
+including jobs below the report threshold and hard exclusions. New baselines freeze
+`perm_history.report_layout: work-authorization-v1`. New formal reports append a nested
+PERM history reference after the original Work Authorization conclusion: annual outcomes,
+legal identity/scope, cutoff, duration quantiles/sample sizes, recent dates, dimension
+summaries and official sources. Full case evidence remains in local run files; those files
+are not web downloads. Career-Ops displays the existing Markdown section without source changes. Reference data
+never enters worker inputs or changes scoring, filtering, work authorization or report gates.
+Posting-scoped mappings still require the exact verified key and URL; other postings remain
+unconfirmed. Missing local data/Python is explicitly unavailable for that run and does not
+block scoring; initialize first and start a new run to use the data. A frozen source/artifact
+or report-reference mismatch stops persistence rather than publishing wrong numbers.
+Receipt closeout verifies coverage, exact section placement and frozen contents. Report expansion
+preserves original authorization and the reference once in Work Authorization. Legacy PERM
+baselines without a layout marker retain their header format. Keep run evidence and the referenced local dataset versions while reports
+link to them. Initialization and refresh remain explicit; scans do not download anything.
+Runs started before integration keep their original behavior. Verify with
+`npm run test:daily-scan:perm-history -- --out <fresh-local-artifact-directory>`.
+
+PERM tools do not calculate, store or validate file-content checksums. Existing checksum metadata is ignored and omitted from new outputs; format, source-quote and exact posting-scope checks remain.
+
 ### Career-Ops and search configuration map
 
 | User information | Where the agent configures it |
@@ -109,11 +253,12 @@ Do not start a scan, retention cleanup, schedule, application or message during 
 | CV, experience, education, skills and matching facts | Career-Ops onboarding → `cv.md`, `config/profile.yml`, `modes/_profile.md`; keep all three consistent |
 | Local cities / US remote eligibility | Career-Ops `config/profile.yml` → `location.scan_policy` (format below) |
 | Job search keywords and search location | Job Discovery `config/jobspy-ego.json` → `queries`, `location`; search parameters do not override eligibility |
+| Official ATS title terms, age, ATS selection and company cap | `config/official-ats.json`; location eligibility remains in the Career-Ops profile |
 | Enabled sources | `config/discovery-adapters.v1.json` → each `enabled`, plus `minimum_successful_adapters` |
 | Employer exclusions | Source configs' `employer_exclusions`; use explicit user choices, `[]` when none, preserve each adapter's rule schema |
 | Jobright role, location, seniority, work model and experience filters | User-accepted browser filters → `config/jobright.json` `filter_snapshot` values/codes/visible_controls; capture them, never invent them |
 | Standalone Google ATS search | `config/google-ats-direct.json` → role/location/negative terms and official_scope; run its validator after editing |
-| Recruiting-post search | `linkedin-post-scan/config/post-scan.json` → role/location/phrase groups and paths |
+| Recruiting-post search | `config/linkedin-post-scan.json` → role/location/phrase groups and paths |
 | Worker model, concurrency, report threshold, retention TTL | `config/daily-scan-runtime.json`; choose a host-supported model and explain retention before a real run |
 | Mailbox identity, login and timezone | Private `.local/gmail-job-reply-review/accounts.json` with `primary` and `secondary` email-address strings; primary uses the connected Gmail app, secondary uses authenticated Chrome through the host's native browser tool. The Gmail Skill currently uses America/Los_Angeles for primary register dates |
 
@@ -194,13 +339,14 @@ After creating/configuring files, the agent must also:
 
 ## Included Skills
 
-This repository contains **8 Skills**, each under `.agents/skills/<name>/`. The links
+This repository contains **9 Skills**, each under `.agents/skills/<name>/`. The links
 below open their actual instructions. Skill files are included in the checkout; cloning
 alone does not prove that your agent has loaded or globally installed them.
 
 | Skill name | What it does |
 | --- | --- |
 | [career-ops-daily-linkedin-scan](.agents/skills/career-ops-daily-linkedin-scan/SKILL.md) | Run or verify configured job sources, score jobs and save reports; supports recovery, usage comparison and scheduling. Does not submit applications. |
+| [career-ops-perm-scan](.agents/skills/career-ops-perm-scan/SKILL.md) | Refresh the supplied PERM tracker and filter Daily Scan to named normal-status employers before scoring. Does not submit applications. |
 | [career-ops-expand-report](.agents/skills/career-ops-expand-report/SKILL.md) | Expand one selected compact report into a complete Career-Ops report. |
 | [career-ops-tailored-resume](.agents/skills/career-ops-tailored-resume/SKILL.md) | Create a truthful one-page Word resume for one existing report; checks evidence, JD coverage and page fit. |
 | [career-ops-ego-apply](.agents/skills/career-ops-ego-apply/SKILL.md) | Prepare and submit a selected application or frozen batch, resolve answers from approved facts and verify the outcome. Can submit applications. |
@@ -209,7 +355,7 @@ alone does not prove that your agent has loaded or globally installed them.
 | [technical-interview-prepare](.agents/skills/technical-interview-prepare/SKILL.md) | Research scheduled interview rounds and recent questions; maintain prep documents and a separate evidence record. |
 | [process-infographic](.agents/skills/process-infographic/SKILL.md) | Read Career-Ops application counts and Career Docs interview records; dynamically generate process charts with configurable source paths. |
 
-Open this repository in your agent and check its available Skill list against the eight
+Open this repository in your agent and check its available Skill list against the nine
 names above. Use your host's Skill loader if any are missing; you can also explicitly
 ask the agent to read the linked `SKILL.md` for the task. With a host that supports
 `$skill-name` invocation, for example:
@@ -232,7 +378,7 @@ Standalone Google ATS and repair commands are CLI utilities, not additional Skil
 | Skill | Supplied by / purpose |
 | --- | --- |
 | `ego-browser` | [Ego Lite](https://github.com/citrolabs/ego-lite); lets the agent operate the browser. Required for browser workflows. |
-| `career-ops` | [Career-Ops](https://github.com/career-ops-hq/career-ops); its own job-management/onboarding workflow. Distinct from the eight Job Discovery Skills. |
+| `career-ops` | [Career-Ops](https://github.com/career-ops-hq/career-ops); its own job-management/onboarding workflow. Distinct from the nine Job Discovery Skills. |
 | `obsidian-markdown` | Install this external Skill through your host's Skill catalog; the interview-prep Skill uses its Obsidian Markdown conventions. |
 
 These external Skills are not copied into this repository. Installing a Skill does not
@@ -350,12 +496,12 @@ missing credentials still stop an actual scan. Dry-run makes no paid request.
 
 Runtime writers create `runs/`, `.local/` and Post Scan data/report directories.
 `assets/README.md` preserves the input directory; use `mkdir -p .tmp` for hand-authored
-resume plans. `docs/`, `audits/` and `drafts/` are not required in a public checkout.
+resume plans. Private documentation and evidence under `docs/` are not required in a public checkout.
 
 ## Check and run
 
 ```bash
-python3 adapters/jobspy_linkedin_scan.py --runtime-check
+python3 src/adapters/jobspy_linkedin_scan.py --runtime-check
 ../JobSpy/.venv/bin/python -c "from jobspy import scrape_jobs; assert callable(scrape_jobs)"
 node --input-type=module -e "import { loadCareerInterfaces } from './src/commit-scan.mjs'; await loadCareerInterfaces('../career-ops'); console.log('interfaces OK')"
 npm run daily-scan:sources -- --run runs/installation-preview --dry-run
@@ -382,7 +528,7 @@ and runs retention but does not apply to jobs. Invoke `$career-ops-ego-apply` se
 for an explicitly selected application scope. Other workflows use their named Skills.
 
 Repair tools now require `--manifest FILE`. Preview first; applying report repair also
-requires `--plan-sha256 HASH`, and excluded-posting repair requires `--expected-plan-hash HASH`.
+requires saving the dry-run JSON and passing `--plan-file PREVIEW.json`, and excluded-posting repair requires saving the dry-run JSON and passing `--plan-file PREVIEW.json`.
 Original run evidence remains immutable. Manifest examples are in `examples/` and must
 be replaced with the exact reviewed run/posting identities, never guessed by title.
 
@@ -390,6 +536,19 @@ be replaced with the exact reviewed run/posting identities, never guessed by tit
 
 The initial code snapshot is published. Validation covers the checks listed here;
 it does not establish complete online workflow coverage.
+The 2026-10-27 update passed **318/318** isolated public tests and **321/321**
+development tests. It updates the source layout, official ATS and optional PERM
+tools, JD-only scoring, scan preparation, private answer storage, mailbox
+transactions and interview-document checks. PERM history remains disabled by
+default. The public test runner works without private release tooling.
+The full synthetic Career-Ops integration E2E passed **673 assertions / 268 CLI
+calls**; scan preparation passed **133 assertions / 75 calls**, and private-answer
+storage passed **19 scenarios**. These checks use fictional data and do not
+establish live source coverage, model judgment quality or application acceptance.
+Public source, fixtures, documentation and reachable Git history were reviewed for
+private candidate data, local paths and credentials; only the public GitHub handle
+and noreply commit address remain as maintainer attribution.
+
 The 2026-10-11 update passed **306/306** isolated public tests and the full
 Career-Ops integration E2E: **374 assertions across 151 CLI calls** with fictional
 data and installed upstream writers. It includes code/data-root separation,
@@ -427,7 +586,7 @@ reload were not verified. No real application, message or production retention w
 for testing; a one-posting acquisition does not establish source coverage.
 Private golden tests, original captured JD fixtures, logs, reports, historical manifests,
 credentials, browser state, private templates and development documents are not distributed.
-MIT and third-party notices are included.
+The MIT license and upstream compatibility-code attribution are included in `LICENSE`.
 
 
 ## Repeatable local setup and updates
@@ -474,7 +633,51 @@ notes to add new required fields instead of replacing entire files. Back up nece
 data separately; reverting Git does not reverse database migrations. `setup-check` inventories
 all workflows and can report unselected sources; `setup` filters checks by selection.
 
+For installations from before 2026-10-27, update only the script paths in existing
+`config/discovery-adapters.v1.json` commands from `adapters/` to `src/adapters/`;
+preserve interpreters, enabled sources and personal filters. Add the optional
+official ATS source only when selected, using its current example.
+
+Post-scan storage now uses schema v2 at
+`.local/linkedin-post-scan/data/linkedin-post-scan.db`, with configuration at
+`config/linkedin-post-scan.json` and reports under `.local/outputs/linkedin-post-scan/`.
+There is no v1-to-v2 migration. Existing post-scan users should keep the previous
+revision `3ce4b8a` for that workflow until a reviewed migration preserves their
+outreach and exclusion history; do not substitute an empty v2 database. Stop writers
+and back up the old `linkedin-post-scan/config/`, `data/` and `reports/` directories.
+Their private files remain ignored by Git. New installations start with v2.
+
 `npm test` builds a disposable checkout with fixed test policies and independent Git history.
 It does not read runtime configuration or adjacent private repositories. The suite alone
 does not prove account access, live acquisition, Word rendering or application acceptance;
 the separately observed checks and their limits are listed above.
+
+### Prepare captured evaluations
+
+After baseline and serial source collection, prepare the captured run with:
+
+```bash
+npm run daily-scan:prepare -- --run runs/RUN_ID --career-ops ../career-ops
+```
+
+This combines, validates, resolves canonical URLs and plans assignments, then validates
+the changed artifacts. Baseline retains retention and usage startup; prepare does not
+collect, score or commit. It refuses assigned or closed runs before mutation. See the
+[preparation contract](.agents/skills/career-ops-daily-linkedin-scan/references/workflow-contract.md#evaluation-preparation)
+for standalone diagnostics, recovery and the existing runtime/blacklist/resolver options.
+Run `npm run test:daily-scan:prepare` for isolated CLI equivalence and failure acceptance.
+
+### Scoring research
+
+New Daily Scan plans freeze `research_version: 0`: evaluate complete JDs against
+locked candidate facts and scoring rules without external company, culture,
+operating-risk or market-salary research. Workers omit `research` and external
+research citations; the merger rejects research payloads for these plans.
+Use salary, responsibilities and work practices actually stated in the JD. Missing
+facts remain partial/unknown with concrete confidence questions. The five-dimension
+holistic rubric, 4.0 threshold, eligibility/level gates and work-authorization
+judgments remain. Acquisition and exact posting-identity verification continue.
+Historical research-enabled plans and reports keep their original sources and
+validation; no old evidence is removed. Run `npm run test:daily-scan:research` for
+isolated JD-only persistence and historical research-compatibility acceptance;
+its artifacts do not prove live model behavior or measured token savings.

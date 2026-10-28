@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,10 +5,8 @@ import { fileURLToPath } from 'node:url';
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PROJECT_ROOT_REAL = realpathSync(PROJECT_ROOT);
 const ADAPTER_ID = /^[a-z0-9][a-z0-9-]*$/;
-const SHA256 = /^[a-f0-9]{64}$/;
 export const DEFAULT_REGISTRY_PATH = path.join(PROJECT_ROOT, 'config/discovery-adapters.v1.json');
 
-const digest = content => createHash('sha256').update(content).digest('hex');
 const isObject = value => value && typeof value === 'object' && !Array.isArray(value);
 
 function readJson(file, label) {
@@ -37,11 +34,11 @@ function validateCommand(value, label) {
   }
 }
 
-function sourceConfigHash(file, label) {
+function sourceConfigContent(file, label) {
   const { value, text } = readJson(file, label);
   if (!Number.isInteger(value.schema_version) || value.schema_version < 1) throw new Error(`${label} must define schema_version`);
   if (!Number.isInteger(value.max_post_age_hours) || value.max_post_age_hours < 1) throw new Error(`${label} must define a positive max_post_age_hours`);
-  return digest(text);
+  return String(text);
 }
 
 export function loadAdapterRegistry(file = process.env.JOB_DISCOVERY_ADAPTER_REGISTRY || DEFAULT_REGISTRY_PATH) {
@@ -63,16 +60,16 @@ export function loadAdapterRegistry(file = process.env.JOB_DISCOVERY_ADAPTER_REG
     if (typeof definition.employer_exclusions !== 'boolean') throw new Error(`${adapterId}.employer_exclusions must be boolean`);
 
     let configFile;
-    let configSha256;
+    let configContent;
     if (strictDaily && !('config' in definition)) throw new Error(`${adapterId}.config is required in the daily registry`);
     if ('config' in definition && definition.enabled !== false) {
       configFile = projectFile(definition.config, `${adapterId}.config`);
-      configSha256 = sourceConfigHash(configFile, `${adapterId} config`);
+      configContent = sourceConfigContent(configFile, `${adapterId} config`);
     }
     adapters[adapterId] = {
       ...definition,
       enabled: definition.enabled ?? true,
-      ...(configFile ? { config_file: configFile, config_sha256: configSha256 } : {}),
+      ...(configFile ? { config_file: configFile, config_content: configContent } : {}),
     };
   }
 
@@ -82,7 +79,7 @@ export function loadAdapterRegistry(file = process.env.JOB_DISCOVERY_ADAPTER_REG
       || registry.minimum_successful_adapters > enabled) {
     throw new Error(`adapter registry minimum_successful_adapters must be between 1 and enabled adapter count (${enabled})`);
   }
-  return { ...registry, profile_id: profileId, adapters, file: resolved, sha256: digest(text) };
+  return { ...registry, profile_id: profileId, adapters, file: resolved, content: String(text) };
 }
 
 export function snapshotAdapterProfile(registryFile) {
@@ -92,14 +89,14 @@ export function snapshotAdapterProfile(registryFile) {
     if (!definition.enabled) continue;
     adapterDefinitions[adapterId] = {
       ...('command' in definition ? { command: [...definition.command] } : {}),
-      ...('config' in definition ? { config: definition.config, config_sha256: definition.config_sha256 } : {}),
+      ...('config' in definition ? { config: definition.config, config_content: definition.config_content } : {}),
       employer_exclusions: definition.employer_exclusions,
     };
   }
   return {
     schema_version: 1,
     profile_id: registry.profile_id,
-    registry_sha256: registry.sha256,
+    registry_content: registry.content,
     minimum_successful_adapters: registry.minimum_successful_adapters,
     adapters: Object.keys(adapterDefinitions),
     adapter_definitions: adapterDefinitions,
@@ -108,7 +105,7 @@ export function snapshotAdapterProfile(registryFile) {
 
 function validateProfile(profile, label, verifyConfigs = false) {
   if (!isObject(profile) || profile.schema_version !== 1 || typeof profile.profile_id !== 'string' || !profile.profile_id) throw new Error(`${label} is invalid`);
-  if (!SHA256.test(String(profile.registry_sha256 ?? ''))) throw new Error(`${label}.registry_sha256 is invalid`);
+  if (typeof profile.registry_content !== 'string') throw new Error(`${label}.registry_content is invalid`);
   if (!Array.isArray(profile.adapters) || !profile.adapters.length || !isObject(profile.adapter_definitions)) throw new Error(`${label} must contain enabled adapters`);
   if (new Set(profile.adapters).size !== profile.adapters.length
       || profile.adapters.some(adapterId => !ADAPTER_ID.test(String(adapterId)) || !(adapterId in profile.adapter_definitions))
@@ -122,12 +119,12 @@ function validateProfile(profile, label, verifyConfigs = false) {
     if ('config' in definition && (typeof definition.config !== 'string' || !definition.config || path.isAbsolute(definition.config))) {
       throw new Error(`${label}.${adapterId}.config must be a project-relative path`);
     }
-    if ('config' in definition && !SHA256.test(String(definition.config_sha256 ?? ''))) throw new Error(`${label}.${adapterId}.config_sha256 is invalid`);
+    if ('config' in definition && typeof definition.config_content !== 'string') throw new Error(`${label}.${adapterId}.config_content is invalid`);
     if (profile.profile_id === 'daily' && (!definition.command || !definition.config)) throw new Error(`${label}.${adapterId} lacks its frozen command/config`);
     if (verifyConfigs && definition.config) {
       const configFile = projectFile(definition.config, `${label}.${adapterId}.config`);
-      if (sourceConfigHash(configFile, `${label}.${adapterId} config`) !== definition.config_sha256) {
-        throw new Error(`${label}.${adapterId} config hash changed after baseline capture`);
+      if (sourceConfigContent(configFile, `${label}.${adapterId} config`) !== definition.config_content) {
+        throw new Error(`${label}.${adapterId} config changed after baseline capture`);
       }
     }
   }

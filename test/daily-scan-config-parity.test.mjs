@@ -5,10 +5,10 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSy
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { collectLinkedIn } from '../adapters/egobrowser_linkedin_scan.mjs';
+import { collectLinkedIn } from '../src/adapters/egobrowser_linkedin_scan.mjs';
 
-const JOBSPY = fileURLToPath(new URL('../adapters/jobspy_linkedin_scan.py', import.meta.url));
-const EGO = fileURLToPath(new URL('../adapters/egobrowser_linkedin_scan.mjs', import.meta.url));
+const JOBSPY = fileURLToPath(new URL('../src/adapters/jobspy_linkedin_scan.py', import.meta.url));
+const EGO = fileURLToPath(new URL('../src/adapters/egobrowser_linkedin_scan.mjs', import.meta.url));
 const CONFIG = fileURLToPath(new URL('../config/jobspy-ego.json', import.meta.url));
 
 test('both LinkedIn adapters derive scope from jobspy-ego.json with no local fallback', () => {
@@ -168,5 +168,51 @@ test('recommendation collector records missing modules, delayed wrong links and 
     assert.equal(summary.retryable, false);
     assert.equal(summary.markdown_jobs, 0);
     if (expected === 'UNEXPECTED_DESTINATION') assert.ok(summary.top_applicant_recommendations.diagnostic.discovery_attempts > 1);
+  }
+});
+
+test('direct collector pins Seattle geography and rejects mismatched visible scope before capturing', async t => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'linkedin-location-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(path.join(root, 'src'));
+  copyFileSync(new URL('../src/employer-exclusions.mjs', import.meta.url), path.join(root, 'src/employer-exclusions.mjs'));
+  const config = JSON.parse(readFileSync(CONFIG, 'utf8'));
+  const helpers = { useOrCreateTaskSpace: async () => ({ id: 'fixture' }), cliLog() {},
+    openOrReuseTab: async () => {}, gotoAndWait: async () => {}, waitForLoad: async () => {}, wait: async () => {}, js: undefined };
+  const originals = Object.fromEntries(Object.keys(helpers).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  const exitCode = process.exitCode;
+  t.after(() => {
+    for (const [key, descriptor] of Object.entries(originals)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
+    process.exitCode = exitCode;
+  });
+  Object.assign(globalThis, helpers);
+  for (const [id, geo, label, time, expected] of [
+    ['canada', '101174742', 'Canada', 'r86400', 'FILTER_NOT_APPLIED'],
+    ['wrong-label', '90000091', 'Canada', 'r86400', 'FILTER_NOT_APPLIED'],
+    ['wrong-id', '101174742', 'Greater Seattle Area', 'r86400', 'FILTER_NOT_APPLIED'],
+    ['missing-label', '90000091', '', 'r86400', 'FILTER_NOT_APPLIED'],
+    ['wrong-time', '90000091', 'Greater Seattle Area', 'r604800', 'FILTER_NOT_APPLIED'],
+    ['hidden-time', '90000091', 'Greater Seattle Area', 'r86400', 'FILTER_NOT_APPLIED'],
+    ['seattle', '90000091', 'Greater Seattle Area', 'r86400', 'ZERO_CARDS'],
+  ]) {
+    let captured = false;
+    const urls = [];
+    globalThis.openOrReuseTab = globalThis.gotoAndWait = async url => urls.push(url);
+    globalThis.js = async input => {
+      if (input.includes('page_title: document.title')) return { page_url: `https://www.linkedin.com/jobs/search-results/?geoId=${geo}&f_TPR=${time}`,
+        effective_location: label, time_filter_visible: id !== 'hidden-time', login_form: false, challenge: false, auth_path: false, login_text: false };
+      if (input.includes('const cards = []')) { captured = true; return []; }
+      return { moved: false };
+    };
+    await collectLinkedIn({ ...config, discovery_root: root, run_id: id, queries: ['backend'], results_wanted: 25,
+      top_applicant_recommendations: { ...config.top_applicant_recommendations, enabled: false, required: false } });
+    const summary = JSON.parse(readFileSync(path.join(root, 'runs', id, 'sources/ego-browser/summary.json')));
+    assert.equal(summary.failure_class, expected);
+    assert.equal(summary.markdown_jobs, 0);
+    assert.equal(captured, id === 'seattle');
+    assert.equal(new URL(urls[0]).searchParams.get('geoId'), '90000091');
   }
 });

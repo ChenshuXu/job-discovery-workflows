@@ -2,7 +2,7 @@
 
 Read the selected recipe after `application-batch.mjs` freezes the report IDs. The hosted form remains authoritative; verify visible company, role, requisition, files, required controls, and saved values before submission.
 
-## Simplify on every supported ATS
+## Simplify in the legacy visible workflow
 
 - Start Simplify at most once per page, and do not start it where a recipe forbids it.
 - If it hangs or corrupts data, stop immediately and do not restart it on that page.

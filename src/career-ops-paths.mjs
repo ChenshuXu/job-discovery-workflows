@@ -19,9 +19,9 @@ function canonical(file) {
 export function resolveCareerPaths(requested) {
   const codeRoot = careerOpsCodeRoot(requested);
   const resolverFile = path.join(codeRoot, 'path-resolver.mjs');
-  let dataRoot, trackerFile, trackerWriteFile;
+  let dataRoot, trackerFile, trackerWriteFile, resolver;
   if (existsSync(resolverFile)) {
-    const resolver = require(resolverFile);
+    resolver = require(resolverFile);
     const previous = process.cwd();
     process.chdir(codeRoot);
     try {
@@ -43,12 +43,15 @@ export function resolveCareerPaths(requested) {
   }
   const configured = (key, fallback) => process.env[key]?.trim()
     ? path.resolve(codeRoot, process.env[key].trim()) : path.join(dataRoot, fallback);
+  // Profile overrides follow the caller's cwd; resolve before starting a child in codeRoot.
+  const profileFile = resolver?.getProfilePath?.() ?? (process.env.CAREER_OPS_PROFILE?.trim()
+    ? path.resolve(process.env.CAREER_OPS_PROFILE.trim()) : path.join(dataRoot, 'config/profile.yml'));
   return {
     codeRoot, dataRoot, trackerFile, trackerWriteFile,
     reportsRoot: path.join(dataRoot, 'reports'),
     healthReportsRoot: path.resolve(dataRoot, process.env.CAREER_OPS_REPORTS || 'reports'),
     portalsFile: configured('CAREER_OPS_PORTALS', 'portals.yml'), jdsRoot: path.join(dataRoot, 'jds'), outputRoot: path.join(dataRoot, 'output'),
-    cvFile: path.join(dataRoot, 'cv.md'), profileFile: path.join(dataRoot, 'config/profile.yml'),
+    cvFile: path.join(dataRoot, 'cv.md'), profileFile,
     profileSummaryFile: path.join(dataRoot, 'modes/_profile.md'), customRulesFile: path.join(dataRoot, 'modes/_custom.md'),
     sharedRulesFile: path.join(codeRoot, 'modes/_shared.md'), ofertaRulesFile: path.join(codeRoot, 'modes/oferta.md'),
     blacklistFile: path.join(dataRoot, 'data/blacklist.md'),
@@ -66,6 +69,7 @@ export function careerOpsEnv(pathsOrRoot, overrides = {}) {
   const paths = typeof pathsOrRoot === 'object' ? pathsOrRoot : resolveCareerPaths(pathsOrRoot);
   return { ...process.env, CAREER_OPS_CODE_ROOT: paths.codeRoot,
     CAREER_OPS_ROOT: paths.dataRoot, CAREER_OPS_DATA_DIR: paths.dataRoot,
+    CAREER_OPS_PROFILE: paths.profileFile,
     CAREER_OPS_TRACKER: paths.trackerFile,
     CAREER_OPS_SCAN_HISTORY: paths.scanHistoryFile, CAREER_OPS_PIPELINE: paths.pipelineFile,
     CAREER_OPS_FOLLOWUPS: paths.followupsFile, ...overrides };
@@ -76,10 +80,11 @@ export function careerOpsEnv(pathsOrRoot, overrides = {}) {
 // target. The returned relative path remains the report identity used in scans.
 export function resolveCareerReportLink(pathsOrRoot, reportField, reportNumber = null) {
   const paths = typeof pathsOrRoot === 'object' ? pathsOrRoot : resolveCareerPaths(pathsOrRoot);
-  const links = [...String(reportField).matchAll(/\[(\d+)\]\(([^)]+)\)/g)]
-    .filter(match => reportNumber == null || Number(match[1]) === Number(reportNumber));
+  const { parseMarkdownLinks } = require(path.join(paths.codeRoot, 'tracker-parse.mjs'));
+  const links = parseMarkdownLinks(String(reportField ?? ''))
+    .filter(link => /^\d+$/.test(link.label) && (reportNumber == null || Number(link.label) === Number(reportNumber)));
   if (links.length !== 1) throw new Error('Career-Ops report link must identify one exact report');
-  const target = links[0][2];
+  const target = links[0].target;
   const trackerRelative = path.resolve(path.dirname(paths.trackerFile), target);
   const rootRelative = path.resolve(paths.dataRoot, target);
   // Upstream verify-pipeline accepts old root-relative links after trying the

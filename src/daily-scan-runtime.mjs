@@ -13,6 +13,7 @@ export function validateDailyScanRuntime(value, label = 'daily-scan runtime') {
   if (!Number.isInteger(value.failure?.per_job_retry_limit) || value.failure.per_job_retry_limit < 0) throw new Error(`${label}: per_job_retry_limit must be a non-negative integer`);
   if (!Number.isInteger(value.retention?.evaluated_unapplied_ttl_days) || value.retention.evaluated_unapplied_ttl_days < 1) throw new Error(`${label}: evaluated_unapplied_ttl_days must be a positive integer`);
   if (!['shadow', 'enforce'].includes(value.semantic_dedup_mode)) throw new Error(`${label}: semantic_dedup_mode must be shadow or enforce`);
+  if (value.perm_history !== undefined && typeof value.perm_history?.enabled !== 'boolean') throw new Error(`${label}: perm_history.enabled must be a boolean`);
   return structuredClone(value);
 }
 

@@ -16,6 +16,9 @@ import { postingKey } from './posting-identity.mjs';
 import { validateRun } from './run-contract.mjs';
 import { loadScanResults } from './scan-results.mjs';
 import { finishScanUsage, observeScanUsage } from './scan-usage.mjs';
+import { assertPermEmployersUnchanged, snapshotPermEmployers } from './perm-employers.mjs';
+import { snapshotPermHistory, auditPermHistory } from './perm-history.mjs';
+import { loadDailyScanRuntime } from './daily-scan-runtime.mjs';
 
 const unique = values => [...new Set((values ?? []).map(String))].sort();
 const same = (left, right) => JSON.stringify(unique(left)) === JSON.stringify(unique(right));
@@ -29,7 +32,9 @@ const createJson = (file, value) => {
 export { checkCareerOpsHealth as runPipelineCheck } from './career-ops-health.mjs';
 import { checkCareerOpsHealth as runPipelineCheck } from './career-ops-health.mjs';
 
-export function captureBaseline({ runRoot, careerRoot, maintenance = null }) {
+export function captureBaseline({ runRoot, careerRoot, maintenance = null, permEmployers = null }) {
+  if (permEmployers) assertPermEmployersUnchanged(permEmployers);
+  const permHistoryEnabled = loadDailyScanRuntime().perm_history?.enabled === true;
   const root = path.resolve(runRoot);
   const career = path.resolve(careerRoot);
   mkdirSync(root, { recursive: true });
@@ -43,10 +48,12 @@ export function captureBaseline({ runRoot, careerRoot, maintenance = null }) {
     location_policy: loadLocationPolicy(resolveCareerPaths(career).profileFile),
     pipeline: runPipelineCheck(career),
     ...(maintenance ? { maintenance } : {}),
+    ...(permEmployers ? { perm_employers: permEmployers } : {}),
   };
   if (baseline.pipeline.exit_code !== 0 || baseline.pipeline.errors || baseline.pipeline.warnings !== 0) {
     throw new Error(`Career-Ops baseline must be clean: ${JSON.stringify(baseline.pipeline)}`);
   }
+  if (permHistoryEnabled) baseline.perm_history = { ...snapshotPermHistory(), company_review: 'company-review-v1' };
   createJson(file, baseline);
   return { baseline, file };
 }
@@ -204,11 +211,18 @@ export async function auditScanReceipt({
   const hardExclusion = committedResults.filter(item => item.hard_exclusion).map(item => item.posting_key);
   const locationScopeFile = path.join(root, 'triage/location-scope.json');
   const hasLocationScopeAudit = existsSync(locationScopeFile);
+  const permScopeFile = path.join(root, 'triage/perm-employer-scope.json');
+  const permScope = existsSync(permScopeFile) ? JSON.parse(readFileSync(permScopeFile, 'utf8')) : null;
+  let permHistory = null;
+  try {
+    permHistory = auditPermHistory({ runRoot: root, run, results, reports, dataRoot: resolveCareerPaths(career).dataRoot, requirePersistence });
+  } catch (error) { errors.push(error.message); }
 
   const receipt = {
     schema_version: 4,
     run_id: path.basename(root),
     status: errors.length ? 'FAILED' : 'COMPLETE',
+    ...(permHistory ? { perm_history: permHistory } : {}),
     acquired_keys: acquired,
     scored_keys: evaluatedKeys,
     eligible_evaluated_keys: eligible,
@@ -226,6 +240,15 @@ export async function auditScanReceipt({
     location_exclusion_count: Number(run.acquisition.location_exclusion_count ?? 0),
     location_ambiguous_count: Number(run.acquisition.location_ambiguous_count ?? 0),
     location_scope_audit: hasLocationScopeAudit ? 'triage/location-scope.json' : null,
+    ...(baseline.perm_employers ? { perm_employer_scope: {
+      catalog: baseline.perm_employers.catalog,
+      source_url: baseline.perm_employers.catalog.source_url,
+      source_snapshot_at: baseline.perm_employers.catalog.source_snapshot_at,
+      audit: 'triage/perm-employer-scope.json',
+      pre_scope_count: permScope?.pre_scope_count ?? null,
+      accepted_count: permScope?.accepted_count ?? null,
+      excluded_count: permScope?.excluded_count ?? null,
+    } } : {}),
     blacklist_exclusion_count: Number(run.acquisition.blacklist_exclusion_count ?? 0),
     blacklist_exclusion_keys: unique((run.acquisition.blacklist_exclusions ?? []).map(item => item.posting_key)),
     blacklist_audit: results.plan.blacklist_audit ?? null,
@@ -261,7 +284,9 @@ if (isCli) {
     const value = name => { const index = process.argv.indexOf(name); return index >= 0 ? process.argv[index + 1] : null; };
     const runRoot = value('--run'); const careerRoot = value('--career-ops');
     if (!runRoot || !careerRoot) throw new Error('Usage: node src/verify-scan-receipt.mjs --run runs/<run-id> --career-ops ../career-ops [--capture-baseline]');
-    const result = process.argv.includes('--capture-baseline') ? captureBaseline({ runRoot, careerRoot }) : await verifyAndWriteReceipt({ runRoot, careerRoot });
+    const permAt = process.argv.indexOf('--perm-employers');
+    const result = process.argv.includes('--capture-baseline') ? captureBaseline({ runRoot, careerRoot,
+      ...(permAt >= 0 ? { permEmployers: snapshotPermEmployers(process.argv[permAt + 1]) } : {}) }) : await verifyAndWriteReceipt({ runRoot, careerRoot });
     console.log(JSON.stringify(result, null, 2));
     if (result.receipt?.status === 'FAILED') process.exit(1);
   } catch (error) { console.error(error.stack || error.message); process.exit(1); }
