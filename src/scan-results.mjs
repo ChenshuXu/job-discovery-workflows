@@ -50,7 +50,8 @@ export function loadScanResults(runDir, { allowLegacy = false } = {}) {
   const evaluated = [...byKey.values()].filter(item => item.status === 'EVALUATED');
   const failed = [...byKey.values()].filter(item => item.status === 'FAILED');
   const candidates = evaluated.filter(item => validatedKeys.has(item.posting_key)
-    && Number(item.score) >= plan.runtime.reporting.full_report_threshold && item.hard_exclusion === false);
+    && Number(item.score) >= plan.runtime.reporting.full_report_threshold && item.hard_exclusion === false
+    && item.level_signal !== 'staff_equivalent');
   if (candidates.some(item => item.report_allowed !== true || !item.report)) errors.push('candidate set contains a result blocked by scoring safety');
   return { root, plan, historical_rule_snapshots_verified: !(allowLegacy && [4, 5, 6, 7, 8].includes(plan.result_schema_version)), byKey, evaluated, failed, candidates, errors };
 }

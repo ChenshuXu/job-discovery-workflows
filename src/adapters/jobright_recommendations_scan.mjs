@@ -8,7 +8,7 @@ import { postingKey } from '../posting-identity.mjs';
 
 const ADAPTER_ID = 'jobright';
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-export const DEFAULT_JOBRIGHT_CONFIG = path.join(PROJECT_ROOT, 'config/jobright.json');
+const DEFAULT_JOBRIGHT_CONFIG = path.join(PROJECT_ROOT, 'config/jobright.json');
 
 const clean = value => String(value ?? '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
 const cleanLines = value => String(value ?? '').replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
@@ -189,10 +189,6 @@ export function buildJobrightArtifacts({ runId, config, fixture, capturedAt = ne
       errors.push(errorDetail('detail', reason, id));
       continue;
     }
-    if (detail.freshness_eligible === false || detail.outside_window === true) {
-      dispositions.push({ jobright_id: id, status: 'freshness_excluded', reason: 'outside_past_24_hours', evidence: metadata(detail.publish_time_desc ?? card.publish_time_desc) });
-      continue;
-    }
     const company = clean(detail.company ?? card.company);
     const title = clean(detail.title ?? detail.role ?? card.title);
     const description = cleanLines(detail.description ?? detail.body ?? detail.jd);
@@ -217,8 +213,9 @@ export function buildJobrightArtifacts({ runId, config, fixture, capturedAt = ne
       continue;
     }
     const workplace = clean(detail.workplace_type ?? detail.workplaceType ?? card.workplace_type).toLowerCase() || 'unknown';
-    const postedAt = config.publish_time_has_timezone === true && /(?:Z|[+-]\d\d:\d\d)$/i.test(clean(detail.publish_time_raw))
-      ? clean(detail.publish_time_raw) : '';
+    // Jobright's publish time carries no zone, so it is kept raw and Posted stays empty
+    // unless a zone is explicit. The 24-hour window is Jobright's own daysAgo filter.
+    const postedAt = /(?:Z|[+-]\d\d:\d\d)$/i.test(clean(detail.publish_time_raw)) ? clean(detail.publish_time_raw) : '';
     const job = {
       jobright_id: id,
       jobright_url: jobrightUrl,
@@ -248,7 +245,7 @@ export function buildJobrightArtifacts({ runId, config, fixture, capturedAt = ne
     errors.push(errorDetail('conservation', 'unique Jobright IDs do not have exactly one terminal disposition'));
   }
   if (rawRows - duplicateRows !== byId.size) errors.push(errorDetail('conservation', 'raw_rows - duplicate_rows does not equal unique_list_jobs'));
-  const status = errors.length ? 'FAILED' : jobs.length ? 'SUCCESS' : byId.size ? 'EMPTY' : 'EMPTY';
+  const status = errors.length ? 'FAILED' : jobs.length ? 'SUCCESS' : 'EMPTY';
   const summary = {
     schema_version: 1,
     run_id: runId,
@@ -259,7 +256,7 @@ export function buildJobrightArtifacts({ runId, config, fixture, capturedAt = ne
     markdown_jobs: jobs.length,
     errors: errors.length,
     error_details: errors,
-    ...(fixture?.response_errors?.length ? { retryable: false } : {}),
+    ...(status === 'FAILED' ? { retryable: false } : {}),
     captured_at: capturedAt,
     discovery_timezone: timezone || 'America/Los_Angeles',
     max_post_age_hours: config.max_post_age_hours,
@@ -387,10 +384,11 @@ function fromNetworkItem(item) {
   };
 }
 
-export async function drainJobrightBatches(responseCounts = { jobs: 0, filter: 0 }) {
+// Filter codes seen in earlier drains are carried in, so a change between drains is caught too.
+export async function drainJobrightBatches(responseCounts = { jobs: 0, filter: 0 }, priorFilterCodes = null) {
   const batches = [];
   const errors = [];
-  let filterCodes = null;
+  let filterCodes = priorFilterCodes;
   for (const event of await globalThis.drainEvents()) {
     if ((event.method || event.type) !== 'Network.responseReceived') continue;
     const params = event.params || event;
@@ -503,14 +501,14 @@ export async function collectJobrightRecommendations({ config, runId }) {
   let terminationReason = 'max_scroll_steps';
   for (let step = 0; step < config.traversal.max_scroll_steps; step += 1) {
     await globalThis.wait(config.traversal.settle_seconds);
-    const observed = await drainJobrightBatches(responseCounts);
+    const observed = await drainJobrightBatches(responseCounts, filterCodes);
     responseErrors.push(...observed.errors);
     if (observed.filterCodes) filterCodes = observed.filterCodes;
     for (const batch of observed.batches) {
       responseCount += 1;
       batches.push(batch.map(item => item.card));
       for (const item of batch) details[item.jobright_id] = item.detail;
-      if (batch.length < config.traversal.page_size) { terminationReason = 'short_batch'; break; }
+      if (batch.length < config.traversal.page_size) terminationReason = 'short_batch';
     }
     if (observed.errors.length) { terminationReason = 'response_error'; break; }
     if (terminationReason === 'short_batch') break;
@@ -570,9 +568,16 @@ export async function runJobrightRecommendations({
   const cleanup = spawnSync('ego-browser', ['nodejs'], { input: cleanupProgram(taskSpaceName), encoding: 'utf8', maxBuffer: 1024 * 1024 });
   if (cleanup.stdout) process.stdout.write(cleanup.stdout);
   if (cleanup.stderr) process.stderr.write(cleanup.stderr);
-  if (cleanup.status !== 0) throw new Error(cleanup.error?.message || `ego-browser task-space cleanup exited ${cleanup.status}`);
-  if (!existsSync(path.join(sourceRoot, 'summary.json'))) throw new Error(result.error?.message || `ego-browser exited ${result.status}`);
-  return json(path.join(sourceRoot, 'summary.json'));
+  const summaryFile = path.join(sourceRoot, 'summary.json');
+  if (!existsSync(summaryFile)) throw new Error(result.error?.message || `ego-browser exited ${result.status}`);
+  if (cleanup.status !== 0) {
+    // A tab left open does not change what was captured; record it beside the result.
+    process.stderr.write(`${cleanup.error?.message || `ego-browser task-space cleanup exited ${cleanup.status}`}\n`);
+    const summary = json(summaryFile);
+    summary.warnings = [...new Set([...(summary.warnings ?? []), 'task_space_cleanup_failed'])];
+    writeFileSync(summaryFile, JSON.stringify(summary, null, 2) + '\n');
+  }
+  return json(summaryFile);
 }
 
 function arg(name) {
@@ -582,7 +587,7 @@ function arg(name) {
 
 async function main() {
   const runId = arg('--run-id');
-  if (!runId) throw new Error('Usage: node src/adapters/jobright_recommendations_scan.mjs --run-id ID [--fixture fixture.json] [--discovery-root PATH] [--config config/jobright.json]');
+  if (!runId) throw new Error('Usage: node src/adapters/jobright_recommendations_scan.mjs --run-id ID [--fixture fixture.json] [--discovery-root PATH] [--config config/jobright.json] [--captured-at ISO] [--timezone TZ] [--dry-run]');
   const configFile = arg('--config') || DEFAULT_JOBRIGHT_CONFIG;
   if (process.argv.includes('--dry-run')) {
     const config = loadJobrightConfig(configFile);

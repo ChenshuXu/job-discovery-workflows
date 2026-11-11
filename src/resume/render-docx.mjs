@@ -28,7 +28,7 @@ export function readDocxEntry(docxPath, entryName, required = true) {
   }
 }
 
-export function replaceDocumentXml(templatePath, outputPath, documentXml) {
+function replaceDocumentXml(templatePath, outputPath, documentXml) {
   const output = resolve(outputPath);
   using work = mkdtempDisposableSync(resolve(dirname(output), '.resume-docx-'));
   const entryPath = resolve(work.path, DOCUMENT_ENTRY);

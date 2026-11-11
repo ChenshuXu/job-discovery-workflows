@@ -10,5 +10,27 @@
   "worker-3": {
     "model": "gpt-6.1-sol",
     "reasoning_effort": "high"
+  },
+  "offline-worker": {
+    "model": "gpt-6-luna",
+    "reasoning_effort": "max"
+  },
+  "claude": {
+    "worker-1": {
+      "model": "sonnet",
+      "reasoning_effort": "high"
+    },
+    "worker-2": {
+      "model": "sonnet",
+      "reasoning_effort": "high"
+    },
+    "worker-3": {
+      "model": "sonnet",
+      "reasoning_effort": "high"
+    },
+    "offline-worker": {
+      "model": "sonnet",
+      "reasoning_effort": "high"
+    }
   }
 }

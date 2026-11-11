@@ -40,11 +40,11 @@ def workbook(name,rows,headers=HEAD):
     f=DATA/name; w=Workbook(); s=w.active; s.title='PERM'; s.append(headers)
     for r in rows:s.append(r)
     w.save(f); w.close(); return f
-def manifest(rows25, rows26, *, name='sources', headers=HEAD):
+def manifest(rows25, rows26, *, name='sources', headers=HEAD, years=(2025,2026), current_quarter=3):
     sources=[]
-    for fy,q,rows in [(2025,4,rows25),(2026,3,rows26)]:
+    for fy,q,rows in [(years[0],4,rows25),(years[1],current_quarter,rows26)]:
         x=workbook(f'{name}-{fy}.xlsx',rows,headers); pdf=DATA/f'{name}-{fy}.pdf';pdf.write_bytes(b'%PDF-1.4\nsynthetic layout\n%%EOF')
-        sources.append({'fiscal_year':fy,'quarter':q,'coverage_start':f'{fy-1}-10-01','coverage_end':f'{fy}-09-30' if q==4 else f'{fy}-06-30','xlsx':{'path':str(x),'url':f'https://www.dol.gov/{name}-{fy}.xlsx'},'layout':{'path':str(pdf),'url':f'https://www.dol.gov/{name}-{fy}.pdf'}})
+        sources.append({'fiscal_year':fy,'quarter':q,'coverage_start':f'{fy-1}-10-01','coverage_end':{1:f'{fy-1}-12-31',2:f'{fy}-03-31',3:f'{fy}-06-30',4:f'{fy}-09-30'}[q],'xlsx':{'path':str(x),'url':f'https://www.dol.gov/{name}-{fy}.xlsx'},'layout':{'path':str(pdf),'url':f'https://www.dol.gov/{name}-{fy}.pdf'}})
     f=DATA/f'{name}.json';f.write_text(json.dumps({'schema_version':1,'sources':sources}));return f
 try:
     run('query','--company','Acme, Inc.',ok=False)
@@ -132,6 +132,12 @@ try:
     evidence.unlink();run('preview','--companies',str(selection),'--id','bad',ok=False)
     pointer=json.loads(current.read_text());version=BOX/'.local/perm-history'/pointer['path'];layout=version/'layouts/FY2025_Q4.pdf';layout.chmod(0o600);original=layout.read_bytes();layout.write_bytes(b'not a PDF');run('query','--company','Acme, Inc.',ok=False);layout.write_bytes(original)
     pointer=json.loads(current.read_text());db=BOX/'.local/perm-history'/pointer['path']/'cases.sqlite';db.chmod(0o600);db.write_bytes(b'not a SQLite database');run('query','--company','Acme, Inc.',ok=False)
+    db.unlink()
+    rolled=manifest([row('K','Certified','2025-01-01','2026-01-15')],[row('L','Denied','2025-06-01','2026-11-20')],name='rolled',years=(2026,2027),current_quarter=1)
+    run('import','--manifest',str(rolled))
+    nextq=run('query','--company','Acme, Inc.')
+    check('the next fiscal-year pair imports and reports its own years',sorted(nextq['years'])==['2026','2027'] and nextq['years']['2027']['disclosed_cases']==1)
+    run('import','--manifest',str(manifest([row('M')],[row('N','Certified','2025-01-01','2026-01-15')],name='gap',years=(2024,2026))),ok=False)
     save();print(json.dumps({'status':'COMPLETE','artifact':str(OUT),'assertions':len(assertions)}))
 except Exception:
     save();raise

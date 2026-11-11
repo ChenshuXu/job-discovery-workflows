@@ -52,6 +52,9 @@ function loadConfig(options) {
     if (recommendations.date_posted_filter !== 'Past 24 hours' || config.max_post_age_hours !== 24) {
       throw new Error('top_applicant_recommendations requires Past 24 hours and max_post_age_hours=24');
     }
+    if (!Number.isSafeInteger(recommendations.max_pages) || recommendations.max_pages < 1) {
+      throw new Error('top_applicant_recommendations max_pages must be a positive integer');
+    }
   }
   for (const key of ['results_wanted', 'max_post_age_hours']) {
     if (!Number.isSafeInteger(config[key]) || config[key] <= 0) throw new Error(`config ${key} must be a positive integer`);
@@ -98,16 +101,28 @@ function main() {
     status = runBrowser(`const { collectLinkedIn } = await import(${JSON.stringify(import.meta.url)})\nawait collectLinkedIn(${JSON.stringify(config)})\n`);
     if (!fs.existsSync(path.join(runDir, 'summary.json'))) {
       fs.mkdirSync(runDir, { recursive: true });
-      fs.writeFileSync(path.join(runDir, 'summary.json'), JSON.stringify({ schema_version: 1, run_id: config.run_id, adapter: 'ego-browser', status: 'FAILED', raw_rows: 0, unique_jobs: 0, markdown_jobs: 0, errors: 1 }, null, 2) + '\n');
+      // The browser may have died after capturing some JDs; the summary must count them.
+      const jobsDir = path.join(runDir, 'jobs');
+      const captured = fs.existsSync(jobsDir) ? fs.readdirSync(jobsDir).filter(name => name.endsWith('.md')).length : 0;
+      fs.writeFileSync(path.join(runDir, 'summary.json'), JSON.stringify({ schema_version: 1, run_id: config.run_id, adapter: 'ego-browser', status: 'FAILED', raw_rows: captured, unique_jobs: captured, markdown_jobs: captured, errors: 1, retryable: true, failure_class: 'BOOTSTRAP_FAILED' }, null, 2) + '\n');
       fs.writeFileSync(path.join(runDir, 'excluded-employers.json'), JSON.stringify({ schema_version: 1, run_id: config.run_id, excluded_count: 0, results: [] }, null, 2) + '\n');
       status ||= 1;
     }
   } finally {
     const taskSpaceName = `career-ops linkedin ego scan ${config.run_id}`;
     cleanupStatus = runBrowser(`const taskSpaceName = ${JSON.stringify(taskSpaceName)}\nconst result = await completeTaskSpace(taskSpaceName, { keep: false })\nif (!result?.done) throw new Error('Task space cleanup was skipped: ' + JSON.stringify(result))\ncliLog('TASK_SPACE_CLOSED=' + taskSpaceName)\n`);
-    if (cleanupStatus) console.error(`LinkedIn adapter task space cleanup failed for run ${config.run_id}`);
+    if (cleanupStatus) {
+      console.error(`LinkedIn adapter task space cleanup failed for run ${config.run_id}`);
+      // A tab left open does not change what was captured; record it beside the result.
+      const summaryFile = path.join(runDir, 'summary.json');
+      if (fs.existsSync(summaryFile)) {
+        const summary = JSON.parse(fs.readFileSync(summaryFile, 'utf8'));
+        summary.warnings = [...new Set([...(summary.warnings ?? []), 'task_space_cleanup_failed'])];
+        fs.writeFileSync(summaryFile, JSON.stringify(summary, null, 2) + '\n');
+      } else status ||= cleanupStatus;
+    }
   }
-  return status || cleanupStatus;
+  return status;
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
@@ -271,7 +286,7 @@ function searchUrl(query, start = 0) {
   const params = new URLSearchParams({
     keywords: query,
     location: locationText,
-    f_TPR: `r${Math.max(3600, hoursOld * 3600)}`,
+    f_TPR: `r${hoursOld * 3600}`,
     sortBy: 'DD',
     start: String(start),
   })
@@ -449,7 +464,7 @@ async function verifyDirectSearchScope(query, stat) {
   }
 }
 
-async function findTopApplicantShowAllUrl(stat) {
+async function openProfileMatchResults(stat) {
   await openResultsPage(topApplicantRecommendations.landing_url)
   const ariaLabel = String(topApplicantRecommendations.show_all_aria_label)
   const sectionHeading = String(topApplicantRecommendations.section_heading)
@@ -534,11 +549,30 @@ async function findTopApplicantShowAllUrl(stat) {
   if (target.origin !== 'https://www.linkedin.com' || target.pathname !== '/jobs/search-results/') {
     throw sourceError('UNEXPECTED_DESTINATION', `${ariaLabel}: unexpected LinkedIn destination ${target.origin}${target.pathname}`, false)
   }
-  return target.toString()
+  const clicked = await js(`(() => {
+    const label = ${JSON.stringify(ariaLabel.replace(/\s+/g, ' ').trim().toLowerCase())}
+    const links = [...document.querySelectorAll('a')].filter(link =>
+      String(link.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim().toLowerCase() === label
+      && (link.offsetWidth || link.offsetHeight || link.getClientRects().length))
+    if (links.length === 1) links[0].click()
+    return { clicked: links.length === 1, count: links.length }
+  })()`)
+  if (!clicked?.clicked) throw sourceError('SELECTOR_AMBIGUOUS', `${ariaLabel}: expected one Show all link, found ${clicked?.count ?? 0}`, false)
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await wait(1)
+    const page = await requireHealthyPage(sectionHeading)
+    const landed = new URL(page.page_url)
+    if (landed.origin === 'https://www.linkedin.com' && landed.pathname === '/jobs/search-results/') {
+      stat.diagnostic.show_all_clicked_url = page.page_url
+      landed.searchParams.delete('currentJobId')
+      return landed.toString()
+    }
+  }
+  throw sourceError('UNEXPECTED_DESTINATION', `${ariaLabel}: Show all click did not reach LinkedIn search results`, false)
 }
 
 async function verifyTopApplicantFilter(stat) {
-  const health = await requireHealthyPage('top applicant recommendations')
+  const health = await requireHealthyPage('profile match recommendations')
   const filter = await js(`(() => {
     const expected = ${JSON.stringify(String(topApplicantRecommendations.date_posted_filter))}
     const normalize = value => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase()
@@ -549,7 +583,7 @@ async function verifyTopApplicantFilter(stat) {
     return {
       effective_filter: new URL(location.href).searchParams.get('f_TPR'),
       active_filter_control_count: activeControls.length,
-      filter_visible: activeControls.length === 1,
+      filter_visible: activeControls.length > 0,
     }
   })()`)
   Object.assign(stat.diagnostic, {
@@ -563,12 +597,13 @@ async function verifyTopApplicantFilter(stat) {
   const expectedFilter = `r${hoursOld * 3600}`
   if (effective.origin !== 'https://www.linkedin.com' || effective.pathname !== '/jobs/search-results/'
       || filter.effective_filter !== expectedFilter || !filter.filter_visible) {
-    throw sourceError('FILTER_NOT_APPLIED', `top applicant recommendations: ${topApplicantRecommendations.date_posted_filter} was not applied`, false)
+    throw sourceError('FILTER_NOT_APPLIED', `profile match recommendations: ${topApplicantRecommendations.date_posted_filter} was not applied`, false)
   }
 }
 
-async function collectResultCards(pageUrl, limit, label, stat, verifyPage = null) {
+async function collectResultCards(pageUrl, limit, label, stat, verifyPage = null, { stopWhenExhausted = false } = {}) {
   const cards = new Map()
+  let exhausted = false
   for (let pageStart = 0; pageStart < limit; pageStart += 25) {
     await openResultsPage(pageUrl(pageStart))
     if (verifyPage) await verifyPage(pageStart)
@@ -588,11 +623,15 @@ async function collectResultCards(pageUrl, limit, label, stat, verifyPage = null
       await wait(1)
     }
 
+    const knownCards = cards.size
     for (const [jobId, card] of pageCards) cards.set(jobId, card)
     stat.pageRows.push(pageCards.size)
     cliLog(`${label} page start ${pageStart}: captured ${pageCards.size}, total ${cards.size}`)
+    exhausted ||= pageCards.size < 25 || cards.size === knownCards
+    if (stopWhenExhausted && exhausted) break
     if (cards.size >= limit) break
   }
+  stat.capReached = !exhausted
   return [...cards.values()].slice(0, limit)
 }
 
@@ -601,6 +640,7 @@ function newCaptureStat(fields = {}) {
     ...fields,
     rawRows: 0,
     pageRows: [],
+    capReached: false,
     newJobs: 0,
     alreadyHandled: 0,
     excluded: 0,
@@ -620,7 +660,7 @@ function markUsable(stats, jobId) {
   for (const stat of new Set(stats)) stat._usableIds.add(jobId)
 }
 
-async function captureCards(cards, stats, discoveryLabel, enforceFreshness = true) {
+async function captureCards(cards, stats, discoveryLabel) {
   const statList = Array.isArray(stats) ? stats : [stats]
   for (const card of cards) {
     let detail = detailCache.get(card.jobId)
@@ -641,7 +681,7 @@ async function captureCards(cards, stats, discoveryLabel, enforceFreshness = tru
       continue
     }
     detailCache.set(card.jobId, detail)
-    if (enforceFreshness && !isWithinMaxPostAge(detail.listedAtMs)) {
+    if (!isWithinMaxPostAge(detail.listedAtMs)) {
       skipped.push({ jobId: card.jobId, title: card.title, company: card.company, reason: `outside configured ${hoursOld}-hour window by LinkedIn listedAt` })
       handledIds.add(card.jobId)
       bump(statList, 'stale')
@@ -721,6 +761,7 @@ const excluded = []
 const queryStats = []
 let rawRows = 0
 let searchTabReady = false
+let accessLimited = null
 
 const directStat = newCaptureStat({
   enabled: directSearch.enabled,
@@ -730,7 +771,7 @@ const directStat = newCaptureStat({
 const recommendationStat = newCaptureStat({
   enabled: topApplicantRecommendations.enabled,
   required: topApplicantRecommendations.required,
-  source: 'LinkedIn top applicant recommendations',
+  source: 'LinkedIn profile match recommendations',
   landingUrl: topApplicantRecommendations.landing_url,
   showAllUrl: '',
   filteredUrl: '',
@@ -752,30 +793,32 @@ function registerPathFailure(name, stat) {
 if (!recommendationStat.enabled) {
   recommendationStat.status = 'DISABLED'
 } else {
-  cliLog('=== LinkedIn top applicant recommendations ===')
+  cliLog('=== LinkedIn profile match recommendations ===')
   try {
-    recommendationStat.showAllUrl = await findTopApplicantShowAllUrl(recommendationStat)
+    recommendationStat.showAllUrl = await openProfileMatchResults(recommendationStat)
     recommendationStat.filteredUrl = topApplicantRecommendationPageUrl(recommendationStat.showAllUrl, 0)
     const cards = await collectResultCards(
       start => topApplicantRecommendationPageUrl(recommendationStat.showAllUrl, start),
-      resultsWanted,
-      'top applicant recommendations',
+      topApplicantRecommendations.max_pages * 25,
+      'profile match recommendations',
       recommendationStat,
       async () => await verifyTopApplicantFilter(recommendationStat),
+      { stopWhenExhausted: true },
     )
-    if (cards.length === 0) throw sourceError('ZERO_CARDS', 'top applicant recommendations returned zero job cards', true)
+    if (cards.length === 0) throw sourceError('ZERO_CARDS', 'profile match recommendations returned zero job cards', true)
     rawRows += cards.length
     recommendationStat.rawRows = cards.length
-    await captureCards(cards, recommendationStat, recommendationStat.source, true)
+    await captureCards(cards, recommendationStat, recommendationStat.source)
     if (recommendationStat._usableIds.size === 0) {
-      throw sourceError('ZERO_USABLE_JOBS', 'top applicant recommendations returned no usable jobs within Past 24 hours', true)
+      throw sourceError('ZERO_USABLE_JOBS', 'profile match recommendations returned no usable jobs within Past 24 hours', true)
     }
     recommendationStat.status = 'SUCCESS'
-    cliLog(`top applicant recommendations found ${cards.length}, usable ${recommendationStat._usableIds.size}`)
+    cliLog(`profile match recommendations found ${cards.length}, usable ${recommendationStat._usableIds.size}`)
   } catch (error) {
-    failStat(recommendationStat, error, 'RECOMMENDATION_FAILED')
+    const failure = failStat(recommendationStat, error, 'RECOMMENDATION_FAILED')
+    if (failure.code === 'ACCESS_LIMITED') accessLimited = failure
     registerPathFailure('top_applicant_recommendations', recommendationStat)
-    cliLog(`ERROR top applicant recommendations [${recommendationStat.failure.code}]: ${recommendationStat.failure.message}`)
+    cliLog(`ERROR profile match recommendations [${recommendationStat.failure.code}]: ${recommendationStat.failure.message}`)
   }
 }
 
@@ -784,6 +827,10 @@ if (!directStat.enabled) {
   directStat.status = 'DISABLED'
 } else {
   for (const query of queries) {
+    if (accessLimited) {
+      directFailures.push({ query, code: 'ACCESS_LIMITED', retryable: false, message: `skipped after LinkedIn access limit: ${accessLimited.message}` })
+      continue
+    }
     cliLog(`=== LinkedIn query: ${query} ===`)
     const queryStat = newCaptureStat({ query })
     queryStats.push(queryStat)
@@ -800,17 +847,19 @@ if (!directStat.enabled) {
       directStat.rawRows += cards.length
       queryStat.rawRows = cards.length
       cliLog(`found ${cards.length}`)
-      await captureCards(cards, [queryStat, directStat], query, true)
+      await captureCards(cards, [queryStat, directStat], query)
       if (queryStat._usableIds.size === 0) {
         throw sourceError('ZERO_USABLE_JOBS', `direct search ${query} returned no usable jobs within ${hoursOld} hours`, true)
       }
       queryStat.status = 'SUCCESS'
     } catch (error) {
       const failure = failStat(queryStat, error, 'DIRECT_SEARCH_FAILED')
+      if (failure.code === 'ACCESS_LIMITED') accessLimited = failure
       directFailures.push({ query, ...failure })
       cliLog(`ERROR ${query} [${failure.code}]: ${failure.message}`)
     } finally {
       directStat.pageRows.push(...queryStat.pageRows)
+      directStat.capReached ||= queryStat.capReached
     }
   }
 
@@ -864,6 +913,7 @@ function captureSummary(stat) {
   return {
     raw_rows: stat.rawRows,
     page_rows: stat.pageRows,
+    cap_reached: stat.capReached,
     usable_jobs: stat._usableIds.size,
     unique_new_jobs: stat.newJobs,
     already_handled: stat.alreadyHandled,

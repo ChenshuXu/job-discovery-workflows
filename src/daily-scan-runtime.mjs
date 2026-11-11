@@ -23,6 +23,23 @@ export function workerIdsForRuntime(runtime) {
   return Array.from({ length: count }, (_, index) => `worker-${index + 1}`);
 }
 
+// Claude Code marks its shells with CLAUDECODE. DAILY_SCAN_HOST overrides that; empty forces the base worker.
+export function dailyScanHost(env = process.env) {
+  return env.DAILY_SCAN_HOST ?? (env.CLAUDECODE ? 'claude' : '');
+}
+
+// A named host must be configured. A detected one falls back, so a config with one worker
+// (the public default) keeps working under Claude Code.
+export function resolveDailyScanHost(value, host, env = process.env) {
+  const named = host ?? env.DAILY_SCAN_HOST;
+  const selected = named ?? dailyScanHost(env);
+  if (!selected) return value;
+  const worker = value.hosts?.[selected]?.worker;
+  if (worker) return { ...value, worker };
+  if (named) throw new Error(`daily-scan runtime: hosts.${selected}.worker is not configured`);
+  return value;
+}
+
 export function loadDailyScanRuntime(file = DEFAULT) {
-  return validateDailyScanRuntime(JSON.parse(readFileSync(path.resolve(file), 'utf8')), file);
+  return validateDailyScanRuntime(resolveDailyScanHost(JSON.parse(readFileSync(path.resolve(file), 'utf8'))), file);
 }

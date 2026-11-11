@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { normalizeFullReportMarkdown, readCompactReportSummary, readMachineSummary, fixedTermEvidenceLine, splitPermHistoryReference, PERM_REPORT_LAYOUT, PERM_REFERENCE_HEADING, HIRING_MANAGER_REVIEW_HEADING } from './scan-report-contract.mjs';
 import { careerOpsCodeRoot, resolveCareerPaths } from './career-ops-paths.mjs';
 import { auditPermHistory } from './perm-history.mjs';
+import { safePostingKey } from './posting-identity.mjs';
 
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const DEFAULT_CAREER_ROOT = careerOpsCodeRoot();
@@ -24,9 +25,6 @@ function reportBody(report) {
   return { header: report.slice(0, index + marker.length), body: report.slice(index + marker.length).trim() };
 }
 
-function safeKey(key) {
-  return key.replace(/[^A-Za-z0-9._-]/g, '-');
-}
 
 export function resolveCompactReport(selector, careerRoot = DEFAULT_CAREER_ROOT, discoveryRoot = PROJECT_ROOT) {
   const paths = resolveCareerPaths(careerRoot);
@@ -56,7 +54,7 @@ export function resolveCompactReport(selector, careerRoot = DEFAULT_CAREER_ROOT,
   if (/^\*\*Work Auth:/m.test(header) && headerField(header, 'Work Auth') !== authLabel) throw new Error('compact header and work-authorization evidence mismatch');
   if (/^\*\*Legitimacy:/m.test(header) && headerField(header, 'Legitimacy') !== summary.legitimacy_tier) throw new Error('compact header and Machine Summary legitimacy mismatch');
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(runId)) throw new Error('compact run_id must be a safe run directory name');
-  const jdFile = path.join(path.resolve(discoveryRoot), 'runs', runId, 'jobs', `${safeKey(postingKey)}.md`);
+  const jdFile = path.join(path.resolve(discoveryRoot), 'runs', runId, 'jobs', `${safePostingKey(postingKey)}.md`);
   if (!existsSync(jdFile)) throw new Error(`bound source JD is missing: ${jdFile}`);
   const runRoot = path.dirname(path.dirname(jdFile));
   const baselineFile = path.join(runRoot, 'baseline.json');

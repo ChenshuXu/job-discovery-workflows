@@ -11,9 +11,17 @@
     "enabled": true,
     "required": false,
     "landing_url": "https://www.linkedin.com/jobs/",
-    "section_heading": "Jobs where you\u2019d be a top applicant",
-    "show_all_aria_label": "Show all jobs where you\u2019d be a top applicant",
-    "date_posted_filter": "Past 24 hours"
+    "section_heading": "Jobs that match your profile",
+    "show_all_aria_label": "Show all jobs that match your profile",
+    "date_posted_filter": "Past 24 hours",
+    "max_pages": 20
+  },
+  "jobspy_pacing": {
+    "search_delay_seconds": [8, 15],
+    "detail_delay_seconds": [2.5, 5],
+    "query_delay_seconds": [30, 60],
+    "failure_backoff_seconds": 30,
+    "max_consecutive_detail_failures": 3
   },
   "queries": [
     "software engineer backend",

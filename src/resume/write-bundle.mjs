@@ -6,7 +6,7 @@ function bulletMap(plan) {
   return new Map(plan.experience.flatMap((role) => role.bullets.map((bullet) => [bullet.id, bullet])));
 }
 
-export function generateChangesMarkdown({
+function generateChangesMarkdown({
   resolved, source, baseline, plan, fit, pageCount,
   coverage = { hit: [], miss: [], gap: [], unverified: [] },
 }) {

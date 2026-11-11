@@ -84,7 +84,7 @@ export function validateScoringInputs(plan, { allowLegacy = false, checkPermLive
       // Old procedural guidance is provenance, not today's evaluation policy.
       // Candidate facts remain content-bound; historical reads never authorize writes.
       if (actual !== source.content && !(historical && kind === 'rule')) throw new Error(`approved ${kind} source content changed: ${source.label}`);
-      return actual === null ? '' : `\n--- ${source.label} ---\n${readFileSync(file, 'utf8')}`;
+      return actual === null ? '' : `\n--- ${source.label} ---\n${actual}`;
     }).join('');
   }
   const candidateText = validate(plan.candidate_sources, candidates, 'candidate');

@@ -15,6 +15,7 @@ import { appendCandidateTracker, loadCareerInterfaces, removeOwnedTrackerRows, r
 import { parseTracker, readReportIdentity, trackerNoteHasPostingKey } from './daily-scan-state.mjs';
 import { runPipelineCheck } from './verify-scan-receipt.mjs';
 import { auditPermHistory, renderPermHistoryReference } from './perm-history.mjs';
+import { discoveryJdName } from './posting-identity.mjs';
 
 
 const moduleRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -137,7 +138,7 @@ async function buildPlan({ runRoot, careerRoot, manifest, interfaces }) {
     if (!jdFile.startsWith(`${runRoot}${path.sep}`)) throw new Error(`${key}: source JD escapes run`);
     const jdText = read(jdFile);
     sources.add(jdFile); sources.add(part.file); sources.add(path.join(runRoot, 'results', `${worker}.json`));
-    const persistedJd = path.join(resolveCareerPaths(careerRoot).dataRoot, 'jds', `discovery-${manifest.run_id}-${key.replace(/[^A-Za-z0-9._-]/g, '-')}.md`);
+    const persistedJd = path.join(resolveCareerPaths(careerRoot).dataRoot, 'jds', discoveryJdName(manifest.run_id, key));
     if (!existsSync(persistedJd) || read(persistedJd) !== jdText) throw new Error(`${key}: persisted source JD differs from the original run`);
     sources.add(persistedJd);
     const originalResult = exact(json(path.join(runRoot, 'results', `${worker}.json`)).results.filter(item => item.posting_key === key), `${key}: original final result`);

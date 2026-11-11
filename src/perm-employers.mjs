@@ -8,7 +8,7 @@ const unidentified = value => /^(?:unknown\b|未具名|多家)/i.test(value);
 const https = value => { try { return new URL(value).protocol === 'https:'; } catch { return false; } };
 
 // Exact names only; legal suffixes do not grant a parent company's status to subsidiaries.
-const employerName = value => String(value ?? '').normalize('NFKC').toLowerCase().trim()
+export const employerName = value => String(value ?? '').normalize('NFKC').toLowerCase().trim()
   .replace(/[.,]/g, '').replace(/\s+/g, ' ')
   .replace(/(?:\s+(?:incorporated|inc|corporation|corp|llc|ltd|limited|(?:&\s+)?co))+$/, '').trim();
 
@@ -55,10 +55,17 @@ export function assertPermEmployersUnchanged(snapshot, { checkLive = true } = {}
   if (checkLive && digest(snapshotPermEmployers(snapshot.path).catalog) !== digest(snapshot.catalog)) throw new Error('PERM employers changed after baseline; start a new run');
 }
 
-export function matchPermEmployer(company, catalog) {
+// One normalized-name index per catalog object instead of renormalizing every name per record.
+const catalogIndexes = new WeakMap();
+function matchPermEmployer(company, catalog) {
   const normalized = employerName(company);
   if (!normalized) return null;
-  return catalog.companies.find(entry => [entry.company, ...entry.aliases].some(name => employerName(name) === normalized)) ?? null;
+  if (!catalogIndexes.has(catalog)) {
+    const index = new Map();
+    for (const entry of catalog.companies) for (const name of [entry.company, ...entry.aliases]) if (!index.has(employerName(name))) index.set(employerName(name), entry);
+    catalogIndexes.set(catalog, index);
+  }
+  return catalogIndexes.get(catalog).get(normalized) ?? null;
 }
 
 function decision(record, catalog) {
@@ -67,7 +74,7 @@ function decision(record, catalog) {
     decision: match ? 'ALLOW_TRACKER_NORMAL' : 'EXCLUDE_NOT_IN_PERM_ALLOWLIST', matched_company: match?.company ?? null };
 }
 
-export function validatePermAudit(audit, snapshot, runId) {
+function validatePermAudit(audit, snapshot, runId) {
   if (audit?.schema_version !== 1 || audit.run_id !== runId || JSON.stringify(audit.catalog) !== JSON.stringify(snapshot.catalog)
       || !Array.isArray(audit.results) || audit.pre_scope_count !== audit.results.length
       || audit.accepted_count !== audit.results.filter(item => item.allowed).length

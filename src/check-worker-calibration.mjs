@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { loadDailyScanRuntime } from './daily-scan-runtime.mjs';
+import { dailyScanHost, loadDailyScanRuntime } from './daily-scan-runtime.mjs';
 import { loadLocationPolicy } from './location-scope.mjs';
 import { snapshotScoringInputs } from './scoring-inputs.mjs';
 import { careerOpsCodeRoot } from './career-ops-paths.mjs';
@@ -106,7 +106,12 @@ export function runCalibration() {
   const outputFile = path.join(tempDir, 'result.json');
   writeFileSync(schemaFile, `${JSON.stringify(outputSchema(fixture.cases.map(item => item.id)), null, 2)}\n`);
   try {
-    const child = spawnSync('codex', [
+    const claudeHost = dailyScanHost() === 'claude';
+    const child = spawnSync(claudeHost ? 'claude' : 'codex', claudeHost ? [
+      '-p', '--no-session-persistence', '--tools', '', '--model', runtime.worker.model,
+      '--effort', runtime.worker.reasoning_effort, '--output-format', 'json',
+      '--json-schema', readFileSync(schemaFile, 'utf8'),
+    ] : [
       'exec', '--ephemeral', '--ignore-user-config', '--skip-git-repo-check',
       '--sandbox', 'read-only', '--model', runtime.worker.model,
       '-c', `model_reasoning_effort="${runtime.worker.reasoning_effort}"`,
@@ -117,8 +122,8 @@ export function runCalibration() {
       encoding: 'utf8',
       maxBuffer: 20 * 1024 * 1024,
     });
-    if (child.status !== 0) throw new Error(`codex calibration evaluator failed (${child.status}): ${(child.stderr || child.stdout).trim()}`);
-    const rows = validate(fixture, readJson(outputFile));
+    if (child.status !== 0) throw new Error(`calibration evaluator failed (${child.status}): ${(child.stderr || child.stdout).trim()}`);
+    const rows = validate(fixture, claudeHost ? JSON.parse(child.stdout).structured_output : readJson(outputFile));
     printTable(rows);
     const failed = rows.filter(row => !row.pass);
     console.log(`Calibration: ${rows.length - failed.length}/${rows.length} cases passed using ${runtime.worker.model} (${runtime.worker.reasoning_effort}).`);

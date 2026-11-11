@@ -5,7 +5,6 @@ import {
   realpathSync,
   rmSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 
 const SECTION_HEADINGS = Object.freeze({
@@ -41,7 +40,7 @@ export const ARCHIVED_INTERVIEW_STATUSES = Object.freeze([
 
 const ACTIVE_STATUS_SET = new Set(ACTIVE_INTERVIEW_STATUSES);
 const ARCHIVED_STATUS_SET = new Set(ARCHIVED_INTERVIEW_STATUSES);
-const IDENTITY_RE = /^(?:tracker:#\d+|(?:action|ambiguous):[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*)$/u;
+export const IDENTITY_RE = /^(?:tracker:#\d+|(?:action|ambiguous):[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*)$/u;
 const TRACKER_RE = /^#\d+$/u;
 
 export class ActiveInterviewsValidationError extends Error {
@@ -223,12 +222,19 @@ function isBoundary(character) {
   return character === undefined || /[\s/|,;:：()[\]{}—–-]/u.test(character);
 }
 
+// `action:acme` must not match inside `action:acme-onsite`: a separator followed by
+// more Identity characters continues the same Identity.
+function continuesIdentity(label, end, alias) {
+  return /^(?:action|ambiguous):/u.test(alias) && /^[._-][A-Za-z0-9]/u.test(label.slice(end));
+}
+
 function containsVisibleAlias(label, alias) {
   let from = 0;
   while (from <= label.length - alias.length) {
     const index = label.indexOf(alias, from);
     if (index < 0) return false;
-    if (isBoundary(label[index - 1]) && isBoundary(label[index + alias.length])) return true;
+    if (isBoundary(label[index - 1]) && isBoundary(label[index + alias.length])
+        && !continuesIdentity(label, index + alias.length, alias)) return true;
     from = index + 1;
   }
   return false;
@@ -474,22 +480,4 @@ function validDate(value) {
     && date.getUTCFullYear() === Number(match[1])
     && date.getUTCMonth() + 1 === Number(match[2])
     && date.getUTCDate() === Number(match[3]);
-}
-
-/** Format a plain Markdown TODO whose process Identity remains visible. */
-export function formatInterviewTodo({ identity, label = '', action, checked = false }) {
-  for (const [name, value] of [['identity', identity], ['action', action]]) {
-    if (typeof value !== 'string' || value.trim() === '' || /[\r\n]/u.test(value)) {
-      throw new TypeError(`${name} must be a non-empty single line`);
-    }
-  }
-  if (typeof label !== 'string' || /[\r\n]/u.test(label)) throw new TypeError('label must be a single line');
-
-  const cleanIdentity = identity.trim();
-  const displayIdentity = cleanIdentity.match(/^tracker:(#\d+)$/u)?.[1] ?? cleanIdentity;
-  const cleanLabel = label.trim().replace(/[：:]\s*$/u, '');
-  const visibleLabel = cleanLabel && !visibleAliases(cleanIdentity).some(alias => containsVisibleAlias(cleanLabel, alias))
-    ? `${cleanLabel} / ${displayIdentity}`
-    : cleanLabel || displayIdentity;
-  return `- [${checked ? 'x' : ' '}] **${visibleLabel}：** ${action.trim()}`;
 }

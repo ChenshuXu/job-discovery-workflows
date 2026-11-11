@@ -5,8 +5,8 @@ import { execFileSync } from 'node:child_process';
 import { resolve, basename, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CAREER_OPS_ROOT } from './cv-source.mjs';
+import { safePostingKey } from '../posting-identity.mjs';
 
-export { CAREER_OPS_ROOT };
 const DISCOVERY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const require = createRequire(import.meta.url);
 
@@ -34,7 +34,7 @@ function boundPersistedJd({ runId, postingKey }, careerOpsRoot) {
   if (!postingKey) return null;
   const jdRoot = resolve(careerOpsRoot, 'jds');
   if (!existsSync(jdRoot)) return null;
-  const safeKey = postingKey.replace(/[^A-Za-z0-9._-]/g, '-');
+  const safeKey = safePostingKey(postingKey);
   if (runId && /^[A-Za-z0-9._-]+$/.test(runId)) {
     const candidate = resolve(jdRoot, `discovery-${runId}-${safeKey}.md`);
     return existsSync(candidate) ? candidate : null;
@@ -52,7 +52,7 @@ function boundPersistedJd({ runId, postingKey }, careerOpsRoot) {
 function boundDiscoveryJd({ runId, postingKey }, discoveryRoot) {
   if (!runId || !postingKey) return null;
   if (!/^[A-Za-z0-9._-]+$/.test(runId)) return null;
-  const safeKey = postingKey.replace(/[^A-Za-z0-9._-]/g, '-');
+  const safeKey = safePostingKey(postingKey);
   const candidate = resolve(discoveryRoot, 'runs', runId, 'jobs', `${safeKey}.md`);
   return existsSync(candidate) ? candidate : null;
 }

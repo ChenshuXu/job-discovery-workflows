@@ -66,12 +66,14 @@ def render(data, out, variant='both', font=None):
         svg = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}"><rect width="100%" height="100%" fill="white"/>']
         labels = []
 
+        faces = {}
+
         def text(x, y, value, fontsize=size, color='#17242e'):
             require(isinstance(value, str), 'Labels must be strings')
             if not value:
                 return
             labels.append(value)
-            face = ImageFont.truetype(str(font), fontsize*2)
+            face = faces.get(fontsize) or faces.setdefault(fontsize, ImageFont.truetype(str(font), fontsize*2))
             bounds = draw.textbbox((x*2, y*2), value, font=face, anchor='lt')
             require(bounds[0] >= 0 and bounds[1] >= 0 and bounds[2] <= width*2 and bounds[3] <= height*2, f'Text outside canvas: {value}')
             draw.text((x*2, y*2), value, font=face, fill=color, anchor='lt')

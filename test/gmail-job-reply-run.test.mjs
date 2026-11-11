@@ -172,6 +172,30 @@ test('user-excluded secondary preserves its cursor at coordinator commit', (t) =
   assert.equal(readFileSync(secondaryPath, 'utf8'), before);
 });
 
+test('frozen query uses padded date operands and page enforces the exact window', (t) => {
+  const fx = fixture(t);
+  const begin = command(fx, 'begin').output;
+  const primary = begin.mailboxes.primary;
+  const shiftedDate = (iso, days) => new Date(Date.parse(iso) + days * 86_400_000)
+    .toISOString().slice(0, 10).replaceAll('-', '/');
+  assert.equal(
+    primary.required_query,
+    `in:anywhere after:${shiftedDate(primary.search_after_at, -1)} `
+      + `before:${shiftedDate(primary.scan_cutoff_at, 2)} -in:spam -in:trash`,
+  );
+  const inPaddingBefore = new Date(Date.parse(primary.search_after_at) - 1000).toISOString();
+  const inWindow = new Date(Date.parse(primary.scan_cutoff_at) - 1000).toISOString();
+  const inPaddingAfter = new Date(Date.parse(primary.scan_cutoff_at) + 1000).toISOString();
+  const recorded = command(fx, 'page', ...credentials(begin), '--mailbox', 'primary',
+    '--query', primary.required_query, '--page-token', 'START', '--next-page-token', 'END',
+    '--result-count', '3', `padding_before@${inPaddingBefore}`, `in_window@${inWindow}`,
+    `padding_after@${inPaddingAfter}`);
+  assert.equal(recorded.status, 0, recorded.stdout);
+  assert.deepEqual(recorded.output.results.map((item) => item.status),
+    ['outside_frozen_window', 'staged', 'outside_frozen_window']);
+  assert.equal(recorded.output.total_candidates, 1);
+});
+
 function stage(fx, begin, descriptor, mailbox = 'primary') {
   const result = command(
     fx,
@@ -899,6 +923,55 @@ test('verification failure preserves the uncommitted register until a successful
   assert.equal(retried.status, 0, retried.stdout);
   assert.notEqual(git(fx.careerDocs, 'rev-parse', 'HEAD'), head);
   assert.equal(git(fx.careerDocs, 'show', 'HEAD:context/Interview/active-interviews.md'), edited.trim());
+});
+
+test('a tracker edit between the commit gate and the cursor write leaves a run that can be aborted', (t) => {
+  const fx = fixture(t);
+  const begin = command(fx, 'begin').output;
+  closeEmptyMailbox(fx, begin, 'primary');
+  closeEmptySecondary(fx, begin);
+  const cursor = readFileSync(join(fx.state, 'gmail-job-reply-state.json'), 'utf8');
+  write(fx.interviews, readFileSync(fx.interviews, 'utf8').replace('# Interview Pipeline', '# Updated Interview Pipeline'));
+  // Another writer appends to the tracker right after the register commit, before cursors move.
+  const hook = join(fx.careerDocs, '.git/hooks/post-commit');
+  write(hook, `#!/bin/sh\necho '| 2 | 2026-08-02 | Other | Engineer | 4/5 | Applied | | | |' >> '${join(fx.career, 'data/applications.md')}'\n`);
+  spawnSync('chmod', ['+x', hook]);
+  const conflicted = command(fx, 'commit', ...credentials(begin));
+  assert.equal(conflicted.output.error.code, 'STATE_CONFLICT');
+  assert.equal(readFileSync(join(fx.state, 'gmail-job-reply-state.json'), 'utf8'), cursor, 'no cursor moved');
+  rmSync(hook);
+  const aborted = command(fx, 'abort', ...credentials(begin), '--reason-code', 'tracker_changed');
+  assert.equal(aborted.status, 0, aborted.stdout);
+  assert.equal(command(fx, 'begin').status, 0);
+});
+
+test('archived ledgers keep no copy of the tracker, status log or register text', (t) => {
+  const marker = 'UNIQUE-TRACKER-TEXT-7f3a';
+  const fx = fixture(t, { note: marker });
+  const begin = command(fx, 'begin').output;
+  assert.ok(readFileSync(join(fx.state, 'runs/active.json'), 'utf8').includes(marker), 'the live run keeps its baseline');
+  closeEmptyMailbox(fx, begin, 'primary');
+  closeEmptySecondary(fx, begin);
+  assert.equal(command(fx, 'commit', ...credentials(begin)).status, 0);
+  const completed = readFileSync(join(fx.state, 'runs/completed', `${begin.run_id}.json`), 'utf8');
+  assert.equal(completed.includes(marker), false);
+  assert.equal(completed.includes('# Interview Pipeline'), false);
+  const verification = JSON.parse(completed).verification;
+  assert.deepEqual(Object.keys(verification.before).sort(), ['errors', 'exit_status', 'warnings'], 'the warning list itself is not archived');
+  assert.deepEqual(Object.keys(verification.after).sort(), ['errors', 'exit_status', 'warnings']);
+  assert.ok(verification.delta, 'the change between before and after is archived');
+  const second = command(fx, 'begin').output;
+  assert.equal(command(fx, 'abort', ...credentials(second), '--reason-code', 'test').status, 0);
+  assert.equal(readFileSync(join(fx.state, 'runs/failed', `${second.run_id}.json`), 'utf8').includes(marker), false);
+});
+
+test('an Identity the register cannot hold is refused at classification', (t) => {
+  const fx = fixture(t);
+  const begin = command(fx, 'begin').output;
+  const refused = command(fx, 'classify', ...credentials(begin), '--mailbox', 'primary', '--category', 'explicit_rejection',
+    '--disposition', 'tracker_rejected', '--identity-key', 'action:acme--x', candidateDescriptor());
+  assert.equal(refused.output.error.code, 'INVALID_ARGUMENT');
+  assert.match(refused.output.error.message, /identity-key/);
 });
 
 test('invalid interview structure fails before a run ledger is created', (t) => {

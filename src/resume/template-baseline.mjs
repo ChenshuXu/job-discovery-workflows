@@ -7,7 +7,7 @@ function matchKey(value) {
     .replace(/[\u201c\u201d]/g, '"')).toLowerCase();
 }
 
-export function resolveBaselineBullet(markedText, role, bulletNumber) {
+function resolveBaselineBullet(markedText, role, bulletNumber) {
   const key = matchKey(markedText);
   const matches = role.bullets.filter((bullet) => matchKey(bullet.text) === key);
   if (matches.length !== 1) {

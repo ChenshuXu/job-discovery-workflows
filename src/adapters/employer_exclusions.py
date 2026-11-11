@@ -34,27 +34,29 @@ def validate_employer_exclusion_rules(rules: Any) -> list[dict[str, Any]]:
             raise ValueError(f"duplicate employer exclusion id: {rule['id']}")
         ids.add(rule["id"])
         for pattern in [rule["company_pattern"], rule["attribution_line_pattern"], *signals]:
-            re.compile(pattern, re.IGNORECASE | re.MULTILINE)
+            re.compile(pattern, re.IGNORECASE | re.MULTILINE | re.ASCII)
     return rules
 
 
 def match_excluded_employer(company: Any, description: Any, rules: Any) -> dict[str, str] | None:
     validated = validate_employer_exclusion_rules(rules)
     company_text = clean(company)
-    jd = str(description or "").replace("\r", "")
+    # Rule patterns match with ASCII word boundaries, as in the JavaScript adapters; a
+    # non-breaking space still counts as whitespace there, so it is normalized here.
+    jd = str(description or "").replace("\r", "").replace("\u00a0", " ")
     lines = [clean(line) for line in jd.split("\n") if clean(line)]
 
     for rule in validated:
-        if re.search(rule["company_pattern"], company_text, re.IGNORECASE | re.MULTILINE):
+        if re.search(rule["company_pattern"], company_text, re.IGNORECASE | re.MULTILINE | re.ASCII):
             return {"id": rule["id"], "reason": rule["reason"], "source": "company", "evidence": f"Company: {company_text}"}
 
         attribution = None
         for line in lines:
-            pipeline = re.match(r"^(.{1,100}?) is building a (?:central )?pipeline of .{1,120}?\btalent\b", line, re.IGNORECASE)
-            hiring = re.match(r"^(.{1,100}?) is hiring an? (?:(?!(?:to|for|with|using|not)\b)[A-Za-z0-9.+/#-]+ ){0,8}(?:engineer|developer|scientist|architect|manager|specialist|analyst|designer)\b", line, re.IGNORECASE)
+            pipeline = re.match(r"^(.{1,100}?) is building a (?:central )?pipeline of .{1,120}?\btalent\b", line, re.IGNORECASE | re.ASCII)
+            hiring = re.match(r"^(.{1,100}?) is hiring an? (?:(?!(?:to|for|with|using|not)\b)[A-Za-z0-9.+/#-]+ ){0,8}(?:engineer|developer|scientist|architect|manager|specialist|analyst|designer)\b", line, re.IGNORECASE | re.ASCII)
             employer = pipeline or hiring
-            if re.search(rule["attribution_line_pattern"], line, re.IGNORECASE | re.MULTILINE) or (
-                employer and re.fullmatch(r"(?:" + rule["company_pattern"] + r")(?:\s*\([^)]*\))?", employer.group(1), re.IGNORECASE)
+            if re.search(rule["attribution_line_pattern"], line, re.IGNORECASE | re.MULTILINE | re.ASCII) or (
+                employer and re.fullmatch(r"(?:" + rule["company_pattern"] + r")(?:\s*\([^)]*\))?", employer.group(1), re.IGNORECASE | re.ASCII)
             ):
                 attribution = line
                 break
@@ -63,7 +65,7 @@ def match_excluded_employer(company: Any, description: Any, rules: Any) -> dict[
 
         signals = []
         for pattern in rule["jd_signal_patterns"]:
-            match = re.search(pattern, jd, re.IGNORECASE | re.MULTILINE)
+            match = re.search(pattern, jd, re.IGNORECASE | re.MULTILINE | re.ASCII)
             if match:
                 signals.append(clean(match.group(0)))
         if len(signals) >= rule["required_jd_signal_count"]:

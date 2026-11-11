@@ -4,7 +4,7 @@ import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { canonicalizePostingUrl, postingKey, legacyPostingKey, matchesStoredPostingKey } from './posting-identity.mjs';
+import { canonicalizePostingUrl, postingKey, legacyPostingKey, matchesStoredPostingKey, discoveryJdName } from './posting-identity.mjs';
 import { careerOpsEnv, resolveCareerPaths } from './career-ops-paths.mjs';
 import { sourceRecord } from './combine.mjs';
 import { validateJd } from './run-contract.mjs';
@@ -105,7 +105,7 @@ export function resolveDiscoveryArchiveWarnings({ dataRoot, reportsRoot, message
           || postingKey(url) !== key) throw new Error('invalid report identity');
       const evidence = reportEvidence(file);
       if (!evidence || evidence.key !== key || evidence.url !== canonicalizePostingUrl(url)) throw new Error('report identities disagree');
-      const archive = path.join(dataRoot, 'jds', `discovery-${runId}-${key.replace(/[^A-Za-z0-9._-]/g, '-')}.md`);
+      const archive = path.join(dataRoot, 'jds', discoveryJdName(runId, key));
       const record = sourceRecord(dataRoot, 'persisted', archive);
       const text = record._text;
       const field = name => text.match(new RegExp(`^\\*\\*${name}:\\*\\*[ \\t]*([^\\r\\n]*)`, 'm'))?.[1]?.trim();

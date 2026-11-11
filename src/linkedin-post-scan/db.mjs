@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { POST_SCAN_ROOT } from './config.mjs';
 
 export const DEFAULT_DB = path.join(POST_SCAN_ROOT, 'linkedin-post-scan.db');
 const now = () => new Date().toISOString();
+const PACIFIC_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' });
 const json = value => JSON.stringify(value ?? {});
 const parse = value => value ? JSON.parse(value) : null;
 
@@ -23,9 +23,8 @@ export function openDatabase(file = DEFAULT_DB) {
 export function openDatabaseReadOnly(file = DEFAULT_DB) {
   const resolved = path.resolve(file);
   if (!existsSync(resolved)) return null;
-  const uri = pathToFileURL(resolved);
-  uri.searchParams.set('immutable', '1');
-  const db = new DatabaseSync(uri.href, { readOnly: true });
+  // A plain read-only open still reads the WAL, where a live or killed writer's rows may sit.
+  const db = new DatabaseSync(resolved, { readOnly: true });
   db.exec('PRAGMA query_only = ON');
   const version = Number(db.prepare('PRAGMA user_version').get().user_version);
   if (version !== 2) { db.close(); throw new Error(`unsupported Post Scan database version: ${version}`); }
@@ -75,7 +74,7 @@ export function canonicalPostIdentity(post) {
   return { post_urn: `urn:li:activity:${urnMatch[1]}`, post_url: `https://www.linkedin.com/feed/update/urn:li:activity:${urnMatch[1]}/` };
 }
 
-export function isCanonicalPostIdentity(post) {
+function isCanonicalPostIdentity(post) {
   try { canonicalPostIdentity(post); return true; }
   catch { return false; }
 }
@@ -88,7 +87,7 @@ export function upsertPost(db, runId, queryKey, post) {
   const identity = canonicalPostIdentity(post);
   post = { ...post, ...identity };
   const timestamp = now();
-  const existing = db.prepare('SELECT body FROM posts WHERE post_urn = ?').get(post.post_urn);
+  const existing = db.prepare('SELECT body, route FROM posts WHERE post_urn = ?').get(post.post_urn);
   db.prepare(`INSERT INTO posts (post_urn, post_url, body, author_json, published_at, first_seen_at, last_seen_at, route, evidence_json)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(post_urn) DO UPDATE SET post_url=excluded.post_url, body=excluded.body,
@@ -97,7 +96,8 @@ export function upsertPost(db, runId, queryKey, post) {
     .run(post.post_urn, post.post_url, post.body, json(post.author), post.published_at ?? null, timestamp, timestamp, post.decision.route, json(post));
   db.prepare('INSERT OR REPLACE INTO run_posts (run_id, query_key, post_urn, observed_at) VALUES (?, ?, ?, ?)')
     .run(runId, queryKey, post.post_urn, timestamp);
-  return { changed: !existing || existing.body !== post.body, existing: Boolean(existing) };
+  // A new route is a new decision even when the post text is the same.
+  return { changed: !existing || existing.body !== post.body || existing.route !== post.decision.route, existing: Boolean(existing) };
 }
 
 export function addTombstone(db, urn, reasonCode, days) {
@@ -186,7 +186,7 @@ export function saveContactOutreach(db, opportunityId, contact, outreach) {
 }
 
 export function dailySnapshot(db, date) {
-  const pacificDay = value => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(value));
+  const pacificDay = value => PACIFIC_DAY.format(new Date(value));
   const opportunities = db.prepare('SELECT * FROM opportunities ORDER BY updated_at DESC').all().filter(row => pacificDay(row.updated_at) <= date);
   const outreach = db.prepare(`SELECT o.*, c.name, c.profile_url, c.relationship_status, p.employer, p.title, p.official_url, p.post_signal
     FROM outreach o JOIN contacts c ON c.contact_id=o.contact_id JOIN opportunities p ON p.opportunity_id=o.opportunity_id

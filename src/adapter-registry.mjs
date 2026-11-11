@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PROJECT_ROOT_REAL = realpathSync(PROJECT_ROOT);
 const ADAPTER_ID = /^[a-z0-9][a-z0-9-]*$/;
-export const DEFAULT_REGISTRY_PATH = path.join(PROJECT_ROOT, 'config/discovery-adapters.v1.json');
+const DEFAULT_REGISTRY_PATH = path.join(PROJECT_ROOT, 'config/discovery-adapters.v1.json');
 
 const isObject = value => value && typeof value === 'object' && !Array.isArray(value);
 
@@ -58,6 +58,7 @@ export function loadAdapterRegistry(file = process.env.JOB_DISCOVERY_ADAPTER_REG
     if (strictDaily && !('enabled' in definition)) throw new Error(`${adapterId}.enabled is required in the daily registry`);
     if (strictDaily || 'command' in definition) validateCommand(definition.command, `${adapterId}.command`);
     if (typeof definition.employer_exclusions !== 'boolean') throw new Error(`${adapterId}.employer_exclusions must be boolean`);
+    if ('timeout_ms' in definition && (!Number.isInteger(definition.timeout_ms) || definition.timeout_ms < 1)) throw new Error(`${adapterId}.timeout_ms must be a positive integer`);
 
     let configFile;
     let configContent;
@@ -91,6 +92,7 @@ export function snapshotAdapterProfile(registryFile) {
       ...('command' in definition ? { command: [...definition.command] } : {}),
       ...('config' in definition ? { config: definition.config, config_content: definition.config_content } : {}),
       employer_exclusions: definition.employer_exclusions,
+      ...('timeout_ms' in definition ? { timeout_ms: definition.timeout_ms } : {}),
     };
   }
   return {
@@ -138,7 +140,9 @@ export function loadRunProfile(runRoot, options = {}) {
     const baselineFile = path.join(path.resolve(runRoot), 'baseline.json');
     if (existsSync(baselineFile)) {
       const { value: baseline } = readJson(baselineFile, 'run baseline');
-      if (baseline.adapter_profile) return validateProfile(baseline.adapter_profile, 'baseline.adapter_profile', true);
+      // A finished run keeps its frozen configs; later source-config edits do not invalidate it.
+      const finished = existsSync(path.join(path.resolve(runRoot), 'receipt.json'));
+      if (baseline.adapter_profile) return validateProfile(baseline.adapter_profile, 'baseline.adapter_profile', !finished);
       if (Number(baseline.schema_version) >= 3) throw new Error('baseline.adapter_profile is required');
     }
   }

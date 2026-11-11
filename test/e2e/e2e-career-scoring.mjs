@@ -46,14 +46,14 @@ try {
   const bad = JSON.parse(originalPart);
   bad.results.find(item => item.posting_key.endsWith('1')).report.confidence = 'High';
   fx.write(partFile, bad);
-  const rejected = fx.run('reject-inconsistent-confidence', script('merge-worker-results.mjs'), ['--run', runRoot, '--worker', firstWorker], { expect: 1 });
+  const rejected = fx.run('reject-inconsistent-confidence', script('merge-worker-results.mjs'), ['--run', runRoot, '--worker', firstWorker], { independentCase: true, expect: 1 });
   fx.check('conflicting High rejected with Medium requirement', rejected.stderr.includes('confidence must be Medium'));
   fx.check('rejection leaves Career-Ops and existing final unchanged', manifest(fx.dataRoot) === dataBeforeReject && readFileSync(firstFinal, 'utf8') === originalFinal);
   fx.write(partFile, originalPart);
   for (const [variable, relative] of [['CAREER_OPS_TRACKER', 'redirected-tracker.md'], ['CAREER_OPS_SCAN_HISTORY', 'redirected-history.tsv']]) {
     const beforeRun = manifest(runRoot);
     const redirected = path.join(fx.root, relative);
-    const mismatch = fx.run(`reject-${variable.toLowerCase()}-drift`, script('merge-worker-results.mjs'), ['--run', runRoot, '--worker', firstWorker], {
+    const mismatch = fx.run(`reject-${variable.toLowerCase()}-drift`, script('merge-worker-results.mjs'), ['--run', runRoot, '--worker', firstWorker], { independentCase: true,
       env: { [variable]: redirected }, expect: 1,
     });
     fx.check(`${variable} drift rejects before persisted mutations`, mismatch.stderr.includes('tracker/history paths changed')
@@ -68,7 +68,7 @@ try {
     }
   }
   const redirectedData = path.join(fx.root, 'redirected-data');
-  const dataMismatch = fx.run('reject-data-root-drift', script('merge-worker-results.mjs'), ['--run', runRoot, '--worker', firstWorker], {
+  const dataMismatch = fx.run('reject-data-root-drift', script('merge-worker-results.mjs'), ['--run', runRoot, '--worker', firstWorker], { independentCase: true,
     env: { CAREER_OPS_ROOT: redirectedData }, expect: 1,
   });
   fx.check('data-root drift rejects before writes', dataMismatch.stderr.includes('data root changed') && !existsSync(redirectedData));
@@ -78,7 +78,7 @@ try {
     fx.write(source.path, `${content}\nIntentional E2E stale-rule mutation.\n`);
     const beforeRun = manifest(runRoot);
     const name = sourceLabel.includes('custom') ? 'custom' : sourceLabel.includes('templates') ? 'vocabulary' : 'shared';
-    const stale = fx.run(`reject-stale-${name}-merge`, script('merge-worker-results.mjs'), ['--run', runRoot, '--worker', firstWorker], { expect: 1 });
+    const stale = fx.run(`reject-stale-${name}-merge`, script('merge-worker-results.mjs'), ['--run', runRoot, '--worker', firstWorker], { independentCase: true, expect: 1 });
     fx.check(`${name} hash mismatch is a whole-assignment blocker`, stale.stderr.includes(`rule source content changed: ${sourceLabel}`));
     fx.run(`reject-stale-${name}-planner`, script('plan-scan-evaluations.mjs'), ['--run', runRoot, '--career-ops', fx.codeRoot], { expect: 1 });
     fx.check(`${name} rejection leaves run artifacts unchanged`, manifest(runRoot) === beforeRun);
@@ -114,7 +114,7 @@ try {
   const legacyScript = fx.write(path.join(fx.root, 'inspect-legacy.mjs'), `import { loadScanResults } from ${JSON.stringify(pathToFileURL(script('scan-results.mjs')).href)};\nconst result = loadScanResults(process.argv[2], { allowLegacy: true });\nconsole.log(JSON.stringify({errors: result.errors, evaluated: result.evaluated.length}));\nif(result.errors.length) process.exit(1);\n`);
   const legacyBefore = manifest(legacyRoot);
   fx.run('inspect-legacy-v4-read-only', legacyScript, [legacyRoot]);
-  fx.run('reject-legacy-new-merge', script('merge-worker-results.mjs'), ['--run', legacyRoot, '--worker', firstWorker], { expect: 1 });
+  fx.run('reject-legacy-new-merge', script('merge-worker-results.mjs'), ['--run', legacyRoot, '--worker', firstWorker], { independentCase: true, expect: 1 });
   fx.check('legacy inspection and rejected write preserve historical artifacts', manifest(legacyRoot) === legacyBefore);
   fx.run('commit-through-official-writers', script('commit-scan.mjs'), ['--run', runRoot, '--career-ops', fx.codeRoot, '--date', SCAN_DATE]);
   const receipt = parse(path.join(runRoot, 'receipt.json'));

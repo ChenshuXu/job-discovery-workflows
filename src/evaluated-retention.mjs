@@ -8,7 +8,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadDailyScanRuntime } from './daily-scan-runtime.mjs';
 import { loadCareerTrackerParser, parseTracker, readReportIdentity, trackerNoteHasPostingKey } from './daily-scan-state.mjs';
-import { postingKey } from './posting-identity.mjs';
+import { postingKey, discoveryJdName } from './posting-identity.mjs';
 import { trackerIdentityNote } from './render-scan-reports.mjs';
 import { runPipelineCheck } from './verify-scan-receipt.mjs';
 
@@ -19,7 +19,6 @@ const retentionStatus = value => String(value ?? '').trim().toLowerCase().replac
 
 const content = value => String(value);
 const readOptional = file => existsSync(file) ? readFileSync(file, 'utf8') : '';
-const safeKey = key => key.replace(/[^A-Za-z0-9._-]/g, '-');
 
 function createJson(file, value) {
   mkdirSync(path.dirname(file), { recursive: true });
@@ -108,7 +107,9 @@ function textHasIdentity(text, key, url, currentKey, currentKeys) {
 
 function reportArtifacts(careerRoot) {
   // ponytail: one full report scan per preflight; add an index only if this becomes a measured bottleneck.
-  return filesBelow(path.join(path.resolve(careerRoot), 'reports')).filter(file => file.endsWith('.md')).map(file => {
+  // Expansion backups repeat the compact report's identity; they are not separate owners.
+  const backups = path.join(path.resolve(careerRoot), 'reports', '.expansion-backups') + path.sep;
+  return filesBelow(path.join(path.resolve(careerRoot), 'reports')).filter(file => file.endsWith('.md') && !file.startsWith(backups)).map(file => {
     const text = readFileSync(file, 'utf8');
     const identity = readReportIdentity(text);
     return { file, text, ...identity, current_key: canonicalKey(identity.posting_url) };
@@ -119,6 +120,14 @@ function protectedItem(row, reason) {
   return { tracker_number: row.number, reason };
 }
 
+// One whole clause saying no receipt turned up. A qualifier means the clause says more
+// than that, so it stays in the evidence the protection check reads.
+function isNoReceiptClause(clause) {
+  const text = clause.trim().replace(/\.+$/, '');
+  return /^no (?:[\w-]+ ){0,4}receipt(?: for .+?)?(?: found)?(?: on \d{4}-\d{2}-\d{2})?$/i.test(text)
+    && !/\b(?:but|however|although|uncertain|unconfirmed|ambiguous)\b/i.test(text);
+}
+
 function retentionNoteReason(note, expectedNote) {
   if (note === expectedNote) return null;
   if (!note.startsWith(`${expectedNote};`)) return 'MANUAL_NOTE';
@@ -126,7 +135,8 @@ function retentionNoteReason(note, expectedNote) {
   const unsubmitted = /\b(?:discarded without submitting|no submission|no application created|application not submitted|form not submitted|no submit)\b/i.test(extra);
   const cancelled = /\bdiscarded without submitting\b/i.test(extra);
   let evidence = extra.replace(/\b(?:application|form) (?:was )?not submitted\b|\bno application (?:was )?submitted\b/gi, '');
-  if (cancelled) evidence = evidence.replace(/\bno [^;]*receipt[^;]*|only a password-reset email was found, not an application receipt/gi, '');
+  if (cancelled) evidence = evidence.split(';').filter(clause => !isNoReceiptClause(clause)).join(';')
+    .replace(/only a password-reset email was found, not an application receipt/gi, '');
   // A closure or cancellation must never erase a real or uncertain earlier process.
   if (/\b(?:applied|interview|intro call|phone screen|recruiter|assessment|assignment|submitted|uncertain|unconfirmed|ambiguous|no confirmation|no acceptance evidence|delivery failed)\b|\b(?:application|submission|submit)\b[^;]*\b(?:confirmed|confirmation|received|accepted|sent|completed|successful|successfully|receipt)\b/i.test(evidence)) {
     return 'APPLICATION_OR_INTERVIEW_NOTE';
@@ -139,7 +149,8 @@ function retentionNoteReason(note, expectedNote) {
     || /^Ego Apply closeout: truthful .+work-authorization blocker$/i.test(clause)
     || /^Daily Scan \d{8}-\d{6} report audit correction: The role explicitly does not provide required visa sponsorship\. \(original run preserved\)$/i.test(clause)
     || (unsubmitted && /^(?:ATS blocked: .*Ineligible to apply.*|Gmail draft reminder received .+|.*rejected (?:the )?submission .+|Ego Apply closeout: possible-spam rejection .+|Permanent eligibility mismatch: .+|No submit: .+|Permanent ineligibility confirmed .+|candidate does not have that authorization\. No submission)$/i.test(clause))
-    || (cancelled && /^(?:User discarded without submitting|Official .*(?:form is live|is live and prepared|Workday tenant is live|blocked submission at .+)|(?:a |required |waiting for ).+|saved credential autofill was rejected.+|no .+receipt (?:for .+ )?found.*|no receipt for .+|only a password-reset email was found, not an application receipt|retry_on=clear)$/i.test(clause))
+    || (cancelled && /^(?:User discarded without submitting|Official .*(?:form is live|is live and prepared|Workday tenant is live|blocked submission at .+)|required .+ is unresolved|waiting for .*required .*acknowledgments?|saved credential autofill was rejected.+|only a password-reset email was found, not an application receipt|retry_on=clear)$/i.test(clause))
+    || (cancelled && isNoReceiptClause(clause))
     || (cancelled && retryCleared && /^retry_on=\d{4}-\d{2}-\d{2}$/i.test(clause)));
   return ordinary && extra ? null : 'MANUAL_NOTE';
 }
@@ -258,7 +269,7 @@ export function buildEvaluatedRetentionPlan({
       protectedRows.push(protectedItem(row, 'EXPANDED_REPORT'));
       continue;
     }
-    const jdRelative = `jds/discovery-${runId}-${safeKey(key)}.md`;
+    const jdRelative = `jds/${discoveryJdName(runId, key)}`;
     const jdFile = containedFile(careerRoot, jdRelative);
     if (!jdFile || !isRegularFile(jdFile)) {
       protectedRows.push(protectedItem(row, 'JD_MISSING_OR_UNSAFE'));

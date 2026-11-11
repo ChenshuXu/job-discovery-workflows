@@ -1,5 +1,5 @@
 interface:
-  display_name: "Career-Ops LinkedIn Scan"
+  display_name: "Career-Ops Daily Scan"
   short_description: "Run the scan with posting-level fault isolation"
   default_prompt: "Use $career-ops-daily-linkedin-scan to run today's enabled sources and return the verified compact digest."
 policy:

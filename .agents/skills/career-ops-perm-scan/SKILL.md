@@ -78,8 +78,9 @@ Worker delegation uses the parent Skill's frozen `assignments.json.runtime` and
 ownership rules. Resume an active run with its original catalog; catalog changes
 block planning, worker merge and commit. Start a new run for a refreshed list.
 An empty eligible set is a valid no-match discovery result; retain its audit,
-use the existing merger for empty assignments, and report no eligible jobs without
-calling commit or claiming a `COMPLETE` persistence receipt.
+use the existing merger for empty assignments, then close the run with
+`node src/commit-scan.mjs --run <run> --close-empty`. It writes an `EMPTY`
+receipt and nothing to Career-Ops; report no eligible jobs, never `COMPLETE`.
 
 ## Verify and report
 

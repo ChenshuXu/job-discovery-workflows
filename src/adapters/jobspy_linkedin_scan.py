@@ -6,13 +6,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import re
 import shutil
 import sys
+import time
 import traceback
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from employer_exclusions import match_excluded_employer, validate_employer_exclusion_rules
 
@@ -34,6 +36,113 @@ def linkedin_job_id(url: str) -> str:
     return match.group(1) if match else slug(url or "no-id", 32)
 
 
+RATE_LIMIT_MESSAGE = re.compile(r"\b(?:403|429|999)\b|blocked|too many requests", re.IGNORECASE)
+NETWORK_ERROR = re.compile(r"timed? ?out|connection|network|temporarily", re.IGNORECASE)
+
+
+class InterfaceChanged(RuntimeError):
+    """The installed JobSpy no longer exposes what pacing wraps."""
+
+
+class LinkedInPacer:
+    """Spaces JobSpy's LinkedIn requests and stops once they keep failing.
+
+    JobSpy sleeps only between search pages and refetches a job for every query that
+    returns it. Its own failures end in a log line, so they are also recorded here.
+    """
+
+    def __init__(self, pacing: dict[str, Any], sleep: Callable[[float], None] = time.sleep) -> None:
+        self.pacing = pacing
+        self.sleep = sleep
+        self.details: dict[str, dict[str, Any]] = {}
+        self.consecutive_failures = 0
+        self.detail_requests = 0
+        self.detail_cache_hits = 0
+        self.detail_failures = 0
+        self.stopped = False
+        self.search_failures: list[str] = []
+
+    def pause(self, seconds: list[float]) -> None:
+        self.sleep(random.uniform(*seconds))
+
+    def install(self, linkedin: Any) -> None:
+        if not isinstance(getattr(linkedin, "delay", None), tuple) or not all(
+            callable(getattr(linkedin, name, None)) for name in ("_fetch_details", "fail")
+        ):
+            raise InterfaceChanged("jobspy LinkedIn scraper lacks delay, _fetch_details or fail")
+        fetch_details, fail = linkedin._fetch_details, linkedin.fail
+        pacer = self
+
+        def paced_fetch(scraper: Any, job_id: str) -> dict[str, Any]:
+            return pacer.fetch(job_id, lambda: fetch_details(scraper, job_id))
+
+        def recording_fail(scraper: Any, message: str) -> None:
+            pacer.record_search_failure(message)
+            fail(scraper, message)
+
+        linkedin.delay = tuple(self.pacing["search_delay_seconds"])
+        linkedin._fetch_details = paced_fetch
+        linkedin.fail = recording_fail
+
+    def request(self, fetch: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        self.pause(self.pacing["detail_delay_seconds"])
+        self.detail_requests += 1
+        return fetch()
+
+    def fetch(self, job_id: str, fetch: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        if job_id in self.details:
+            self.detail_cache_hits += 1
+            return self.details[job_id]
+        if self.stopped:
+            return {}
+        details = self.request(fetch)
+        if not details:
+            self.detail_failures += 1
+            self.consecutive_failures += 1
+            if self.consecutive_failures >= self.pacing["max_consecutive_detail_failures"]:
+                self.stopped = True
+                return {}
+            self.sleep(self.pacing["failure_backoff_seconds"] * self.consecutive_failures)
+            details = self.request(fetch)
+        if details:
+            self.consecutive_failures = 0
+            self.details[job_id] = details
+        return details
+
+    def record_search_failure(self, message: str) -> None:
+        self.search_failures.append(message)
+        if RATE_LIMIT_MESSAGE.search(message):
+            self.stopped = True
+
+    def stats(self) -> dict[str, Any]:
+        return {
+            "detail_requests": self.detail_requests,
+            "detail_cache_hits": self.detail_cache_hits,
+            "detail_failures": self.detail_failures,
+            "search_failures": len(self.search_failures),
+            "stopped": self.stopped,
+        }
+
+
+def validate_pacing(value: Any, config_file: Path) -> None:
+    def fail(detail: str) -> ValueError:
+        return ValueError(f"scan config jobspy_pacing {detail}: {config_file}")
+
+    if not isinstance(value, dict):
+        raise fail("must be an object")
+    for field in ("search_delay_seconds", "detail_delay_seconds", "query_delay_seconds"):
+        delay = value.get(field)
+        if (not isinstance(delay, list) or len(delay) != 2 or not all(isinstance(item, (int, float)) and item >= 0 for item in delay)
+                or delay[0] > delay[1]):
+            raise fail(f"{field} must be a [minimum, maximum] pair")
+    backoff = value.get("failure_backoff_seconds")
+    if not isinstance(backoff, (int, float)) or backoff < 0:
+        raise fail("failure_backoff_seconds must not be negative")
+    limit = value.get("max_consecutive_detail_failures")
+    if not isinstance(limit, int) or limit < 1:
+        raise fail("max_consecutive_detail_failures must be a positive integer")
+
+
 def load_scan_config(config_file: Path) -> dict[str, Any]:
     try:
         config = json.loads(config_file.read_text())
@@ -50,6 +159,7 @@ def load_scan_config(config_file: Path) -> dict[str, Any]:
     if not isinstance(config.get("location"), str) or not config["location"].strip():
         raise ValueError(f"scan config location must be a non-empty string: {config_file}")
     validate_employer_exclusion_rules(config.get("employer_exclusions"))
+    validate_pacing(config.get("jobspy_pacing"), config_file)
     return config
 
 
@@ -162,6 +272,7 @@ def main() -> int:
         "hours_old": hours_old,
         "queries": queries,
         "employer_exclusions": scan_config["employer_exclusions"],
+        "jobspy_pacing": scan_config["jobspy_pacing"],
         "output": str(run_dir),
     }
     if args.dry_run:
@@ -186,8 +297,11 @@ def main() -> int:
 
     jobs_dir.mkdir(parents=True, exist_ok=True)
     sys.path.insert(0, str(jobspy_root))
+    pacer = LinkedInPacer(scan_config["jobspy_pacing"])
     try:
         from jobspy import scrape_jobs
+        from jobspy.linkedin import LinkedIn
+        pacer.install(LinkedIn)
     except Exception as exc:
         summary = {
             "schema_version": 1,
@@ -198,6 +312,8 @@ def main() -> int:
             "unique_jobs": 0,
             "markdown_jobs": len(list(jobs_dir.glob("*.md"))),
             "errors": 1,
+            "retryable": False,
+            "failure_class": "JOBSPY_INTERFACE_CHANGED" if isinstance(exc, InterfaceChanged) else "JOBSPY_IMPORT_FAILED",
             "failure": repr(exc),
         }
         (run_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
@@ -211,9 +327,16 @@ def main() -> int:
     excluded_urls: dict[str, dict[str, str]] = {}
     raw_rows = 0
     errors: list[dict[str, str]] = []
+    missing_description_urls: set[str] = set()
 
-    for query in queries:
+    for index, query in enumerate(queries):
+        if pacer.stopped:
+            print(f"Skipping remaining queries from {query!r}: LinkedIn is limiting requests", flush=True)
+            break
+        if index:
+            pacer.pause(scan_config["jobspy_pacing"]["query_delay_seconds"])
         print(f"=== LinkedIn query: {query} ===", flush=True)
+        reported_search_failures = len(pacer.search_failures)
         try:
             df = scrape_jobs(
                 site_name=["linkedin"],
@@ -221,7 +344,7 @@ def main() -> int:
                 location=location,
                 results_wanted=results_wanted,
                 hours_old=hours_old,
-                linkedin_fetch_description=True,
+                fetch_description=True,
                 description_format="markdown",
             )
             rows = list(df.to_dict("records")) if hasattr(df, "to_dict") else []
@@ -230,8 +353,11 @@ def main() -> int:
             for row in rows:
                 url = clean(row.get("job_url") or row.get("job_url_direct") or row.get("url"))
                 description = clean(row.get("description"))
+                if url and not description and url not in seen_urls and url not in excluded_urls:
+                    missing_description_urls.add(url)
                 if not url or not description or url in seen_urls or url in excluded_urls:
                     continue
+                missing_description_urls.discard(url)
                 company = clean(row.get("company"))
                 exclusion = match_excluded_employer(company, description, scan_config["employer_exclusions"])
                 if exclusion:
@@ -257,6 +383,12 @@ def main() -> int:
                 }
             )
             print(f"ERROR {query}: {exc!r}", flush=True)
+        for message in pacer.search_failures[reported_search_failures:]:
+            errors.append({"query": query, "error": message, "traceback": ""})
+            print(f"ERROR {query}: {message}", flush=True)
+
+    if pacer.stopped and not any(RATE_LIMIT_MESSAGE.search(item["error"]) for item in errors):
+        errors.append({"query": "*", "error": "stopped after repeated job detail failures (429 blocked)", "traceback": ""})
 
     if errors:
         (run_dir / "errors.log").write_text(
@@ -283,7 +415,12 @@ def main() -> int:
         "markdown_jobs": markdown_jobs,
         "errors": len(errors),
         "excluded_employers": len(excluded_urls),
+        "dropped_missing_description": len(missing_description_urls),
+        "pacing": pacer.stats(),
     }
+    if status == "FAILED":
+        summary["failure_class"] = "RATE_LIMITED" if pacer.stopped else "QUERY_FAILED"
+        summary["retryable"] = not pacer.stopped and all(NETWORK_ERROR.search(item["error"]) for item in errors)
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
 
     print(f"RUN_DIR={run_dir}", flush=True)

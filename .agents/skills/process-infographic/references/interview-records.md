@@ -63,9 +63,9 @@ node .agents/skills/process-infographic/scripts/collect.mjs \
 
 每个事件是一项已完成事实，不带人数或当前结果。`id` 稳定且唯一；`identity` 必须存在于本次登记；日期按来源时区保留场次日期，同日事件按数组顺序；来源路径相对于 events JSON。来源的 `content` 保存审阅时的完整原文；采集时直接比较文件内容。文件改变时重新审阅后提取，不能只更新快照跳过审阅。用 `JSON.stringify({path: file, content: readFileSync(file, "utf8")})` 生成正确转义的记录。
 
-支持事件类型：`screen / coding / debugging / integration / oa / ai-screening / design / hm / bq / loop / verbal-offer / verbal-accepted / written-offer / signed-offer`。其中 coding/debugging/integration 自动累计为实作场次。每次更新图表时先沿当前登记的 Notes 链接检查流程汇总里新的完成里程碑与有关复盘，补充新的事件；来源 hash 只能检测已有文件变化，不能证明遗漏的新文件不存在。当前结果始终来自本次登记，不从事件摘录缓存读取；原因和详细结果只有被当前证据支持才添加展示说明。
+支持事件类型：`screen / coding / debugging / integration / oa / ai-screening / design / hm / bq / loop / verbal-offer / verbal-accepted / written-offer / signed-offer`。其中 coding/debugging/integration 自动累计为实作场次。每次更新图表时先沿当前登记的 Notes 链接检查流程汇总里新的完成里程碑与有关复盘，补充新的事件；来源内容比较只能检测已有文件变化，不能证明遗漏的新文件不存在。当前结果始终来自本次登记，不从事件摘录缓存读取；原因和详细结果只有被当前证据支持才添加展示说明。
 
-`snapshot.json` 保存真实路径、读取时间、来源 hash、逐条记录、分类和关联统计。默认 chart JSON 由这些记录生成，节点数量、分支、流宽和布局高度都自动计算；空数据不伪造节点，超大图要求按明确范围拆图。保留该快照，下一次重采集写新目录，不把快照当权威登记。
+`snapshot.json` 保存来源路径、一次采集时间（`as_of`）、逐条记录、分类和关联统计。默认 chart JSON 由这些记录生成，节点数量、分支、流宽和布局高度都自动计算；空数据不伪造节点，超大图要求按明确范围拆图。保留该快照，下一次重采集写新目录，不把快照当权威登记。
 
 ## 事实口径
 

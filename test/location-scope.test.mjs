@@ -37,6 +37,26 @@ test('approved Seattle metro locations pass without requiring Remote', () => {
   assert.equal(evaluate('Bellevue, NE').decision, 'EXCLUDE_NONLOCAL');
 });
 
+test('every observed Seattle-area location form stays local', () => {
+  for (const location of ['Seattle', 'Seattle, WA', 'Seattle, WA, USA', 'Seattle, Washington, United States', 'Bellevue, WA - US',
+    'Greater Seattle Area', 'Greater Seattle, WA', 'Seattle metropolitan area, WA', 'Seattle metropolitan area, WA, USA',
+    'Seattle Metropolitan Area', 'US - Seattle', 'Read AI - Seattle HQ', 'Hybrid - Issaquah, WA, USA', 'Seattle, WA; San Francisco, CA', 'Bellevue, WA; Washington, DC']) {
+    assert.equal(evaluate(location).decision, 'ALLOW_LOCAL', location);
+  }
+});
+
+test('a local metro can appear after another city in a multi-location value', () => {
+  assert.equal(evaluate('Austin, TX; Seattle, WA').decision, 'ALLOW_LOCAL');
+  assert.equal(evaluate('Austin, TX | Redmond, WA').decision, 'ALLOW_LOCAL');
+});
+
+test('same-named places outside Washington fail closed', () => {
+  for (const location of ['Kirkland, QC', 'Kirkland, Quebec, Canada', 'Everett, Massachusetts', 'Everett, MA', 'Renton, Ontario',
+    'Redmond, Oregon', 'Bellevue, Nebraska, United States', 'Tacoma, Philippines', 'Kirkland Lake, Ontario', 'Austin, TX; Everett, Massachusetts']) {
+    assert.equal(evaluate(location).decision, 'EXCLUDE_NONLOCAL', location);
+  }
+});
+
 test('only structured United States Remote passes the remote gate', () => {
   assert.equal(evaluate('United States', 'remote', true).decision, 'ALLOW_REMOTE_US');
   assert.equal(evaluate('Remote', 'remote', true).decision, 'ALLOW_REMOTE_US');

@@ -1,13 +1,13 @@
 import { resolveCareerPaths } from './career-ops-paths.mjs';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { extractPostingIdentity, postingKey } from './posting-identity.mjs';
+import { extractPostingUrls, postingKey, discoveryJdName } from './posting-identity.mjs';
 import { evaluateLocationScope, isAllowedLocationDecision } from './location-scope.mjs';
-import { semanticIdentity } from './semantic-jd-identity.mjs';
+import { semanticIdentity, semanticPair } from './semantic-jd-identity.mjs';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const OBSERVATIONAL_HISTORY_STATUSES = new Set(['skipped_title', 'skipped_location', 'skipped_age', 'skipped_no_apply_control']);
+const LEGACY_OBSERVATIONAL_HISTORY_STATUSES = new Set(['skipped_title', 'skipped_location', 'skipped_age', 'skipped_no_apply_control']);
 
 function filesBelow(root) {
   if (!existsSync(root)) return [];
@@ -42,11 +42,14 @@ export function collectHistoricalPostingKeys({ careerRoot, greenhouseKeys = [] }
       if (file === paths.scanHistoryFile) {
         const columnsFile = path.join(paths.codeRoot, 'lib/scan-history-columns.mjs');
         // Setup/offline fixtures may lack upstream modules; status is its append-only sixth column.
-        const parseLine = existsSync(columnsFile) ? require(columnsFile).parseScanHistoryLine : line => ({ status: line.split('\t')[5] ?? '' });
-        text = text.split(/\r?\n/).filter(line => !OBSERVATIONAL_HISTORY_STATUSES.has(String(parseLine(line).status ?? '').trim().toLowerCase())).join('\n');
+        const columns = existsSync(columnsFile) ? require(columnsFile) : null;
+        const parseLine = columns?.parseScanHistoryLine ?? (line => ({ status: line.split('\t')[5] ?? '' }));
+        // Career-Ops owns which statuses are observational; older installs predate the export.
+        const observational = columns?.OBSERVATIONAL_SCAN_HISTORY_STATUSES ?? LEGACY_OBSERVATIONAL_HISTORY_STATUSES;
+        text = text.split(/\r?\n/).filter(line => !observational.has(String(parseLine(line).status ?? '').trim().toLowerCase())).join('\n');
       }
       const artifact = `career-ops/${path.relative(root, file)}`;
-      for (const url of extractPostingIdentity(text).urls) {
+      for (const url of extractPostingUrls(text)) {
         const key = postingKey(url);
         if (!key) continue;
         add(key, artifact);
@@ -104,7 +107,7 @@ export function collectHistoricalSemanticContexts({ careerRoot, locationPolicy }
     const text = readFileSync(file, 'utf8');
     const url = markdownField(text, 'URL');
     const key = postingKey(url);
-    const commit = key ? (committed.get(key) ?? []).find(item => path.basename(file) === `discovery-${item.run_id}-${key.replace(/[^A-Za-z0-9._-]/g, '-')}.md`) : null;
+    const commit = key ? (committed.get(key) ?? []).find(item => path.basename(file) === discoveryJdName(item.run_id, key)) : null;
     if (!commit) continue;
     const location = markdownField(text, 'Location');
     const employmentType = markdownField(text, 'Employment Type') || markdownField(text, 'Employment') || 'unknown';
@@ -124,7 +127,7 @@ export function collectHistoricalSemanticContexts({ careerRoot, locationPolicy }
     let identity;
     try { identity = semanticIdentity({ record, markdown: text, locationDecision: scope.decision }); }
     catch { continue; }
-    const pair = `${identity.semantic_job_key}\0${identity.posting_context_key}`;
+    const pair = semanticPair(identity);
     if (!found.has(pair)) found.set(pair, []);
     found.get(pair).push({
       ...commit,

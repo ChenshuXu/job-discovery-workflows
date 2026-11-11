@@ -7,6 +7,8 @@ import { createCareerFixture, DISCOVERY_ROOT, treeManifest } from './e2e-career-
 import { EVIDENCE_TEXT, SCAN_DATE, seedCandidate, seedScan } from './e2e-scan-inputs.mjs';
 import { postingKey } from '../../src/posting-identity.mjs';
 
+// The expected runtime is the base worker, whichever agent host runs this check.
+process.env.DAILY_SCAN_HOST = '';
 const at = process.argv.indexOf('--out');
 const fx = createCareerFixture({ name: 'prepare-scan-evaluations', ...(at < 0 ? {} : { outRoot: process.argv[at + 1] }) });
 const parse = file => JSON.parse(readFileSync(file, 'utf8'));
@@ -215,6 +217,14 @@ try {
   const archives = readdirSync(path.join(forceRun, 'triage')).filter(name => name.startsWith('canonical-url-resolutions.json.superseded-'));
   fx.check('force preserves old resolution ledger as exact archive', archives.length === 1
     && readFileSync(path.join(forceRun, 'triage', archives[0]), 'utf8') === originalLedger && existsSync(path.join(forceRun, 'assignments.json')));
+
+  const staleScope = fresh('force-replaces-stale-location-audit', jobs.slice(0, 3));
+  const staleAudit = parse(path.join(forceRun, 'triage/location-scope.json'));
+  fx.write(path.join(staleScope, 'triage/location-scope.json'), { ...staleAudit, run_id: path.basename(staleScope) });
+  fx.write(ledgerFile(staleScope), { schema_version: 1, run_id: path.basename(staleScope), results: [] });
+  prepare('force-replaces-stale-location-audit', staleScope, ['--force']);
+  fx.check('force rebuilds the location audit from the recombined records',
+    parse(path.join(staleScope, 'triage/location-scope.json')).pre_scope_count === parse(path.join(staleScope, 'acquisition.json')).source_unique_count);
 
   for (const [artifact, prepared] of [['assignments.json', true], ['rendered-reports.json', false], ['receipt.json', false]]) {
     const protectedRun = prepared ? combined : fresh(`guard-${artifact.replace('.json', '')}`);

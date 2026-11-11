@@ -7,6 +7,8 @@ import { seedCandidate, seedScan, writeScoreParts, mergeAll, SCAN_DATE } from '.
 import { assignKeys } from '../../src/plan-scan-evaluations.mjs';
 import { snapshotAdapterProfile } from '../../src/adapter-registry.mjs';
 
+// The expected runtime is the base worker, whichever agent host runs this check.
+process.env.DAILY_SCAN_HOST = '';
 const at = process.argv.indexOf('--out');
 const fx = createCareerFixture({ name: 'efficiency', ...(at < 0 ? {} : { outRoot: process.argv[at + 1] }) });
 const parse = file => JSON.parse(readFileSync(file, 'utf8'));
@@ -130,7 +132,7 @@ else {const r=JSON.parse(readFileSync(file));try{validateStructuredReport(r.repo
     ['missing-hm', p => { delete p.results[0].report.hiring_manager_review; }],
   ]) {
     const copy = structuredClone(reusePart); mutate(copy); fx.write(firstFile, copy);
-    fx.run('reject-' + label, script('merge-worker-results.mjs'), ['--run', successRun, '--worker', firstWorker], { expect: 1 });
+    fx.run('reject-' + label, script('merge-worker-results.mjs'), ['--run', successRun, '--worker', firstWorker], { independentCase: true, expect: 1 });
     fx.check(label + ': no canonical writes', JSON.stringify(treeManifest(fx.dataRoot)) === beforeData);
     fx.write(firstFile, reusePart);
   }

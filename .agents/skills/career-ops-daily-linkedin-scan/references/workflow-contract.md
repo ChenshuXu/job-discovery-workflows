@@ -8,17 +8,32 @@ modes only.
 
 ## Source selection and snapshot
 
-The active registry registers `jobspy` (JobSpy LinkedIn public results), `ego-browser` (user-visible source name: LinkedIn), `jobright` (Jobright Recommendations), and `official-ats` (Career-Ops public ATS discovery). Each explicit `enabled` flag controls the next scan, and registry object order is execution order. The standalone Google ATS/SerpAPI utility remains outside Daily Scan.
+The active registry registers `jobspy` (JobSpy LinkedIn public results), `ego-browser` (user-visible source name: LinkedIn), `jobright` (Jobright Recommendations), and `official-ats` (Career-Ops public ATS discovery, currently disabled). Each explicit `enabled` flag controls the next scan, and registry object order is execution order. An adapter's optional `timeout_ms` is frozen with its definition. The standalone Google ATS/SerpAPI utility remains outside Daily Scan.
 
 Preflight create-once freezes `baseline.json.adapter_profile`: `registry_content`, `minimum_successful_adapters`, ordered enabled ids in `adapters`, and their argv prefix, config path/content, and employer-exclusion flag in `adapter_definitions`. Acquisition and all downstream phases use this run-local snapshot. A later registry edit affects only a new run; a changed snapshotted config fails closed. At least one adapter must be enabled, and the minimum-success threshold cannot exceed the enabled count.
 
 The registry runner passes frozen argv directly, serially. After all enabled sources
 finish, select at most one eligible network/bootstrap/empty retry per adapter. A run
-request already authorizes this selection. Unknown/unclassified or explicitly
-non-retryable failures cannot be retried. Retry archives the unsuccessful invocation
+request already authorizes this selection. A FAILED source is retryable only when its
+summary says `retryable: true`; a source that never started has nothing to classify and
+stays eligible, and so does an interrupted one. Unknown/unclassified, unreadable or
+explicitly non-retryable failures, and an adapter that exited by itself without a summary,
+cannot be retried. Retry archives the unsuccessful invocation
 under `adapter-attempts/`. A nonzero process exit with `summary.status=SUCCESS` is a
-system error. Evaluate minimum successful sources only after all have finished.
+system error. An adapter that exceeds `timeout_ms` is stopped together with every
+process it started and recorded as a non-retryable FAILED source (`ADAPTER_TIMEOUT`).
+It keeps its captured JDs except the newest, which a kill can truncate, so the remaining
+sources still decide the run. A killed browser adapter may leave its task space open. Evaluate minimum successful sources only after all have finished.
 `--dry-run` inspects the next run's order/argv without external access.
+
+A source is interrupted when it started and left neither a summary nor a self-reported
+exit, or a signal killed it: a host crash, a killed session or a killed runner. Recover
+with `npm run daily-scan:sources -- --run runs/$RUN_ID --resume`, without asking. It
+refuses while any adapter or runner of the run is alive. It leaves terminal sources alone,
+gives an interrupted source its one retry, and starts sources that never ran as a first
+attempt with their retry intact. A source interrupted twice becomes a non-retryable FAILED
+source (`ADAPTER_INTERRUPTED`) with no jobs, since a killed process can truncate its last
+JD; both captures stay under `adapter-attempts/`. `source-run.json.resume` lists each action.
 
 An explicit user instruction can authorize one otherwise non-retryable invocation.
 Record it as `{run_id, adapter, authorized_by:"user", instruction}` in a run-local
@@ -86,12 +101,27 @@ and source-specific scope. Query sources require queries; Jobright uses its acce
 `filter_snapshot`. Do not recreate adapter filtering in the coordinator.
 
 LinkedIn's `direct_search` and `top_applicant_recommendations` each have `enabled`
-and `required` flags. Inspect both path summaries: required failure fails LinkedIn;
-optional failure is degraded only when another enabled path succeeds. Recommendation
-capture must use the configured Top Applicant module, verified Past 24 hours filter
-and structured listing time, not a different Show all module. Both paths deduplicate
-exact LinkedIn IDs. Authentication/challenge, selector ambiguity/drift, destination or
-filter mismatch and access limits are non-retryable. Cleanup belongs to the adapter.
+and `required` flags. The second path keeps its config key, but now reads the
+`Jobs that match your profile` section. Inspect both path summaries: required failure
+fails LinkedIn; optional failure is degraded only when another enabled path succeeds.
+Recommendation capture clicks that section's scoped Show all link on the Jobs page,
+applies and verifies the Past 24 hours filter, then reads every result page until a
+short or repeated page ends the list. It uses structured listing time and never a
+different Show all module. Without the filter the list runs to hundreds of months-old
+postings, so `max_pages` bounds it. Both paths deduplicate exact LinkedIn IDs and report
+`cap_reached` when a limit, not the end of the list, stopped capture. Authentication/challenge,
+selector ambiguity/drift, destination or filter mismatch and access limits are
+non-retryable. An access limit also stops every remaining LinkedIn page and query.
+Cleanup belongs to the adapter.
+
+JobSpy paces LinkedIn through `jobspy_pacing` in its config: search-page, detail and
+between-query delays, a failure backoff and a consecutive-failure limit. Each job detail
+is fetched once per run, however many queries return it. The adapter wraps JobSpy's
+LinkedIn scraper at runtime and fails as `JOBSPY_INTERFACE_CHANGED` if an upstream update
+removes what it wraps. Repeated detail failures or a blocked search page stop the source
+as a non-retryable `RATE_LIMITED` failure that keeps its captures. A failed search page
+is an error rather than a shorter result. `dropped_missing_description` and `pacing` in
+the summary show rows lost and requests made.
 
 Direct search pins the verified Greater Seattle Area geoId for the configured
 `Seattle, WA` scope and checks the effective geoId, visible location and 24-hour
@@ -108,7 +138,9 @@ Only a structured platform/API field can set `Structured Remote Signal: true`;
 JobSpy `is_remote` is heuristic. Preserve all non-unknown employment classifications
 through combining; the worker resolves their meaning with the complete JD.
 
-`official-ats` runs the installed upstream `scan-ats-full.mjs --dry-run --json`
+`official-ats` is disabled in the active registry: its bounded sample rarely reached
+the target location and unreachable boards failed it on every run. When enabled, it runs
+the installed upstream `scan-ats-full.mjs --dry-run --json`
 with a run-local data root, no candidate history and filesystem writes restricted to
 that root. Its frozen config supplies title keywords, ATS selection, age, per-ATS
 company cap and timeouts. It then fetches complete official JDs and exact posting
@@ -137,13 +169,13 @@ A new adapter must have a stable lowercase-hyphen id, accept the common CLI argu
 Acquisition retains `posting_keys`, `primary_key`, `source_keys`, `posting_urls`
 and `primary_url`; the parser and resolver own their construction.
 
-Records merge only when exact key sets intersect. ATS keys are primary; unresolved LinkedIn records retain only their LinkedIn key. Parser-v2 identities use exact stable requisitions under
+Canonical URL resolution reads the JD header fields first. A URL in the JD body counts only when it is the single exact ATS identity there; generic or competing body links leave the record on its source key. Records merge only when exact key sets intersect. ATS keys are primary; unresolved LinkedIn records retain only their LinkedIn key. Parser-v2 identities use exact stable requisitions under
 [`posting-identity`](../../../../src/posting-identity.mjs); unknown URLs must not gain
 an identity from title/company similarity. Cross-day history comes only from committed Career-Ops state. After location scope, strict semantic identity serializes the normalized employer and complete normalized JD body; posting context adds normalized employment type, workplace type, and accepted location decision. Shadow mode observes same-context aliases; enforce mode removes only those aliases before assignment. Exact identities remain in `triage/canonical-url-resolutions.json` for application handoff. The shared commit lock repeats exact and semantic/context history lookup, producing `HISTORY_DUPLICATE` or `SEMANTIC_HISTORY_COLLISION` when another run committed during scoring.
 
 ## Location scope
 
-The Career-Ops profile owns one baseline-snapshotted policy. Local eligibility is an exact match against `baseline.location_policy.local_metros`, carried into `assignments.json.location_policy`. Remote eligibility requires both a `United States`/unqualified `Remote` location and `Structured Remote Signal: true`. Search parameters, country-only `United States`, inferred text-only Remote, missing locations, source conflicts, and nonlocal cities never enter worker assignments.
+The Career-Ops profile owns one baseline-snapshotted policy. Local eligibility is an exact match against `baseline.location_policy.local_metros`, carried into `assignments.json.location_policy`. Each place in a multi-location value is checked separately and must be the metro alone or qualified as a Washington or US area, so same-named places elsewhere fail closed. Remote eligibility requires both a `United States`/unqualified `Remote` location and `Structured Remote Signal: true`. Search parameters, country-only `United States` without that signal, inferred text-only Remote, missing locations, source conflicts, and nonlocal cities never enter worker assignments.
 
 `triage/location-scope.json` contains one decision per combined pre-scope posting. Decisions are either `ALLOW_LOCAL`, `ALLOW_REMOTE_US`, an `EXCLUDE_*`, or an `AMBIGUOUS_*`. Exclusions and ambiguities remain in that run-local audit but are removed from combined `jobs/`, `acquisition.keys`, and assignments before scoring. `assignments.json` and every retained acquisition record carry the policy/allowed decision, and both the run contract and deterministic worker merger fail closed if an unapproved key appears.
 
@@ -270,6 +302,12 @@ the existing merger owns `results/<worker-id>.json` and derived fields.
   collaboration tools, use `fork_turns="none"` so the worker reads its bounded inputs
   instead of inheriting the coordinator's history. If the requested settings cannot
   be selected, report the execution blocker; do not silently substitute a model.
+- Codex uses the base `worker` values. In a Claude Code shell `CLAUDECODE` selects
+  `hosts.claude.worker`, which the planner freezes into `assignments.json.runtime`;
+  `DAILY_SCAN_HOST` overrides the detection, and an empty value forces the base worker.
+  Dispatch each worker with the Agent tool, using `subagent_type: "general-purpose"` and
+  the frozen `model` and `effort`, as a fresh agent with no conversation history. A run
+  keeps the host it was planned on; resume rejects a different worker snapshot.
 - Pass absolute Job Discovery/run roots, worker id, assignments path, and the complete
   worker-prompt path. Tell the worker to follow that prompt, preserve other workers'
   files, and return final/part paths plus failed counts and blockers, not full reports.
@@ -282,6 +320,9 @@ the existing merger owns `results/<worker-id>.json` and derived fields.
   A host may return only a task name. In that case use the worker's observed
   `CODEX_THREAD_ID` from its first progress message, never `CODEX_SESSION_ID` or
   the task name. The collector independently checks parent/session/root-turn identity.
+  On Claude Code bind the agent id each Agent call returned; the measured scope is the
+  coordinator session, and `CODEX_THREAD_ID` does not apply. Workers report only through
+  their final message there, so wait for completion notifications.
 - Empty assignments use the existing merger, without a model call. Require
   `result_schema_version: 8` and one final for every expected id before commit.
 
@@ -358,6 +399,8 @@ added/cooldown statuses, so do not claim this handoff enables native alias dedup
 Normal `daily-scan:baseline` starts `usage-context.json` before retention. This file
 binds exact coordinator thread/root-turn segments and explicit worker agent ids;
 it does not infer ownership from a model name, directory, or a worker result file.
+Claude Code segments use the whole session (`CLAUDE_CODE_SESSION_ID`) as both thread and
+root turn, read from `~/.claude/projects`, so keep one Daily Scan per session.
 On each independent coordinator turn that resumes the scan, run
 `npm run daily-scan:usage -- start --run runs/$RUN_ID` before continued work,
 then bind the continuing workers again. Preserve earlier segments and bindings.
@@ -391,7 +434,8 @@ Then bind its evidenced worker ids and refresh. Unknown historical ownership sta
 unverified; do not attach the current comparison turn to that old run.
 
 Report requested worker model/effort separately from observed per-turn coordinator
-and worker settings, including mixed settings and unavailable evidence. Token counts
+and worker settings, including mixed settings and unavailable evidence. Claude Code
+transcripts do not record the coordinator's effort, so `unknown` there is expected. Token counts
 distinguish input, cached input, uncached input, output, reasoning output and total;
 cached input is part of input and reasoning output is part of output, not extra tokens.
 Full coverage requires evidence for every required scope. An empty assignment needs
@@ -409,16 +453,43 @@ after history deduplication. Per-job ratios are undefined for zero or unknown as
 Worker failures, reports, persistence and source outcomes are operational proxies only:
 semantic quality remains unreviewed until an evidence-based review is actually performed.
 
+## Claude scheduled runs
+
+A Claude scheduled task reports `succeeded` when its first turn ends, which happens while
+sources or workers are still running in the background. That status is not run evidence:
+only `receipt.json` proves completion. Nobody is present to answer during a scheduled run,
+so recover with `--resume` rather than asking when a source task stops early. A scheduled coordinator sends one push notification
+with the run id and outcome once the run reaches `COMPLETE` or a blocker.
+
+### Lost coordinators
+
+The coordinator's turn ends while sources run, and one completion event starts the next
+turn. If the host is asleep then, that turn has no network; the app pauses the idle session
+and drops the turn, and nothing wakes it again. The session stays `succeeded` with its last
+line promising to continue, and the run has no receipt. A closed lid on battery always
+sleeps the host. The runner's `caffeinate` hold covers idle sleep only.
+
+`npm run -s daily-scan:pending` is the read-only check. It reports runs from the last 48
+hours that have a baseline and no receipt: `ACTIVE` when an adapter or runner is alive or an
+artifact changed in the last 45 minutes, otherwise `PENDING` with a stage and next action.
+Recovery runs in a new session, resumes each `PENDING` run through the table below and needs
+no confirmation, because the original request already authorized the run.
+
+A source that failed during an attempt in which `pmset` logged a host sleep has
+`host_sleeps` in its summary and `retryable: true`, whatever the adapter reported, so it gets
+the normal single retry. Its original `failure_class` stays.
+
 ## Resume and verification
 
 Inspect existing artifacts before choosing a command:
 
 | Existing state | Next action |
 |---|---|
-| `receipt.json` exists | Read the terminal outcome and requested evidence. Do not rerun commit or create-only closeout. |
+| `receipt.json` exists | Read the terminal outcome and requested evidence. Do not rerun commit. |
 | `rendered-reports.json` exists without a receipt, or a commit was interrupted | Inspect exact Career-Ops writes and commit diagnostics before recovery. Do not assume rollback completed or blindly start a new run. |
 | `assignments.json` exists and commit has not started | Verify locked sources and existing parts; reuse valid batches and resume incomplete work with its original owner within the remaining retry budget. Keep terminal `FAILED` items; resuming does not reset attempts. Use the existing merger for final files. |
 | Canonical URL ledger exists but assignments do not | Repair the planner input, run the standalone planner and validate the run. Repeat resolution only when needed with explicit resolver `--force`; preserve the superseded ledger. |
+| Baseline exists and a source has no terminal summary | Run the sources command with `--resume`, then continue as after normal acquisition. Do not repeat destructive preflight. |
 | Baseline/source/combined artifacts exist without a canonical URL ledger | Reuse the baseline and captured sources; use the runner's bounded eligible retry where needed, then run `daily-scan:prepare`. Do not repeat destructive preflight. |
 
 The baseline freezes source selection/config and location policy; the planner later
@@ -437,7 +508,7 @@ authorize a fresh scan. Use the read-only acceptance procedure below to assess a
 
 Distinguish persistence integrity, source coverage and semantic quality. Read receipt,
 source summaries, assigned parts/finals and the relevant saved JDs/reports; use read-only
-library validators when needed, never create-only closeout or writing repair helpers.
+library validators when needed, never commit or writing repair helpers.
 State exactly which records and conditions were reviewed and what remains unverified.
 For reported duplicate candidates compare saved official URLs and exact requisitions,
 not only titles or context snapshots. A parser gap is an identity defect: preserve assigned

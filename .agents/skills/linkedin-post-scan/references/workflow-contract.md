@@ -2,7 +2,7 @@
 
 ## Shared invariants
 
-Load `config/linkedin-post-scan.json`. Writing modes initialize the local SQLite database, purge expired tombstones, and acquire the single-run lock. `status` branches before all three operations, opens the existing database as immutable, and never renders a report. Runtime state belongs in `.local/linkedin-post-scan/`, with handoff runs in its `runs/` subdirectory. Reports are stable Markdown views under `.local/outputs/linkedin-post-scan/`. Do not create a root-level `linkedin-post-scan/` directory.
+Load `config/linkedin-post-scan.json`. Writing modes initialize the local SQLite database, purge expired tombstones, and acquire the single-run lock. `status` branches before all three operations, opens the existing database read-only (still reading rows a live or killed writer left in its WAL), and never renders a report. If a killed run still holds the lock, `cli.mjs clear-stale-run` marks it `STOPPED` (`STALE_RUN_CLEARED`); it refuses while any Post Scan scan or calibration process is alive. Runtime state belongs in `.local/linkedin-post-scan/`, with handoff runs in its `runs/` subdirectory. Reports are stable Markdown views under `.local/outputs/linkedin-post-scan/`. Do not create a root-level `linkedin-post-scan/` directory.
 
 The operational boundary is observation and pre-Send preparation only, with no automatic external submission.
 
@@ -35,7 +35,7 @@ Run the three representative role/location combinations in combined and split fo
 
 ## Career-Ops handoff
 
-For each new exact posting, create a `postscan-<UTC-epoch-ms>-<8-character-posting-key-hash>` run with the single `linkedin-post-scan` source summary, complete Markdown JD, and employer-exclusion audit. Set `JOB_DISCOVERY_ADAPTER_REGISTRY` only in child processes, pointing to the absolute Post Scan config.
+For each new exact posting, create a `postscan-<UTC-epoch-ms>-<8-character-posting-key-hash>` run with the single `linkedin-post-scan` source summary, complete Markdown JD, and employer-exclusion audit. An employer exclusion ends the opportunity as `EMPLOYER_EXCLUDED` before any run is created. A handoff whose planning stopped before it finished is still `PREPARED`; `handoff-plan` starts it again in a new run and `handoff-finalize` refuses it. Set `JOB_DISCOVERY_ADAPTER_REGISTRY` only in child processes, pointing to the absolute Post Scan config.
 
 Run in order: baseline capture, combine, contract validation, canonical URL resolution, evaluation planning, configured model workers only for non-empty assignments, deterministic empty merged results for empty assignments, commit, and receipt verification. If Career-Ops location policy changes after baseline, discard the run and start over. A location-gate exclusion is a completed `LOCATION_GATE_EXCLUDED` outcome, not a handoff failure.
 
@@ -53,4 +53,4 @@ The narrow visible-state recorder allows only ready to prepared, ready/prepared 
 
 Maintain one `YYYY-MM-DD.md` per Pacific date and a minimal `latest.md` link. Stable identities replace rows rather than append duplicates. Sections are Summary, Direct Apply, Worth Contacting, Review, Completed, and full Connect/DM drafts. Every retained detail row links its canonical `Source Post`; `POST_IDENTITY_UNRESOLVED` appears only in Review with an explicitly labeled navigation clue. Direct Apply requires the persisted report object and matching tracker identity. Excluded posts appear as counts only.
 
-Database v2 compares saved post bodies directly and uses exact public identities for new records. Existing opportunity/contact IDs and prepared outreach are preserved. Legacy opaque exclusion IDs cannot be matched without their old digest algorithm; they remain for historical counts until their original eight-day expiry. A revisited excluded post is classified again and receives an exact-ID tombstone. Read-only status supports both database versions without migration.
+Database v2 compares saved post bodies and routes directly, stores each post all-or-nothing so a post whose routing failed is processed again, and uses exact public identities for new records. Existing opportunity/contact IDs and prepared outreach are preserved. Legacy opaque exclusion IDs cannot be matched without their old digest algorithm; they remain for historical counts until their original eight-day expiry. A revisited excluded post is classified again and receives an exact-ID tombstone. Read-only status supports both database versions without migration.

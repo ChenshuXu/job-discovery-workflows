@@ -4,9 +4,10 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import path from 'node:path';
 import { workerIdsForRuntime } from '../daily-scan-runtime.mjs';
 import { matchExcludedEmployer } from '../employer-exclusions.mjs';
+import { localCalendarDate } from '../evaluated-retention.mjs';
 import { DEFAULT_CONFIG, POST_SCAN_ROOT, PROJECT_ROOT } from './config.mjs';
+import { safePostingKey } from '../posting-identity.mjs';
 
-const safeKey = key => String(key).replace(/[^A-Za-z0-9._-]/g, '-');
 const atomicJson = (file, value) => { const staged = `${file}.tmp-${process.pid}`; writeFileSync(staged, `${JSON.stringify(value, null, 2)}\n`); renameSync(staged, file); };
 
 function runNode(script, args, env) {
@@ -17,22 +18,28 @@ function runNode(script, args, env) {
 
 export function prepareHandoffRun(db, config, postingKey, runId = null) {
   const prior = db.prepare('SELECT * FROM career_ops_handoffs WHERE posting_key=?').get(postingKey);
-  if (prior) return { existing: true, handoff: prior };
-  runId ??= `postscan-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  if (prior && prior.status !== 'PREPARED') return { existing: true, handoff: prior };
   const row = db.prepare("SELECT * FROM opportunities WHERE posting_key=? AND kind='EXACT_JOB'").get(postingKey);
   if (!row) throw new Error(`exact opportunity not found: ${postingKey}`);
+  if (row.status === 'EMPLOYER_EXCLUDED') return { existing: true, status: 'EMPLOYER_EXCLUDED', reason_code: row.reason_code };
   const evidence = JSON.parse(row.evidence_json);
+  const exclusionsConfig = JSON.parse(readFileSync(config.paths.employer_exclusions, 'utf8'));
+  const excluded = matchExcludedEmployer({ company: row.employer, description: evidence.jd_text }, exclusionsConfig.employer_exclusions);
+  if (excluded) {
+    // An excluded employer is a final outcome for this opportunity, not a failed handoff to retry.
+    db.prepare("UPDATE opportunities SET status='EMPLOYER_EXCLUDED', reason_code=?, updated_at=? WHERE opportunity_id=?")
+      .run(excluded.id, new Date().toISOString(), row.opportunity_id);
+    return { existing: false, status: 'EMPLOYER_EXCLUDED', reason_code: excluded.id, exclusion: excluded };
+  }
+  // A PREPARED row means planning never finished; that run is left as evidence and a new one starts.
+  if (prior) db.prepare('DELETE FROM career_ops_handoffs WHERE posting_key=?').run(postingKey);
+  runId ??= `postscan-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const runRoot = path.join(POST_SCAN_ROOT, 'runs', runId);
   const sourceRoot = path.join(runRoot, 'sources/linkedin-post-scan');
   const jobsRoot = path.join(sourceRoot, 'jobs');
   mkdirSync(jobsRoot, { recursive: true });
-  const exclusionsConfig = JSON.parse(readFileSync(config.paths.employer_exclusions, 'utf8'));
-  const excluded = matchExcludedEmployer({ company: row.employer, description: evidence.jd_text }, exclusionsConfig.employer_exclusions);
-  const exclusionAudit = { schema_version: 1, run_id: runId, excluded_count: excluded ? 1 : 0,
-    results: excluded ? [{ posting_key: postingKey, ...excluded }] : [] };
-  atomicJson(path.join(sourceRoot, 'excluded-employers.json'), exclusionAudit);
-  if (excluded) throw new Error(`exact opportunity matches employer exclusion: ${excluded.reason}`);
-  const jobFile = path.join(jobsRoot, `${safeKey(postingKey)}.md`);
+  atomicJson(path.join(sourceRoot, 'excluded-employers.json'), { schema_version: 1, run_id: runId, excluded_count: 0, results: [] });
+  const jobFile = path.join(jobsRoot, `${safePostingKey(postingKey)}.md`);
   const markdown = `# ${row.employer} - ${row.title}\n\n**URL:** ${row.official_url}\n**Company:** ${row.employer}\n**Role:** ${row.title}\n**Location:** ${row.location}\n**Employment Type:** ${evidence.employment_type ?? 'unknown'}\n**Employment Type Source:** ${evidence.employment_type_source ?? 'linkedin-post-deep-check'}\n**Workplace Type:** ${evidence.workplace_type ?? 'unknown'}\n**Workplace Type Source:** ${evidence.workplace_type_source ?? 'linkedin-post-deep-check'}\n**Structured Remote Signal:** ${evidence.structured_remote_signal === true}\n**Posted:** ${evidence.published_at ?? ''}\n**Source:** LinkedIn Post Scan\n**Discovery Run:** ${runId}\n**Posting Key:** ${postingKey}\n\n## Job Description\n\n${evidence.jd_text.trim()}\n`;
   writeFileSync(jobFile, markdown);
   atomicJson(path.join(sourceRoot, 'summary.json'), { schema_version: 1, run_id: runId, adapter: 'linkedin-post-scan', status: 'SUCCESS',
@@ -45,6 +52,7 @@ export function prepareHandoffRun(db, config, postingKey, runId = null) {
 
 export function runHandoffPlanning(db, config, postingKey) {
   const prepared = prepareHandoffRun(db, config, postingKey);
+  if (prepared.status === 'EMPLOYER_EXCLUDED') return prepared;
   if (prepared.existing) {
     const runRoot = path.join(POST_SCAN_ROOT, 'runs', prepared.handoff.run_id);
     const acquisitionFile = path.join(runRoot, 'acquisition.json');
@@ -59,7 +67,7 @@ export function runHandoffPlanning(db, config, postingKey) {
     }
     return prepared;
   }
-  const env = { ...process.env, JOB_DISCOVERY_ADAPTER_REGISTRY: path.resolve(DEFAULT_CONFIG) };
+  const env = { ...process.env, JOB_DISCOVERY_ADAPTER_REGISTRY: path.resolve(config.file ?? DEFAULT_CONFIG) };
   const career = config.paths.career_ops_root;
   const run = prepared.runRoot;
   const stages = {};
@@ -85,10 +93,11 @@ export function finalizeHandoff(db, config, postingKey) {
   const handoff = db.prepare('SELECT * FROM career_ops_handoffs WHERE posting_key=?').get(postingKey);
   if (!handoff) throw new Error(`handoff not prepared: ${postingKey}`);
   if (handoff.status === 'ALREADY_TRACKED') return { status: handoff.status, existing: true };
+  if (handoff.status === 'PREPARED') throw new Error(`handoff planning has not finished for ${postingKey}; run handoff-plan again`);
   const run = path.join(POST_SCAN_ROOT, 'runs', handoff.run_id);
-  const env = { ...process.env, JOB_DISCOVERY_ADAPTER_REGISTRY: path.resolve(DEFAULT_CONFIG) };
+  const env = { ...process.env, JOB_DISCOVERY_ADAPTER_REGISTRY: path.resolve(config.file ?? DEFAULT_CONFIG) };
   try {
-    const commit = runNode('commit-scan.mjs', ['--run', run, '--career-ops', config.paths.career_ops_root, '--date', new Date().toISOString().slice(0, 10)], env);
+    const commit = runNode('commit-scan.mjs', ['--run', run, '--career-ops', config.paths.career_ops_root, '--date', localCalendarDate()], env);
     const receipt = JSON.parse(readFileSync(path.join(run, 'receipt.json'), 'utf8'));
     const report = (receipt.reports ?? []).find(item => item.posting_key === postingKey) ?? null;
     const has = field => Array.isArray(receipt[field]) && receipt[field].includes(postingKey);

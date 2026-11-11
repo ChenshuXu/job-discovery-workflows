@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs';
+import { rmSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { careerOpsCodeRoot } from '../../src/career-ops-paths.mjs';
@@ -68,6 +68,8 @@ export function createCareerFixture({ name, outRoot, sourceRoot = careerOpsCodeR
     commands.push({ label, command, cwd: options.cwd ?? DISCOVERY_ROOT, env: Object.fromEntries(Object.entries({ ...env, ...options.env }).filter(([key]) => /^CAREER_OPS_|^JOB_DISCOVERY_/.test(key))), exit_code: result.status, error: result.error?.message ?? null });
     write(path.join(root, 'commands.json'), commands);
     if (options.expect !== null) check(`${label}: exit ${options.expect ?? 0}`, result.status === (options.expect ?? 0), { actual: result.status, stderr: result.stderr });
+    // A negative case stands alone, so it must not spend the posting's retry budget for the next one.
+    if (options.independentCase) rmSync(path.join(args[args.indexOf('--run') + 1], 'results', `${args[args.indexOf('--worker') + 1]}.validation-evidence.json`), { force: true });
     return result;
   };
   const finish = extra => {

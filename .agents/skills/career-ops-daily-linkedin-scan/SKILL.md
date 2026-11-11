@@ -20,6 +20,7 @@ Read only the linked sections needed for the current mode:
 |---|---|
 | Run | Procedure below; [source contract](references/workflow-contract.md#source-selection-and-snapshot), then [delegation](references/workflow-contract.md#worker-delegation-and-evidence), then [commit evidence](references/workflow-contract.md#job-issues-and-savepoints). |
 | Resume | [Recovery table](references/workflow-contract.md#resume-and-verification); reuse valid work and remaining retry budgets. Start a new usage segment before continuing and rebind continuing workers. |
+| Recover | `npm run -s daily-scan:pending` lists unfinished runs whose coordinator is gone. For each `PENDING` run, continue in Resume mode without asking; for `NONE` or only `ACTIVE`, end with one line. See [lost coordinators](references/workflow-contract.md#lost-coordinators). |
 | Verify / troubleshoot | [Read-only acceptance](references/workflow-contract.md#read-only-acceptance) of the named run; do not start a scan, cleanup, commit or retry. |
 | Compare usage | [Usage accounting](references/workflow-contract.md#usage-accounting-and-comparison); compare only named runs. For read-only requests, read existing observations and state their time. |
 | Schedule | Update the existing entry, preserving unrequested fields. Its prompt needs this Skill, run intent and the [compact digest](references/workflow-contract.md#completion-report). |
@@ -67,7 +68,9 @@ path in place of `../career-ops` if the repositories are not siblings.
    Use the frozen argv and config snapshot. After all enabled sources have run,
    inspect failures and select at most one eligible network/bootstrap/empty retry
    per adapter with `npm run daily-scan:sources -- --run runs/$RUN_ID --retry <adapter-id>`.
-   Explicitly non-retryable or unclassified failures cannot be retried. Continue
+   Explicitly non-retryable or unclassified failures cannot be retried. If a source
+   task stopped early or a source has no summary, run the same command with `--resume`
+   instead; it needs no confirmation. Continue
    degraded only when the frozen `minimum_successful_adapters` passes; inspect both
    LinkedIn path summaries and their `required` flags.
 4. Prepare evaluations using the [preparation contract](references/workflow-contract.md#evaluation-preparation):
@@ -76,7 +79,9 @@ path in place of `../career-ops` if the repositories are not siblings.
    npm run daily-scan:prepare -- --run runs/$RUN_ID --career-ops ../career-ops
    ```
 
-   This command combines captured sources, validates the run, resolves canonical URLs,
+   The worker model is frozen here for the host running the command; Claude Code is
+   detected from `CLAUDECODE`, with no extra flag. This command combines captured
+   sources, validates the run, resolves canonical URLs,
    plans evaluations and validates the changed artifacts. It stops on the first error;
    use the contract's standalone commands for diagnosis and recovery. It never starts
    retention, acquisition, scoring or commit. Do not rerun it for assigned or closed runs.
@@ -122,8 +127,7 @@ path in place of `../career-ops` if the repositories are not siblings.
    The command owns the shared lock, live history recheck (including
    `SEMANTIC_HISTORY_COLLISION`), tracker-append proofs, official writers and rollback.
    Do not reproduce its writes or touch the shared additions queue.
-7. Read the verified `receipt.json` written by commit. `daily-scan:closeout` is
-   create-only, not a read-only verifier; do not run it again. Report `COMPLETE`
+7. Read the verified `receipt.json` written by commit. Report `COMPLETE`
    only from the contract's verified persistence and set-conservation evidence.
 8. Refresh the usage observation before replying:
 

@@ -188,7 +188,7 @@ function fingerprint(value, legacyGeneric) {
     return job && greenhouseId === job ? build('greenhouse', tenant, job) : null;
   }
   if (!legacyGeneric && host === 'tnl2.jometer.com') return null;
-  if (!legacyGeneric && host === 'ziprecruiter.com' && segments[0]?.toLowerCase() === 'kn') return null;
+  if (!legacyGeneric && host === 'ziprecruiter.com' && /^(?:kn|ekn)$/i.test(segments[0] ?? '')) return null;
   if (!legacyGeneric && host === 'recruit.hirebridge.com') {
     const tail = segments.map(segment => segment.toLowerCase()).join('/');
     const jid = url.searchParams.get('jid');
@@ -279,18 +279,20 @@ export function samePosting(left, right) {
   return a.ats === b.ats && a.tenant === b.tenant && a.requisitionId === b.requisitionId;
 }
 
-const LABELED_ID_RE = /\b(?:linkedin\s+(?:job|posting)\s+id|linkedin\s+id|job\s*id|posting\s*id|requisition|req|jr|job|posting|ref(?:erence)?|r_)[\s:#_-]*([a-z][a-z0-9-]*\d[a-z0-9-]*|\d[a-z0-9-]*)\b/gi;
 const URL_RE = /https?:\/\/[^\s<>'"`|)]+/gi;
 
-export function extractPostingIdentity(text) {
+/** File-safe form of a posting key, as used in captured and archived JD names. */
+export const safePostingKey = key => String(key).replace(/[^A-Za-z0-9._-]/g, '-');
+/** Career-Ops archive name for a Daily Scan JD. */
+export const discoveryJdName = (runId, key) => `discovery-${runId}-${safePostingKey(key)}.md`;
+
+/** Canonical posting URLs found anywhere in a report, tracker or history text. */
+export function extractPostingUrls(text) {
   const source = String(text ?? '');
-  const ids = new Set();
-  for (const match of source.matchAll(LABELED_ID_RE)) ids.add(match[1].toUpperCase());
-  for (const match of source.matchAll(/linkedin\.com\/jobs\/view\/(\d+)/gi)) ids.add(match[1]);
   const urls = new Set();
   for (const match of source.matchAll(URL_RE)) {
     const canonical = canonicalizePostingUrl(match[0]);
     if (canonical) urls.add(canonical);
   }
-  return { ids: [...ids], urls: [...urls] };
+  return [...urls];
 }

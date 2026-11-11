@@ -49,7 +49,6 @@ read its missing-item actions and continue setup; do not delete files to silence
 | Mail review | `gmail` | Career-Ops, private Career Docs Git history, only the selected mailbox connections |
 | Interview research | `interview` | Career Docs, Ego Lite/research tools and the external Skills listed in the README |
 | Recruiting-post scan | `post-scan` | Career-Ops, Ego Lite, its config and shared runtime; preserve the README's v1 database upgrade restriction |
-| Standalone Google ATS | `google-ats` | Its config; SerpAPI credential only for a separately requested real scan |
 | Process charts | `process-infographic` | Career-Ops statistics interface, Career Docs, Python/Pillow and an appropriate font |
 
 The PERM employer-filter Skill uses Daily Scan setup, then its own explicit tracker
@@ -187,8 +186,7 @@ Replace the example workflow/source selection with the actual choices. For JobSp
 run the README's `--runtime-check` and venv `scrape_jobs` import. For official ATS and
 Jobright, validate their actual config with the exported `loadCareerAtsConfig` and
 `loadJobrightConfig` functions. Post Scan's `loadConfig` validates referenced paths and
-runtime without opening its database. Google `--dry-run` needs no credential and makes
-no paid request. Run `npm test` when verifying the checkout itself; it uses disposable
+runtime without opening its database. Run `npm test` when verifying the checkout itself; it uses disposable
 fictional fixtures and does not configure the user's facts or accounts.
 
 For resumes only, follow [personal template setup](../assets/README.md), run

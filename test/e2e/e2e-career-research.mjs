@@ -40,7 +40,7 @@ try {
     ['external-citation', row => { row.report.score_evidence.compensation.source = 'Research: market: Invented external salary benchmark.'; }, 'research source'],
   ]) {
     const invalid = structuredClone(jdPart); mutate(invalid.results[0]); fx.write(jdPartFile, invalid);
-    const rejected = fx.run('jd-only-reject-' + name, script('merge-worker-results.mjs'), ['--run', jdOnly, '--worker', jdWorker], { expect: 1 });
+    const rejected = fx.run('jd-only-reject-' + name, script('merge-worker-results.mjs'), ['--run', jdOnly, '--worker', jdWorker], { independentCase: true, expect: 1 });
     fx.check(name + ': rejects before canonical writes', rejected.stderr.includes(message) && JSON.stringify(treeManifest(fx.dataRoot)) === beforeJdData);
     fx.write(jdPartFile, jdPart);
   }
@@ -90,7 +90,7 @@ try {
     ['unsupported-success', row => { row.research.checks.compensation.status = 'limited'; row.research.checks.compensation.question = 'Confirm market scope.'; row.report.score_evidence.compensation.status = 'supported'; }, 'supported'],
   ]) {
     const part = JSON.parse(original); mutate(part.results[0]); fx.write(file, part);
-    const result = fx.run(`reject-${name}`, script('merge-worker-results.mjs'), ['--run', run, '--worker', worker], { expect: 1 });
+    const result = fx.run(`reject-${name}`, script('merge-worker-results.mjs'), ['--run', run, '--worker', worker], { independentCase: true, expect: 1 });
     fx.check(`${name}: actionable rejection and no Career-Ops writes`, result.stderr.includes(message) && JSON.stringify(treeManifest(fx.dataRoot)) === beforeData);
     fx.write(file, original);
   }
@@ -98,7 +98,7 @@ try {
   const belowFile = path.join(run, 'results', belowWorker + '.part-1.json');
   const belowOriginal = readFileSync(belowFile, 'utf8'), below = JSON.parse(belowOriginal);
   delete below.results[0].research; fx.write(belowFile, below);
-  const missingBelow = fx.run('reject-unresearched-below-threshold', script('merge-worker-results.mjs'), ['--run', run, '--worker', belowWorker], { expect: 1 });
+  const missingBelow = fx.run('reject-unresearched-below-threshold', script('merge-worker-results.mjs'), ['--run', run, '--worker', belowWorker], { independentCase: true, expect: 1 });
   fx.check('below-threshold result also requires research', missingBelow.stderr.includes('research'));
   fx.write(belowFile, belowOriginal);
   const unavailableWorker = Object.keys(plan.assignments).find(id => plan.assignments[id].some(key => key.endsWith('2')));

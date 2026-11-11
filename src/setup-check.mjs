@@ -9,7 +9,6 @@ import { fileURLToPath } from 'node:url';
 import { loadCvSource } from './resume/cv-source.mjs';
 import { loadLocationPolicy } from './location-scope.mjs';
 import { loadDailyScanRuntime } from './daily-scan-runtime.mjs';
-import { loadGoogleAtsConfig } from './adapters/google_ats_direct_scan.mjs';
 import { loadCareerAtsConfig } from './adapters/career_ops_ats_scan.mjs';
 import { buildTemplateBaseline } from './resume/template-baseline.mjs';
 import { validateActiveInterviews } from '../.agents/skills/gmail-job-reply-review/scripts/active-interviews.mjs';
@@ -57,13 +56,12 @@ export function checkSetup({ root = ROOT, careerOps = process.env.CAREER_OPS_COD
       if (typeof value !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) throw new Error('email address');
     });
   }
-  for (const name of ['discovery-adapters.v1', 'jobspy-ego', 'jobright', 'google-ats-direct', 'official-ats']) {
+  for (const name of ['discovery-adapters.v1', 'jobspy-ego', 'jobright', 'official-ats']) {
     const file = path.join(root, 'config', `${name}.json`);
     check(`config:${name}`, name === 'discovery-adapters.v1' ? 'daily-scan' : name, file, 'Copy the matching example only if absent, fill user choices, then run the owning adapter/config validator.', () => {
       const value = JSON.parse(readFileSync(file, 'utf8'));
       if (!value || value.schema_version !== 1) throw new Error('schema');
       if (name === 'jobright' && (!value.filter_snapshot?.values?.length || !value.filter_snapshot?.visible_controls?.length || !value.filter_snapshot?.codes?.locations?.length)) throw new Error('snapshot');
-      if (name === 'google-ats-direct') loadGoogleAtsConfig(file);
       if (name === 'official-ats') loadCareerAtsConfig(file);
     });
   }

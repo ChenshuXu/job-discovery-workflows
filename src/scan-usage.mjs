@@ -3,7 +3,9 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { captureClaudeUsageScope, collectClaudeUsage } from './claude-usage.mjs';
 import { captureCodexUsageScope, collectCodexUsage } from './codex-usage.mjs';
+import { dailyScanHost } from './daily-scan-runtime.mjs';
 
 const projectRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const fields = ['input_tokens', 'cached_input_tokens', 'uncached_input_tokens', 'cache_write_input_tokens', 'output_tokens', 'reasoning_output_tokens', 'total_tokens'];
@@ -14,6 +16,10 @@ const contextFile = root => path.join(path.resolve(root), 'usage-context.json');
 const iso = value => new Date(value ?? Date.now()).toISOString();
 const count = value => Array.isArray(value) ? value.length : null;
 const duration = (start, end) => start && end && Date.parse(end) >= Date.parse(start) ? Date.parse(end) - Date.parse(start) : null;
+const captureHostScope = ({ threadId, now, ...options }) => dailyScanHost() === 'claude'
+  ? captureClaudeUsageScope({ sessionId: threadId, now })
+  : captureCodexUsageScope({ threadId, now, ...options });
+const collectHostUsage = options => (options.scope?.host === 'claude' ? collectClaudeUsage : collectCodexUsage)(options);
 const sumTokens = values => {
   const measured = values.filter(Boolean);
   return measured.length ? Object.fromEntries(fields.map(key => [key, measured.reduce((sum, item) => sum + (item[key] ?? 0), 0)])) : null;
@@ -46,7 +52,7 @@ function codeSnapshot() {
   return { files: contents, git_head: head.status === 0 ? head.stdout.trim() : null, git_dirty: dirty.status === 0 ? Boolean(dirty.stdout.trim()) : null };
 }
 
-export function startScanUsage({ runRoot, threadId, rootTurnId, sessionsDir, now, capture = captureCodexUsageScope } = {}) {
+export function startScanUsage({ runRoot, threadId, rootTurnId, sessionsDir, now, capture = captureHostScope } = {}) {
   const root = path.resolve(runRoot);
   const before = readContext(root);
   const historical = existsSync(path.join(root, 'baseline.json')) && !before;
@@ -87,7 +93,7 @@ export function bindScanWorkers({ runRoot, workers, rootTurnId } = {}) {
   if (!segment?.scope.root_turn_id || !segment.scope.coordinator_thread_id) throw new Error('coordinator scope is unavailable; bind an explicit verified thread/root turn first');
   const plan = readJson(path.join(root, 'assignments.json'));
   for (const binding of workers ?? []) {
-    const match = /^(worker-\d+)=([a-f0-9-]{36})$/i.exec(binding);
+    const match = /^(worker-\d+)=([a-f0-9-]{17,36})$/i.exec(binding);
     if (!match) throw new Error('worker binding must be worker-N=THREAD_ID');
     const [, worker, thread] = match;
     if (!Array.isArray(plan?.assignments?.[worker]) || !plan.assignments[worker].length) throw new Error(`${worker}: nonempty assignment required`);
@@ -152,7 +158,7 @@ function fingerprints(root, plan, context) {
 
 const settings = threads => unique(threads.flatMap(item => item.observed_settings ?? []).map(item => `${item.model ?? 'unknown'} / ${item.reasoning_effort ?? 'unknown'}`));
 
-export function collectScanUsage({ runRoot, sessionsDir, now, collect = collectCodexUsage } = {}) {
+export function collectScanUsage({ runRoot, sessionsDir, now, collect = collectHostUsage } = {}) {
   const root = path.resolve(runRoot);
   const context = readContext(root);
   const plan = readJson(path.join(root, 'assignments.json'));
@@ -179,7 +185,8 @@ export function collectScanUsage({ runRoot, sessionsDir, now, collect = collectC
     if (!noModel && !threads.length) issues.push(`${worker}: execution_binding_missing`);
     const observed = settings(threads);
     const requested = plan.runtime?.worker ?? null;
-    const mismatch = threads.some(item => item.observed_settings?.some(setting => setting.model !== requested?.model || setting.reasoning_effort !== requested?.reasoning_effort));
+    // Claude workers request an alias such as opus and report the model it resolved to.
+    const mismatch = threads.some(item => item.observed_settings?.some(setting => !setting.model?.includes(requested?.model) || setting.reasoning_effort !== requested?.reasoning_effort));
     return { worker, assigned: keys.length, status, requested, observed_settings: observed, requested_observed_mismatch: mismatch, tokens, threads,
       wall_ms_sum: threads.length && threads.every(item => item.wall_ms != null) ? threads.reduce((sum, item) => sum + item.wall_ms, 0) : noModel ? 0 : null };
   });
@@ -199,7 +206,7 @@ export function collectScanUsage({ runRoot, sessionsDir, now, collect = collectC
   const outcome = outcomeFor(root, plan);
   return {
     schema_version: 1, run_id: path.basename(root), status, collected_at: iso(now),
-    measurement_scope: 'Explicit coordinators and bound scoring workers within frozen Codex root turns; includes their preflight and final replies, excludes later unbound turns. Other work in a bound turn cannot be separated.',
+    measurement_scope: 'Explicit coordinators and bound scoring workers within frozen Codex root turns or whole Claude sessions; includes their preflight and final replies, excludes later unbound turns. Other work in a bound turn or session cannot be separated.',
     issues: unique(issues), tokens, coordinator_tokens: coordinatorTokens, worker_tokens: workerTokens,
     coordinator_observed_settings: settings(coordinators), coordinators, workers,
     coverage: { coordinator_segments: context?.segments.length ?? null, measured_coordinator_segments: coordinators.filter(item => item.tokens).length,
@@ -218,9 +225,17 @@ export function collectScanUsage({ runRoot, sessionsDir, now, collect = collectC
   };
 }
 
+const measuredThreads = value => [...(value?.coordinators ?? []), ...(value?.workers ?? [])]
+  .filter(item => ['complete', 'partial'].includes(item.status) && item.tokens).length;
+
+// Session logs are pruned over time, so a later refresh can see less than an earlier one.
+// A measured file is never replaced by a less measured observation.
 export function refreshScanUsage(options) {
+  const file = path.join(path.resolve(options.runRoot), 'usage.json');
   const value = collectScanUsage(options);
-  writeJson(path.join(path.resolve(options.runRoot), 'usage.json'), value);
+  const existing = readJson(file);
+  if (existing && (measuredThreads(value) < measuredThreads(existing) || (!value.tokens && existing.tokens))) return { ...existing, kept_existing: true };
+  writeJson(file, value);
   return value;
 }
 
@@ -311,7 +326,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         if (entry.isDirectory() && existsSync(contextFile(root))) runs.push(root);
       }
     }
-    if (!runs.length || (command !== 'compare' && runs.length !== 1)) throw new Error('Usage: daily-scan:usage start|bind|refresh|compare --run runs/RUN_ID [--worker worker-N=THREAD_ID] [--json|--csv]');
+    if (!runs.length || (command !== 'compare' && runs.length !== 1)) throw new Error('Usage: daily-scan:usage start|bind|refresh|compare (--run runs/RUN_ID | --all) [--coordinator-thread ID] [--root-turn ID] [--worker worker-N=THREAD_ID] [--sessions-dir DIR] [--json|--csv]');
     const common = { sessionsDir: options['--sessions-dir']?.[0] };
     if (command === 'start') console.log(JSON.stringify(startScanUsage({ ...common, runRoot: runs[0], threadId: options['--coordinator-thread']?.[0], rootTurnId: options['--root-turn']?.[0] }), null, 2));
     else if (command === 'bind') {

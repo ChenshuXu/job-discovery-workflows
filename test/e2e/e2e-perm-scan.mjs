@@ -40,6 +40,10 @@ try {
   fx.write(snapshotFile, snapshotText.replace('正常办理 2', '正常办理 3'));
   fx.run('reject-truncated-tracker-capture', importer, ['--snapshot', snapshotFile, '--out', imported], { expect: 1 });
   fx.check('failed import preserves the previous catalog', parse(imported).companies.length === 1);
+  const withAlias = parse(imported); withAlias.companies[0].aliases = ['Garden Labs']; fx.write(imported, withAlias);
+  fx.write(snapshotFile, snapshotText);
+  fx.run('refresh-keeps-aliases', importer, ['--snapshot', snapshotFile, '--out', imported]);
+  fx.check('a tracker refresh keeps aliases added to the catalog', JSON.stringify(parse(imported).companies[0].aliases) === JSON.stringify(['Garden Labs']));
   seedCandidate(fx); fx.write(catalogFile, catalog);
   const run = seedScan(fx, { name: 'accepted-perm', jobs, permEmployers: catalogFile });
   fx.run('identity-resolution-before-perm-gate', script('resolve-canonical-urls.mjs'), ['--run', run]);
@@ -68,7 +72,7 @@ try {
   ]) {
     change();
     fx.run(`reject-${label}`, script('run-contract.mjs'), ['--run', run], { expect: 1 });
-    fx.run(`worker-reject-${label}`, script('merge-worker-results.mjs'), ['--run', run, '--worker', 'worker-1'], { expect: 1 });
+    fx.run(`worker-reject-${label}`, script('merge-worker-results.mjs'), ['--run', run, '--worker', 'worker-1'], { independentCase: true, expect: 1 });
     fx.write(auditFile, audit); fx.write(path.join(run, 'assignments.json'), assignment); fx.write(path.join(run, 'acquisition.json'), acquisition);
   }
   fx.check('contract rejection leaves Career-Ops unchanged', manifest() === untouched);
@@ -82,7 +86,7 @@ try {
   plan(driftRun); const driftPlan = writeScoreParts(fx, driftRun);
   fx.write(catalogFile, { ...catalog, captured_at: '2026-10-14T07:00:00Z' });
   fx.run('reject-policy-drift-on-reuse', script('plan-scan-evaluations.mjs'), ['--run', driftRun, '--career-ops', fx.codeRoot], { expect: 1 });
-  fx.run('reject-policy-drift-in-worker-merge', script('merge-worker-results.mjs'), ['--run', driftRun, '--worker', Object.keys(driftPlan.assignments)[0]], { expect: 1 });
+  fx.run('reject-policy-drift-in-worker-merge', script('merge-worker-results.mjs'), ['--run', driftRun, '--worker', Object.keys(driftPlan.assignments)[0]], { independentCase: true, expect: 1 });
   fx.run('completed-receipt-survives-catalog-refresh', script('run-contract.mjs'), ['--run', run]);
   fx.write(catalogFile, catalog); mergeAll(fx, driftRun, driftPlan);
   fx.write(catalogFile, { ...catalog, captured_at: '2026-10-14T07:01:00Z' });
@@ -100,6 +104,17 @@ try {
   const emptyRun = seedScan(fx, { name: 'no-perm-jobs', jobs: [jobs[3]], permEmployers: catalogFile });
   plan(emptyRun); mergeAll(fx, emptyRun, writeScoreParts(fx, emptyRun));
   fx.run('empty-perm-set-cannot-claim-persistence', script('commit-scan.mjs'), ['--run', emptyRun, '--career-ops', fx.codeRoot, '--date', SCAN_DATE], { expect: 1 });
+  fx.check('refused empty commit leaves no receipt', !existsSync(path.join(emptyRun, 'receipt.json')));
+  const dataBeforeClose = manifest();
+  fx.run('close-empty-perm-run', script('commit-scan.mjs'), ['--run', emptyRun, '--close-empty']);
+  const emptyReceipt = parse(path.join(emptyRun, 'receipt.json'));
+  fx.check('empty PERM run ends with an EMPTY receipt and no Career-Ops write',
+    emptyReceipt.status === 'EMPTY' && emptyReceipt.assigned === 0 && manifest() === dataBeforeClose, emptyReceipt);
+  fx.run('close-empty-is-create-only', script('commit-scan.mjs'), ['--run', emptyRun, '--close-empty'], { expect: 1 });
+  const assignedReceipt = existsSync(path.join(run, 'receipt.json')) ? readFileSync(path.join(run, 'receipt.json'), 'utf8') : null;
+  fx.run('close-empty-refuses-assigned-run', script('commit-scan.mjs'), ['--run', run, '--close-empty'], { expect: 1 });
+  fx.check('refused close leaves the assigned run unchanged',
+    (existsSync(path.join(run, 'receipt.json')) ? readFileSync(path.join(run, 'receipt.json'), 'utf8') : null) === assignedReceipt);
 
   const normalRun = seedScan(fx, { name: 'ordinary-daily', jobs: [{ id: '89100008', company: 'Other Co' }] });
   plan(normalRun);

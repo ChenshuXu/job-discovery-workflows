@@ -7,7 +7,7 @@ function violation(list, gate, locator, actual, expected) {
   list.push(`${gate} ${locator}: ${actual} ← ${expected}`);
 }
 
-export function emphasisCount(value) {
+function emphasisCount(value) {
   const markers = String(value ?? '').match(/\*\*/g)?.length ?? 0;
   return { paired: markers % 2 === 0, segments: Math.floor(markers / 2) };
 }

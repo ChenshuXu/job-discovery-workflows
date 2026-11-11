@@ -72,7 +72,7 @@ try {
     const part = JSON.parse(original), item = part.results.find(row => row.posting_key.endsWith('5'));
     mutate(item); fx.write(partFile, part);
     const before = manifest(fx.dataRoot);
-    fx.run(`reject-v6-${name}`, script('merge-worker-results.mjs'), ['--run', run, '--worker', worker], { expect: 1 });
+    fx.run(`reject-v6-${name}`, script('merge-worker-results.mjs'), ['--run', run, '--worker', worker], { independentCase: true, expect: 1 });
     fx.check(`${name} rejection leaves data unchanged`, manifest(fx.dataRoot) === before);
     fx.write(partFile, original);
   }
@@ -96,7 +96,7 @@ try {
   const inspect = fx.write(path.join(fx.root, 'inspect-v5.mjs'), `import { loadScanResults } from ${JSON.stringify(pathToFileURL(script('scan-results.mjs')).href)};\nconst result=loadScanResults(process.argv[2],{allowLegacy:true});console.log(JSON.stringify(result.errors));if(result.errors.length)process.exit(1);\n`);
   const beforeHistory = manifest(oldRun);
   fx.run('inspect-v5-read-only', inspect, [oldRun]);
-  fx.run('reject-v5-new-merge', script('merge-worker-results.mjs'), ['--run', oldRun, '--worker', worker], { expect: 1 });
+  fx.run('reject-v5-new-merge', script('merge-worker-results.mjs'), ['--run', oldRun, '--worker', worker], { independentCase: true, expect: 1 });
   fx.check('v5 history unchanged by read and rejected new merge', manifest(oldRun) === beforeHistory);
   fx.run('v6-commit', script('commit-scan.mjs'), ['--run', run, '--career-ops', fx.codeRoot, '--date', SCAN_DATE]);
   const receipt = parse(path.join(run, 'receipt.json'));

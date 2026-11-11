@@ -32,6 +32,9 @@ TODO lists or routine run history into summaries or automation memory.
   which owns account routing, browser-host verification, scan/classification, receipts,
   recovery, and reporting. Verify the actual Chrome application before browser actions;
   a connection labeled `Chrome` can belong to Ego Lite.
+- **Primary all-topic review:** the scheduled mode. Follow the Gmail review contract with
+  the [primary all-topic section](references/mailbox-transaction.md#primary-all-topic-review),
+  which limits coverage to the primary mailbox and adds a general TODO queue.
 
 Complete authorized work without another approval pause; continue independent work
 when an identity or outcome is uncertain. Workflow audits do not start production runs.

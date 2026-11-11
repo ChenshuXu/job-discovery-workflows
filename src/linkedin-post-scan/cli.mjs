@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,9 +20,24 @@ const requireCaptureFilters = query => {
   if (query.filters?.posts !== true || query.filters?.past_week !== true) throw new Error('LINKEDIN_FILTER_UNVERIFIED');
 };
 
+// A RUNNING row whose process is gone blocks every later run; another live scan must not be cleared.
+function clearStaleRun(dbFile) {
+  const live = execFileSync('ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8' }).split('\n')
+    .filter(line => /linkedin-post-scan\/cli\.mjs\s+(scan|calibrate)\b/.test(line) && Number(line.trim().split(/\s+/)[0]) !== process.pid);
+  if (live.length) throw new Error(`a Post Scan run is still alive:\n${live.join('\n')}`);
+  const db = openDatabase(dbFile);
+  try {
+    const active = db.prepare("SELECT run_id FROM runs WHERE status='RUNNING'").get();
+    if (!active) return { cleared_run_id: null };
+    finishRun(db, active.run_id, { status: 'STOPPED', stopCode: 'STALE_RUN_CLEARED' });
+    return { cleared_run_id: active.run_id };
+  } finally { db.close(); }
+}
+
 async function main() {
-  const config = loadConfig(arg('--config') || undefined);
   const dbFile = arg('--db') || DEFAULT_DB;
+  if (command === 'clear-stale-run') return clearStaleRun(dbFile);
+  const config = loadConfig(arg('--config') || undefined);
   if (command === 'status') {
     const db = openDatabaseReadOnly(dbFile);
     if (!db) return { status: 'NOT_INITIALIZED', database: path.resolve(dbFile), report: null };
@@ -61,6 +77,7 @@ async function main() {
         identity_review: [], errors: [] };
       let completedQueries = 0;
       let currentQuery = null;
+      let finished = false;
       try {
         for (const query of input.queries ?? []) {
           currentQuery = query;
@@ -77,9 +94,12 @@ async function main() {
           truncated_queries: (input.queries ?? []).filter(item => item.truncated).length, cursor: input.next_cursor ?? null };
         finishRun(db, runId, { status: totals.errors.length ? 'FAILED' : 'COMPLETE', stopCode: totals.errors.length ? 'POST_PROCESSING_ERRORS' : null,
           coverage, receipt: totals });
+        finished = true;
         const report = renderDailyReport(db, pacificDate());
         return { run_id: runId, totals, coverage, report: report.file };
       } catch (error) {
+        // A report failure after the run closed must not rewrite its status or cursor.
+        if (finished) throw error;
         const coverage = { planned_queries: Number(input.planned_queries ?? input.queries?.length ?? 0), completed_queries: completedQueries,
           truncated_queries: (input.queries ?? []).slice(0, completedQueries).filter(item => item.truncated).length,
           cursor: currentQuery?.query_key ?? input.next_cursor ?? null };

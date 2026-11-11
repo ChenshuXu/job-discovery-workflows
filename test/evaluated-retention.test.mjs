@@ -102,6 +102,20 @@ test('TTL uses local calendar days and protects manual/status-touched rows', () 
   assert.equal(plan.protected.some(item => item.tracker_number === 2), false);
 });
 
+test('an expanded report is protected as expanded, not as a duplicate identity', () => {
+  const fx = fixture();
+  const expanded = addJob(fx, { number: 1, date: '2026-08-28', id: '1101' });
+  writeFixture(fx, [expanded]);
+  const backups = path.join(fx.career, 'reports/.expansion-backups');
+  mkdirSync(backups, { recursive: true });
+  writeFileSync(path.join(backups, `${path.basename(expanded.reportPath)}.compact.md`), readFileSync(path.join(fx.career, expanded.reportPath), 'utf8'));
+  const plan = buildEvaluatedRetentionPlan({
+    trackerText: readFileSync(fx.tracker, 'utf8'), scanHistoryText: readFileSync(fx.history, 'utf8'),
+    careerRoot: fx.career, parser, asOfDate: '2026-09-04', ttlDays: 7, statusLogText: '',
+  });
+  assert.deepEqual(plan.protected.map(item => [item.tracker_number, item.reason]), [[1, 'EXPANDED_REPORT']]);
+});
+
 test('retention includes skipped/discarded evaluations but protects application history and references', () => {
   const fx = fixture();
   const statuses = ['SKIP', 'Skipped', 'Discarded', 'Discarded', 'SKIP', 'Discarded', 'SKIP', 'Discarded', 'Applied'];
@@ -180,6 +194,10 @@ test('ordinary closure/non-submission notes clean up without erasing real or unc
     '; Official posting closed; submission confirmation is missing',
     '; Official posting closed but an application receipt exists',
     '; Official posting closed; user withdrew after the phone screen',
+    '; User discarded without submitting; no confirmation receipt found but submission status uncertain',
+    '; User discarded without submitting; no receipt for position 9 but submission status uncertain',
+    '; User discarded without submitting; a hiring manager replied asking for availability',
+    '; User discarded without submitting; waiting for offer decision',
     '; retry later',
     '; Official posting closed; preserve my notes',
     '; 2026-10-13 audit: verify before applying - official source says Job removed but another exact source has Apply Now.',

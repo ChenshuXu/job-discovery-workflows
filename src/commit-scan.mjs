@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { buildCanonicalFingerprintAudit } from './canonical-url-fingerprint.mjs';
-import { listingIdentityFromUrl, postingKey } from './posting-identity.mjs';
+import { listingIdentityFromUrl, postingKey, discoveryJdName } from './posting-identity.mjs';
 import {
   loadCareerTrackerParser,
   parseTracker,
@@ -18,6 +18,9 @@ import { validateRun } from './run-contract.mjs';
 import { loadScanResults } from './scan-results.mjs';
 import { validateScoringInputs } from './scoring-inputs.mjs';
 import { renderScanReports } from './render-scan-reports.mjs';
+import { liveAcquisition } from './run-adapters.mjs';
+import { semanticPair } from './semantic-jd-identity.mjs';
+import { localCalendarDate } from './evaluated-retention.mjs';
 import { preparePermHistory } from './perm-history.mjs';
 import { collectHistoricalSemanticContexts } from './posting-history.mjs';
 import {
@@ -42,16 +45,6 @@ class JobScopedCommitError extends Error {
 
 function firstReportReference(matches) {
   return matches.flatMap(item => item.prior_artifacts ?? []).find(item => /^career-ops\/reports\/.+\.md$/i.test(item)) ?? null;
-}
-
-function assertBaselinePipeline(runRoot) {
-  const baselineFile = path.join(runRoot, 'baseline.json');
-  if (!existsSync(baselineFile)) throw new Error(`run baseline missing: ${baselineFile}`);
-  const baseline = JSON.parse(readFileSync(baselineFile, 'utf8'));
-  const pipeline = baseline.pipeline ?? {};
-  if (pipeline.exit_code !== 0) throw new Error(`baseline Career-Ops pipeline verifier exited ${pipeline.exit_code}`);
-  if (Number(pipeline.errors ?? 0) !== 0) throw new Error(`baseline Career-Ops pipeline has ${pipeline.errors} error(s)`);
-  if (Number(pipeline.warnings ?? 0) !== 0) throw new Error(`baseline Career-Ops pipeline has ${pipeline.warnings} warning(s)`);
 }
 
 function initialJobIssues(run, results, careerRoot, scopedContractErrors = []) {
@@ -80,7 +73,7 @@ function initialJobIssues(run, results, careerRoot, scopedContractErrors = []) {
     const semanticHistory = collectHistoricalSemanticContexts({ careerRoot, locationPolicy: results.plan.location_policy });
     for (const item of results.evaluated) {
       if (exactIssueKeys.has(item.posting_key)) continue;
-      const matches = semanticHistory.get(`${item.semantic_job_key}\0${item.posting_context_key}`) ?? [];
+      const matches = semanticHistory.get(semanticPair(item)) ?? [];
       if (!matches.length) continue;
       issues.push(jobIssue({
         posting_key: item.posting_key,
@@ -199,7 +192,7 @@ async function loadScanWriter(careerRoot) {
   }
 }
 
-function resolveOfficialTrackerPath(careerRoot, trackerUtils) {
+function resolveOfficialTrackerPath(careerRoot) {
   const previous = process.cwd();
   process.chdir(careerRoot);
   try {
@@ -327,9 +320,11 @@ function buildScanRunSummary(run, offers) {
   };
 }
 
+const jdArchiveName = (runRoot, postingKey) => discoveryJdName(path.basename(runRoot), postingKey);
+
 async function persistEvaluatedJobs({
   run, results, careerRoot, includeKeys, scanWriter, scanHistoryFile,
-  pipelineLock, writeFileAtomic,
+  pipelineLock, writeFileAtomic, date,
 }) {
   const records = new Map(run.records.map(record => [record.primary_key, record]));
   const included = new Set(includeKeys);
@@ -346,7 +341,7 @@ async function persistEvaluatedJobs({
       const strong = listingIdentityFromUrl(record.primary_url);
       const listingKey = strong ? scanWriter.computeListingFingerprint({ url: record.primary_url, strong }).listing_key : undefined;
       if (strong && (typeof listingKey !== 'string' || !/^listing_v1_[a-f0-9]{64}$/.test(listingKey))) throw new Error('Career-Ops listing identity interface returned an invalid listing_key');
-      const filename = `discovery-${path.basename(run.root)}-${record.primary_key.replace(/[^A-Za-z0-9._-]/g, '-')}.md`;
+      const filename = jdArchiveName(run.root, record.primary_key);
       const destination = path.join(jdRoot, filename);
       try {
         if (existsSync(destination)) throw new Error('destination JD already exists');
@@ -376,7 +371,7 @@ async function persistEvaluatedJobs({
     process.chdir(careerRoot);
     try {
       const status = `daily-scan:${path.basename(run.root)}`;
-      await scanWriter.appendToScanHistory(offers, new Date().toISOString().slice(0, 10), status);
+      await scanWriter.appendToScanHistory(offers, date, status);
       const rows = readFileSync(scanHistoryFile, 'utf8').split(/\r?\n/).map(scanWriter.parseScanHistoryLine).filter(row => row.status === status);
       for (const offer of offers) {
         const matches = rows.filter(row => postingKey(row.url) === postingKey(offer.url));
@@ -408,7 +403,7 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
   if (existsSync(mappingFile)) throw new Error(`rendered report mapping already exists without a receipt: ${mappingFile}`);
 
   const { trackerUtils, pipelineLock, trackerParser } = interfaces;
-  const trackerFile = resolveOfficialTrackerPath(careerRoot, trackerUtils);
+  const trackerFile = resolveOfficialTrackerPath(careerRoot);
   const scanHistoryFile = resolveCareerPaths(careerRoot).scanHistoryFile;
   const scanWriter = await loadScanWriter(careerRoot);
   const createdPaths = new Set();
@@ -558,7 +553,6 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
   try {
     run = validateRun(runRoot);
     results = loadScanResults(runRoot);
-    assertBaselinePipeline(runRoot);
     const acquiredKeys = run.acquisition.keys.map(String);
     const scopedContractErrors = [];
     const systemRunErrors = run.errors.filter(error => {
@@ -585,7 +579,20 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
     if (!persistence.allowed) return await failedReceipt();
 
     const records = new Map(run.records.map(record => [record.primary_key, record]));
-    const maxAttempts = results.candidates.length + 2;
+    // JDs left by an interrupted commit are isolated together here; otherwise each one
+    // would cost a full render, tracker merge and rollback cycle.
+    const jdRoot = path.join(resolveCareerPaths(careerRoot).dataRoot, 'jds');
+    const leftovers = eligible.filter(key => records.has(key) && existsSync(path.join(jdRoot, jdArchiveName(runRoot, key))));
+    if (leftovers.length) {
+      issues = normalizeJobIssues([...issues, ...leftovers.map(key => jobIssue({
+        posting_key: key, stage: 'JD_PERSISTENCE', code: 'JD_PERSIST_FAILED', reason: 'destination JD already exists',
+        evidence: { jd_path: records.get(key).jd_path, destination: `jds/${jdArchiveName(runRoot, key)}` },
+      }))]);
+      persistence = recomputeEligible();
+      if (!persistence.allowed) return await failedReceipt();
+    }
+    // A persist failure can isolate any evaluated key, not only a report candidate.
+    const maxAttempts = eligible.length + 2;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const rendered = [];
       for (const candidate of results.candidates.filter(item => eligible.includes(item.posting_key))) {
@@ -665,6 +672,7 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
           scanHistoryFile,
           pipelineLock,
           writeFileAtomic: trackerUtils.writeFileAtomic,
+          date,
         });
         historyWritten = true;
         for (const relative of persisted.jd_files) createdPaths.add(path.join(resolveCareerPaths(careerRoot).dataRoot, relative));
@@ -715,10 +723,27 @@ async function commitScanLocked({ runRoot, careerRoot, date, interfaces }) {
 }
 
 /** Serialized owner of the only Career-Ops write phase. */
+const assignedCount = plan => Object.values(plan.assignments ?? {}).reduce((count, keys) => count + keys.length, 0);
+
+// A run whose eligible set is empty has nothing to persist. It ends with an EMPTY
+// receipt so recovery treats it as finished; Career-Ops is not touched.
+export function closeEmptyScan(runDir) {
+  const runRoot = path.resolve(runDir);
+  const plan = JSON.parse(readFileSync(path.join(runRoot, 'assignments.json'), 'utf8'));
+  const assigned = assignedCount(plan);
+  if (assigned) throw new Error(`run has ${assigned} assigned postings; commit it instead of closing it empty`);
+  if (existsSync(path.join(runRoot, 'rendered-reports.json'))) throw new Error('rendered report mapping exists; inspect the interrupted commit instead');
+  const live = liveAcquisition(runRoot);
+  if (live.length) throw new Error(`source acquisition is still running for this run:\n${live.map(line => line.trim()).join('\n')}`);
+  const receipt = { schema_version: 4, run_id: path.basename(runRoot), status: 'EMPTY', closed_at: new Date().toISOString(), assigned: 0 };
+  return writeReceiptCreateOnly(path.join(runRoot, 'receipt.json'), receipt);
+}
+
 export async function commitScan(runDir, careerDir, date) {
   const runRoot = path.resolve(runDir);
   const careerRoot = path.resolve(careerDir);
   const plan = JSON.parse(readFileSync(path.join(runRoot, 'assignments.json'), 'utf8'));
+  if (!assignedCount(plan)) throw new Error('run has no assigned postings; close it with --close-empty');
   if (!plan.career_ops_root || path.resolve(plan.career_ops_root) !== careerRoot) {
     throw new Error('assignments Career-Ops root does not match commit target');
   }
@@ -741,9 +766,13 @@ if (isCli) {
     const careerAt = process.argv.indexOf('--career-ops');
     const run = at >= 0 ? process.argv[at + 1] : null;
     const career = careerAt >= 0 ? process.argv[careerAt + 1] : null;
-    if (!run || !career) throw new Error('Usage: node src/commit-scan.mjs --run runs/<run-id> --career-ops ../career-ops [--date YYYY-MM-DD]');
+    if (run && process.argv.includes('--close-empty')) {
+      console.log(JSON.stringify(closeEmptyScan(run), null, 2));
+      process.exit(0);
+    }
+    if (!run || !career) throw new Error('Usage: node src/commit-scan.mjs --run runs/<run-id> (--career-ops ../career-ops [--date YYYY-MM-DD] | --close-empty)');
     const dateAt = process.argv.indexOf('--date');
-    const value = await commitScan(run, career, dateAt >= 0 ? process.argv[dateAt + 1] : new Date().toISOString().slice(0, 10));
+    const value = await commitScan(run, career, dateAt >= 0 ? process.argv[dateAt + 1] : localCalendarDate());
     console.log(JSON.stringify(value, null, 2));
     if (value.receipt?.status === 'FAILED') process.exitCode = 1;
   } catch (error) {

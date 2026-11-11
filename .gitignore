@@ -9,7 +9,6 @@ runs/
 __pycache__/
 *.py[cod]
 assets/cv-template.docx
-test/fixtures/golden/
 linkedin-post-scan/data/
 linkedin-post-scan/reports/
 linkedin-post-scan/config/*.json

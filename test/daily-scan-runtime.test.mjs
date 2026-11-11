@@ -1,13 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { loadDailyScanRuntime, validateDailyScanRuntime, workerIdsForRuntime } from '../src/daily-scan-runtime.mjs';
+import { dailyScanHost, loadDailyScanRuntime, resolveDailyScanHost, validateDailyScanRuntime, workerIdsForRuntime } from '../src/daily-scan-runtime.mjs';
 
 test('runtime loads every value from the JSON source of truth', () => {
   const runtime = loadDailyScanRuntime();
   const configured = JSON.parse(readFileSync(new URL('../config/daily-scan-runtime.json', import.meta.url), 'utf8'));
-  assert.deepEqual(runtime, configured);
+  assert.deepEqual(runtime, resolveDailyScanHost(configured));
 });
+test('host follows the agent that runs the command, and an explicit value wins', () => {
+  assert.equal(dailyScanHost({}), '');
+  assert.equal(dailyScanHost({ CODEX_THREAD_ID: 'thread' }), '');
+  assert.equal(dailyScanHost({ CLAUDECODE: '1' }), 'claude');
+  assert.equal(dailyScanHost({ DAILY_SCAN_HOST: 'claude' }), 'claude');
+  assert.equal(dailyScanHost({ CLAUDECODE: '1', DAILY_SCAN_HOST: '' }), '');
+});
+test('runtime keeps the base worker unless a configured host is named', () => {
+  const base = { worker: { model: 'codex-model', reasoning_effort: 'high' }, hosts: { claude: { worker: { model: 'opus', reasoning_effort: 'high' } } } };
+  assert.equal(resolveDailyScanHost(base, '').worker.model, 'codex-model');
+  assert.equal(resolveDailyScanHost(base, 'claude').worker.model, 'opus');
+  assert.throws(() => resolveDailyScanHost(base, 'other'), /hosts\.other\.worker/);
+});
+test('a detected host without an override keeps the base worker, while a named one must exist', () => {
+  const plain = { worker: { model: 'base-model', reasoning_effort: 'high' } };
+  const hosted = { ...plain, hosts: { claude: { worker: { model: 'opus', reasoning_effort: 'high' } } } };
+  assert.equal(resolveDailyScanHost(plain, undefined, { CLAUDECODE: '1' }).worker.model, 'base-model');
+  assert.equal(resolveDailyScanHost(hosted, undefined, { CLAUDECODE: '1' }).worker.model, 'opus');
+  assert.throws(() => resolveDailyScanHost(plain, undefined, { DAILY_SCAN_HOST: 'claude' }), /hosts\.claude\.worker/);
+});
+
 test('runtime accepts safe non-default scheduler, reporting, and failure values', () => {
   const runtime = loadDailyScanRuntime();
   const configured = validateDailyScanRuntime({

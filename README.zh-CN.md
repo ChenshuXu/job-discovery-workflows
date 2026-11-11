@@ -30,7 +30,6 @@ Job Discovery 基于以下开源项目构建。感谢这些项目的维护者和
 | 面试研究、证据账与增量更新 | Career Docs、Ego Lite、外部研究访问、obsidian-markdown |
 | 申请与面试流程统计图 | Career-Ops、Career Docs、Node.js、Python 3 和 Pillow、覆盖图中文字的字体 |
 | 招聘帖扫描与 outreach 准备 | Career-Ops、Ego Lite、Node SQLite；停在 Send 前 |
-| 独立 Google ATS 搜索 | SerpAPI key；不属于 Daily Scan |
 | 报告与排除岗位修复 | Career-Ops、已完成 run、显式审核清单和审核后的计划文件 |
 
 ## 让 Agent 帮你完成设置
@@ -111,7 +110,6 @@ PERM 工具不计算、保存或校验文件内容摘要；兼容读取旧清单
 | 启用来源 | `config/discovery-adapters.v1.json` 中各 `enabled` 与 `minimum_successful_adapters` |
 | 雇主排除 | 各来源配置的 `employer_exclusions`；只写用户选择，无排除时为 `[]`，保留各 adapter 的规则 schema |
 | Jobright 岗位、地点、级别、工作模式、经验范围 | 用户接受的浏览器筛选 → `config/jobright.json` 的 `filter_snapshot` values/codes/visible_controls，必须实际采集，不能编造 |
-| 独立 Google ATS 搜索 | `config/google-ats-direct.json` 的 role/location/negative terms 与 official_scope，编辑后运行对应校验 |
 | 招聘帖搜索 | `config/linkedin-post-scan.json` 的 role/location/phrase groups 和 paths |
 | worker 模型、并发、报告阈值、retention TTL | `config/daily-scan-runtime.json`；选择宿主可用模型，实跑前解释 retention 行为 |
 | 邮箱身份、登录与时区 | 私有 `.local/gmail-job-reply-review/accounts.json` 的 `primary`、`secondary` 邮箱地址字符串；主账号使用已连接的 Gmail app，次账号通过宿主原生浏览器工具访问已登录的 Chrome。Gmail Skill 当前登记主日期使用 America/Los_Angeles |
@@ -185,7 +183,7 @@ career-docs/
 
 多个 checkout 提供同名 Skill 时，向代理提供目标 checkout 中 `.agents/skills/<name>/SKILL.md` 的绝对路径，并核对实际加载的路径。名称相同不能证明选中了正确 checkout。宿主同名选择与桌面重载/缓存须分别检查，setup 不会自动去重。
 
-其余 Skill同样按名称调用，并提供各自要求的准确报告、申请范围或面试目标。加载 Skill 不会自动启动工作流。独立 Google ATS 和修复命令是 CLI 工具，不是另外的 Skill。
+其余 Skill同样按名称调用，并提供各自要求的准确报告、申请范围或面试目标。加载 Skill 不会自动启动工作流。修复命令是 CLI 工具，不是另外的 Skill。
 
 申请和面试的数据归属、默认 Career Docs 结构、`--career-docs` / `--interviews-file` 及非标准登记格式的适配见[来源说明](.agents/skills/process-infographic/references/interview-records.md)。按[渲染设置](.agents/skills/process-infographic/references/rendering.md)准备 Python 3、Pillow 和覆盖图中文字的字体，中文图需含中文字形。整个输出目录都应保密：即使只渲染无名称版，目录内仍保留私有 JSON 快照。对外只交付审阅过的 PNG/SVG。
 
@@ -251,19 +249,9 @@ cp -n config/jobspy-ego.example.json config/jobspy-ego.json
 
 Gmail 使用 `npm run setup -- --workflows gmail --apply`，从空白 `config/gmail-accounts.example.json` 创建缺失的 `.local/gmail-job-reply-review/accounts.json`，已有设置会保留。仅填写所选 `primary`/`secondary` 的已确认地址，未选账号留空；读信前还须确认已连接 Gmail app 的主账号身份，以及 Chrome 中次账号的实时 Google Account。缺少某个账号只阻塞该邮箱。地址保存在被忽略的本地文件；登录、密码和验证码留在正常认证流程中处理。
 
-示例 registry 只启用 JobSpy。LinkedIn/Jobright 需先配置 Ego Lite 与登录；Jobright 的空 filter snapshot 必须替换为自己实际接受的筛选状态，不能直接授权扫描。已禁用来源不再要求本地配置文件。Google ATS 和 Post Scan 各有示例配置；Google 的空 `title_exclusions` 表示不排除职位标题，地点规则仍须通过校验。worker 模型须在宿主可用；实跑前审阅 retention TTL，扫描会按 tracker 日期清理符合条件的旧 `Evaluated`、`SKIP`（含 `Skipped`）与 `Discarded` 记录，并保护申请/面试/人工活动；状态变更日志保留。
+示例 registry 只启用 JobSpy。LinkedIn/Jobright 需先配置 Ego Lite 与登录；Jobright 的空 filter snapshot 必须替换为自己实际接受的筛选状态，不能直接授权扫描。已禁用来源不再要求本地配置文件。Post Scan 有自己的示例配置。worker 模型须在宿主可用；实跑前审阅 retention TTL，扫描会按 tracker 日期清理符合条件的旧 `Evaluated`、`SKIP`（含 `Skipped`）与 `Discarded` 记录，并保护申请/面试/人工活动；状态变更日志保留。
 
 [虚构示例](examples/README.md)提供 CV 内容及空面试登记表，只能用于新工作区，不能覆盖已有登记表。示例不能作为申请答案。实际资料保存在 Career-Ops/Career Docs 与 `.local/`。简历构建需要自己的 `assets/cv-template.docx`。按[本人模板准备流程](assets/README.md)创建和核验，运行 `npm run resume:template`，再检查渲染页。缺失模板会明确报告，不能用空 DOCX 占位。编写简历计划前运行 `mkdir -p .tmp`。
-
-独立 Google ATS 的初始化步骤如下，不覆盖已有文件：
-
-```bash
-cp -n config/google-ats-direct.example.json config/google-ats-direct.json
-cp -n .env.example .env
-npm run google-ats:scan -- --dry-run
-```
-
-真实扫描前，将 `SERPAPI_API_KEY` 写入被忽略的 `.env` 或进程环境；不能写入公开的 `.env.example`。缺少 `.env` 不影响启动或 dry-run，但真实扫描仍会检查凭证。Dry-run 不发起付费请求。
 
 `runs/`、`.local/`、Post Scan 数据与报告目录由运行时创建。`assets/README.md` 保留输入目录；手工编写简历计划前创建 `.tmp/`。公开版包含 `docs/setup.md`，不分发 `docs/` 中的私人开发计划与证据。
 
@@ -318,7 +306,7 @@ npm run setup -- --workflows daily-scan --sources jobspy --apply
 # 跨项目使用：追加 --links /实际宿主/skills/绝对路径
 ```
 
-支持 `daily-scan,expand,resume,apply,gmail,interview,post-scan,google-ats,process-infographic`。
+支持 `daily-scan,expand,resume,apply,gmail,interview,post-scan,process-infographic`。
 无参数显示选择；默认预览，`--apply` 只初始化缺项，已有值和链接保留，冲突停止。
 `--install` 可 clone 缺失 Career-Ops、JobSpy main 并准备/验证 JobSpy venv；
 `CAREER_OPS_CODE_ROOT` 指定 Career-Ops 安装位置；`CAREER_OPS_ROOT` 指定其私人数据目录。新 clone 的 Career-Ops 还需在其目录
@@ -338,7 +326,7 @@ Ego Apply 的 `--memory` 使用该根目录下 `.local/career-ops-ego-apply/appl
 
 ```bash
 git pull --ff-only
-npm run setup -- --workflows google-ats
+npm run setup -- --workflows daily-scan --sources jobspy
 ```
 
 示例配置随代码更新；实际配置、模板、私人状态和 Career Docs 内容不被覆盖。

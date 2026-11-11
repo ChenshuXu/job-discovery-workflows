@@ -481,12 +481,6 @@ export function readCompactReportSummary(markdown, label = 'compact report') {
   return summary;
 }
 
-export function replaceMachineSummaryVia(markdown, via, label = 'report') {
-  const matches = String(markdown).match(/^via:\s*.*$/gm) ?? [];
-  if (matches.length !== 1) throw new Error(`${label} must contain exactly one top-level via field`);
-  return String(markdown).replace(/^via:\s*.*$/m, `via: ${JSON.stringify(String(via))}`);
-}
-
 export function normalizeFullReportMarkdown(markdown, label = 'expanded report') {
   if (typeof markdown !== 'string' || !markdown.trim()) throw new Error(`${label} is required`);
   const lines = markdown.replace(/\r\n/g, '\n').split('\n');
@@ -502,5 +496,3 @@ export function normalizeFullReportMarkdown(markdown, label = 'expanded report')
   }
   return lines.join('\n').trim();
 }
-
-export function requiredScanReportHeadings() { return [...KEYWORD_COMPACT_HEADINGS]; }

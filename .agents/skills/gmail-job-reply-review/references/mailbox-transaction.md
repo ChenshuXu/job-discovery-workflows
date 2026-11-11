@@ -70,6 +70,12 @@ a locked or inaccessible session is `unavailable`.
    and received times: primary message IDs; secondary thread IDs with latest received-message
    time. Follow actual continuation evidence; a truncated list is not END. `page.results`
    distinguishes staged, duplicate, previously committed and out-of-window items.
+   `required_query` uses padded date operands, so it is a superset of the frozen window:
+   record every observed result and let `page` apply the exact bounds. An empty
+   result is valid only from the exact query; never substitute epoch operands.
+   Claude's Gmail connector search omits received times and can understate thread
+   messages, so expand each listed thread with `get_thread` `METADATA_ONLY` and
+   record each message ID with its `date`.
    Classify staged candidates; fetch message/thread content as needed for meaning,
    exact requisition and chronology. Resolve related messages together before classifying.
 3. Classify each staged candidate once. Batch descriptors with identical mailbox,
@@ -152,14 +158,18 @@ and tracker receipt `--event-date YYYY-MM-DD`; retain the default `set-status` s
 Correct recoverable failures and retry with the same run/token. After further register,
 linked-summary or tracker writes, refresh the corresponding receipts; `receipt` works after mailbox
 finish and during `verification_failed`. Do not weaken classification or evidence to
-pass a gate. Recover a prepared `committing` transaction with `commit`; use `abort`
+pass a gate. Recover a prepared `committing` transaction with `commit`; if the tracker,
+status log or register changed before any cursor moved, the run returns to
+`verification_failed` (refresh receipts and commit again, or abort). Use `abort`
 only when safe continuation is impossible. Let the coordinator close/reclaim the old
 run before starting another. Report unresolved identity/state conflicts; use mailbox
 `unavailable` when its remaining evidence cannot be safely classified. This cannot
 waive receipts for writes already required by a classification.
 
 Private run state contains only opaque IDs, timestamps, categories, dispositions,
-identities, required private content snapshots and counts. Do not copy bodies, subjects, senders, attachments,
+identities, required private content snapshots and counts. Whole-file snapshots exist only
+while the run is active; archived ledgers keep decisions, single-line evidence, warning
+counts and the warning delta. Do not copy bodies, subjects, senders, attachments,
 private links, credentials or verification material there. Completed ledgers own run
 history; do not read/write automation memory or create another log.
 
@@ -167,3 +177,50 @@ Report concise changes in actions/deadlines, schedule/stage/status, archive/reop
 checked-item synchronization, identity conflicts, and failures/incomplete coverage.
 Return exactly `NO_UPDATE` only after successful commit with
 `content_classification_complete: true` and no user-visible changes or unresolved issues.
+
+## Primary all-topic review
+
+This mode reviews the primary mailbox for every concrete action for the user, not only
+job applications: personal, medical/appointments, bills/payments, accounts/security,
+renewals/expirations, forms/documents, purchases/deliveries/returns, and requests needing
+a reply. Everything above still applies. Identify and report tasks; do not execute them.
+
+**Mailbox scope.** Never access, search, or open a session for the secondary mailbox, or
+attempt its recovery. Mark it `unavailable` with reason code `USER_EXCLUDED_SECONDARY`
+without advancing its cursor, describe coverage as primary-only, and never present this
+exclusion as a failure or an action for the user.
+
+**Identity check.** When the Gmail connector has no profile tool, before any other mailbox
+access run one `search_threads` with query `in:sent`, pageSize 1 and view
+`THREAD_VIEW_METADATA_ONLY`, then compare the sender with `primary` in `accounts.json`.
+If it does not match, or the connector needs authentication, stop before `begin` and report it.
+
+**Reading.** Read every message staged by the primary frozen query for meaning across all
+topics. `not_application / no_action` means no career-record action, not no action for the
+user. Reconcile related messages and sent replies to decide whether an action is pending,
+superseded, or completed. Unread state, an alert label, promotional urgency, or an automatic
+payment receipt does not make a task. When a message only points to a secure portal, record
+the task as checking that portal and state that its contents and deadline are unspecified.
+
+**General TODO queue.** Non-career pending actions live in `general-todos.json` in the
+private state directory, with its readable view `general-todos.md` beside it, kept in step.
+Preserve the structure and unrelated entries. Store only a minimal action summary, source
+Gmail message/thread IDs and direct links, received time, explicit deadline with timezone
+when available, status, and last verification. Keep clinical details, financial account
+numbers, private email bodies, tokens, one-time codes, and credentials out of it. Deduplicate
+reminders for the same real task and retain pending items across runs. Close or supersede
+only on explicit completion or cancellation evidence or the user's confirmation; silence or
+elapsed time is not completion. Link career tasks to the register rather than copying them,
+and include post-offer administrative requests. The queue's `backfill` object records the
+one-time 30-day catch-up; when its status is `complete`, do not repeat it.
+
+**Ordering.** Save the queue before marking primary `success` and committing, so a cursor
+advance cannot discard a non-career action. If review or queue persistence fails, record
+primary as `unavailable`, preserve its cursor, and report the failure. Always finish the
+coordinator transaction, including empty career runs.
+
+**Report.** Use concise Chinese. Cover new or changed TODOs with the next action, source link,
+deadline or no stated deadline, and urgency justified by the evidence; approaching or overdue
+pending items; career changes; identity issues or failures; and actual coverage. Include
+non-career actions even without career changes, and omit routine informational mail. `NO_UPDATE`
+additionally requires a completed queue reconciliation with nothing new, due, or unresolved.

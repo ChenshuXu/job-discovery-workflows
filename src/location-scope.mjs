@@ -5,7 +5,6 @@ export const ALLOWED_LOCATION_DECISIONS = new Set(['ALLOW_LOCAL', 'ALLOW_REMOTE_
 const clean = value => String(value ?? '').replace(/\s+/g, ' ').trim();
 const unique = values => [...new Set((values ?? []).map(clean).filter(Boolean))];
 const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const NON_WA_STATE_CODES = new Set('AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WV WI WY'.split(' '));
 
 function validatePolicy(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`);
@@ -43,12 +42,20 @@ export function normalizeWorkplaceType(value) {
   return 'unknown';
 }
 
+// What follows the metro decides whether it is this metro or a same-named place elsewhere,
+// so only a Washington or US qualifier may follow it. Anything else fails closed.
+// Multi-location values are checked one place at a time.
+function localPlaceRule(metro) {
+  return new RegExp(`\\b${escapeRegex(metro)}(?:\\s+(?:metropolitan\\s+area|metro\\s+area|area|hq))?`
+    + '(?:\\s*,\\s*(?:wa|washington))?(?:\\s*[,-]\\s*(?:usa?|u\\.s\\.a?\\.?|united\\s+states(?:\\s+of\\s+america)?))?$', 'i');
+}
+
 function localMetroMatch(locations, metros) {
+  const rules = metros.map(metro => ({ metro, rule: localPlaceRule(metro) }));
   for (const location of locations) {
-    const stateCode = location.match(/,\s*([A-Z]{2})(?:\b|$)/i)?.[1]?.toUpperCase();
-    if (stateCode && NON_WA_STATE_CODES.has(stateCode)) continue;
-    for (const metro of metros) {
-      if (new RegExp(`\\b${escapeRegex(metro)}\\b`, 'i').test(location)) return { location, metro };
+    for (const place of location.split(/[;|]/).map(clean)) {
+      const match = rules.find(({ rule }) => rule.test(place));
+      if (match) return { location, metro: match.metro };
     }
   }
   return null;

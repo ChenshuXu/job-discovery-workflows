@@ -2,7 +2,7 @@
 import { resolveCareerPaths } from './career-ops-paths.mjs';
 import { existsSync, linkSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { snapshotAdapterProfile } from './adapter-registry.mjs';
 import {
   loadCareerTrackerParser,
@@ -19,6 +19,7 @@ import { finishScanUsage, observeScanUsage } from './scan-usage.mjs';
 import { assertPermEmployersUnchanged, snapshotPermEmployers } from './perm-employers.mjs';
 import { snapshotPermHistory, auditPermHistory } from './perm-history.mjs';
 import { loadDailyScanRuntime } from './daily-scan-runtime.mjs';
+import { semanticPair } from './semantic-jd-identity.mjs';
 
 const unique = values => [...new Set((values ?? []).map(String))].sort();
 const same = (left, right) => JSON.stringify(unique(left)) === JSON.stringify(unique(right));
@@ -68,10 +69,6 @@ function historyKeys(file, runId) {
 
 async function resolveOfficialTrackerPath(careerRoot, requested) {
   if (requested) return path.resolve(requested);
-  const trackerUtilsFile = path.join(careerRoot, 'tracker-utils.mjs');
-  if (!existsSync(trackerUtilsFile)) throw new Error(`Career-Ops tracker interface missing: ${trackerUtilsFile}`);
-  const trackerUtils = await import(pathToFileURL(trackerUtilsFile).href);
-  if (typeof trackerUtils.resolveTrackerPath !== 'function') throw new Error(`Career-Ops tracker path interface is incompatible: ${trackerUtilsFile}`);
   const previous = process.cwd();
   process.chdir(careerRoot);
   try {
@@ -134,11 +131,11 @@ export async function auditScanReceipt({
       const planned = semantic.results.filter(item => item.disposition === 'ASSIGNMENT').map(item => item.primary_key);
       if (!same(planned, assignments)) errors.push('semantic audit assignment keys != assignments union');
       if (!same([...held, ...exact, ...aliases, ...planned], accepted)) errors.push('blacklist and semantic identity partitions do not conserve location-accepted keys');
-      const pairs = assignments.map(key => results.plan.semantic_identities?.[key]).map(item => `${item?.semantic_job_key ?? ''}\0${item?.posting_context_key ?? ''}`);
+      const pairs = assignments.map(key => results.plan.semantic_identities?.[key]).map(item => semanticPair(item));
       if (pairs.some(pair => pair === '\0') || (results.plan.runtime.semantic_dedup_mode === 'enforce' && new Set(pairs).size !== pairs.length)) {
         errors.push('assignments are not unique by semantic/context identity');
       }
-      const reportPairs = results.candidates.map(item => `${item.semantic_job_key}\0${item.posting_context_key}`);
+      const reportPairs = results.candidates.map(item => semanticPair(item));
       if (results.plan.runtime.semantic_dedup_mode === 'enforce' && new Set(reportPairs).size !== reportPairs.length) errors.push('report candidates are not unique by semantic/context identity');
     }
   }
@@ -273,21 +270,18 @@ export function writeReceiptCreateOnly(receiptFile, receipt) {
   return { receipt, receiptFile: target };
 }
 
-export async function verifyAndWriteReceipt(options) {
-  const audited = await auditScanReceipt(options);
-  return writeReceiptCreateOnly(audited.receiptFile, audited.receipt);
-}
-
 const isCli = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isCli) {
   try {
     const value = name => { const index = process.argv.indexOf(name); return index >= 0 ? process.argv[index + 1] : null; };
     const runRoot = value('--run'); const careerRoot = value('--career-ops');
-    if (!runRoot || !careerRoot) throw new Error('Usage: node src/verify-scan-receipt.mjs --run runs/<run-id> --career-ops ../career-ops [--capture-baseline]');
+    // The receipt is written only by commit-scan; this CLI captures the baseline.
+    if (!runRoot || !careerRoot || !process.argv.includes('--capture-baseline')) {
+      throw new Error('Usage: node src/verify-scan-receipt.mjs --run runs/<run-id> --career-ops ../career-ops --capture-baseline [--perm-employers <file>]');
+    }
     const permAt = process.argv.indexOf('--perm-employers');
-    const result = process.argv.includes('--capture-baseline') ? captureBaseline({ runRoot, careerRoot,
-      ...(permAt >= 0 ? { permEmployers: snapshotPermEmployers(process.argv[permAt + 1]) } : {}) }) : await verifyAndWriteReceipt({ runRoot, careerRoot });
+    const result = captureBaseline({ runRoot, careerRoot,
+      ...(permAt >= 0 ? { permEmployers: snapshotPermEmployers(process.argv[permAt + 1]) } : {}) });
     console.log(JSON.stringify(result, null, 2));
-    if (result.receipt?.status === 'FAILED') process.exit(1);
   } catch (error) { console.error(error.stack || error.message); process.exit(1); }
 }

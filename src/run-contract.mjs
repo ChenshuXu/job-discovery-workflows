@@ -27,6 +27,10 @@ function employerExclusionsByAdapter(profile) {
   return new Map(profile.adapters.flatMap(adapter => {
     const definition = profile.adapter_definitions?.[adapter];
     if (!definition?.employer_exclusions) return [];
+    // The run is judged by the rules frozen in its baseline, not by later config edits.
+    if (typeof definition.config_content === 'string') {
+      return [[adapter, validateEmployerExclusionRules(JSON.parse(definition.config_content).employer_exclusions)]];
+    }
     const configFile = definition.config ? path.resolve(PROJECT_ROOT, definition.config) : LEGACY_EXCLUSION_CONFIG;
     if (!configs.has(configFile)) configs.set(configFile, validateEmployerExclusionRules(json(configFile).employer_exclusions));
     return [[adapter, configs.get(configFile)]];

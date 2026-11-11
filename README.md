@@ -39,7 +39,6 @@ for installation details and the upstream repositories for their licenses.
 | Interview research, evidence and incremental updates | Career Docs, Ego Lite browser, external research access, obsidian-markdown |
 | Application and interview process charts | Career-Ops, Career Docs, Node.js, Python 3 with Pillow, a font covering the chart text |
 | Recruiting-post scan and outreach preparation | Career-Ops, Ego Lite browser, Node SQLite; stops before Send |
-| Standalone Google ATS search | SerpAPI key; separate from Daily Scan |
 | Report and excluded-posting repairs | Career-Ops, completed run, explicit reviewed manifest and plan snapshot |
 
 Official ATS discovery is an optional Daily Scan source (`official-ats`), configured in
@@ -271,7 +270,6 @@ PERM tools do not calculate, store or validate file-content checksums. Existing 
 | Enabled sources | `config/discovery-adapters.v1.json` → each `enabled`, plus `minimum_successful_adapters` |
 | Employer exclusions | Source configs' `employer_exclusions`; use explicit user choices, `[]` when none, preserve each adapter's rule schema |
 | Jobright role, location, seniority, work model and experience filters | User-accepted browser filters → `config/jobright.json` `filter_snapshot` values/codes/visible_controls; capture them, never invent them |
-| Standalone Google ATS search | `config/google-ats-direct.json` → role/location/negative terms and official_scope; run its validator after editing |
 | Recruiting-post search | `config/linkedin-post-scan.json` → role/location/phrase groups and paths |
 | Worker model, concurrency, report threshold, retention TTL | `config/daily-scan-runtime.json`; choose a host-supported model and explain retention before a real run |
 | Mailbox identity, login and timezone | Private `.local/gmail-job-reply-review/accounts.json` with `primary` and `secondary` email-address strings; primary uses the connected Gmail app, secondary uses authenticated Chrome through the host's native browser tool. The Gmail Skill currently uses America/Los_Angeles for primary register dates |
@@ -385,7 +383,7 @@ desktop reload/cache behavior require separate checks; setup does not deduplicat
 
 The other Skills use the same naming pattern; include the exact report, application scope
 or interview target required by that Skill. Loading a Skill does not start its workflow.
-Standalone Google ATS and repair commands are CLI utilities, not additional Skills.
+Repair commands are CLI utilities, not additional Skills.
 
 ### External Skills (installed separately)
 
@@ -485,9 +483,8 @@ file; login, passwords and verification codes stay in the normal authentication 
 Only JobSpy is enabled in the example registry. For LinkedIn/Jobright, enable sources
 only after installing Ego and logging in. Jobright's empty example filter snapshot must
 be filled with your actual accepted filters; it deliberately cannot authorize a scan.
-Disabled adapters do not require local config files. Google ATS and Post Scan have
-their own example configs. An empty Google `title_exclusions` means no title exclusion
-rules; required location rules remain validated. Set the worker model to one
+Disabled adapters do not require local config files. Post Scan has its own example
+config. Set the worker model to one
 available in your agent host. Review retention TTL: real Daily Scan can remove eligible
 old `Evaluated`, `SKIP` (including `Skipped`) and `Discarded` records based on the
 tracker date, while protecting application/interview/manual activity. Status history
@@ -500,19 +497,6 @@ The resume builder requires your own compatible `assets/cv-template.docx`. Follo
 [personal template setup](assets/README.md), run `npm run resume:template`, and inspect
 the rendered page. Missing templates remain explicit setup requirements, not empty
 placeholder DOCX files. Run `mkdir -p .tmp` before authoring a tailoring plan.
-
-For standalone Google ATS, initialize its config and optional credential file without
-replacing existing files:
-
-```bash
-cp -n config/google-ats-direct.example.json config/google-ats-direct.json
-cp -n .env.example .env
-npm run google-ats:scan -- --dry-run
-```
-
-For an actual Google scan, set `SERPAPI_API_KEY` in the ignored `.env` or process
-environment. Do not put a real key in `.env.example`. Missing `.env` is allowed;
-missing credentials still stop an actual scan. Dry-run makes no paid request.
 
 Runtime writers create `runs/`, `.local/` and Post Scan data/report directories.
 `assets/README.md` preserves the input directory; use `mkdir -p .tmp` for hand-authored
@@ -628,7 +612,7 @@ npm run setup -- --workflows daily-scan --sources jobspy --apply
 # For cross-project use, add --links /absolute/actual/host/skills
 ```
 
-Workflows: `daily-scan,expand,resume,apply,gmail,interview,post-scan,google-ats,process-infographic`.
+Workflows: `daily-scan,expand,resume,apply,gmail,interview,post-scan,process-infographic`.
 No arguments displays choices; default mode previews. `--apply` creates missing files only,
 preserves existing values and links, and stops on link conflicts. `--install` can clone
 missing Career-Ops and JobSpy main and prepare/verify JobSpy's venv. `CAREER_OPS_CODE_ROOT`
@@ -652,7 +636,7 @@ After active workflows/writers finish, preserve any local source edits and read 
 
 ```bash
 git pull --ff-only
-npm run setup -- --workflows google-ats
+npm run setup -- --workflows daily-scan --sources jobspy
 ```
 
 Pull updates code, Skills and examples; actual configuration, templates, private state and

@@ -57,7 +57,7 @@ export function scopeKey(scope, company = '', role = '', postingKey = '') {
   throw new Error(`Invalid scope: ${scope}`);
 }
 export function emptyMemory(now = new Date().toISOString()) {
-  return { version: 3, updatedAt: now, records: [], rules: [] };
+  return { version: 4, updatedAt: now, records: [], rules: [] };
 }
 export function readMemory(path) {
   return existsSync(path) ? parseMemory(readFileSync(path, 'utf8')) : emptyMemory();
@@ -184,6 +184,9 @@ function publicRecord(record, matchedBy) {
   };
 }
 
+// Real secrets only; a clearance level or a list of certifications is an ordinary answer.
+const SECRET_LABEL = /\b(?:password|passcode|passphrase|one time (?:code|password)|verification code|secret (?:key|token|question|answer)|security (?:question|answer)|api key|access token|login credentials?)\b/;
+
 const BUILT_IN_TRAP_MATCHERS = [
   'human_identity_challenge',
   'captcha_challenge',
@@ -214,10 +217,13 @@ function trapMatcherMatches(matcher, label) {
       || /\b(?:code|password)\b.{0,40}\b(?:sent|emailed|texted)\b/.test(text);
   }
   if (matcher === 'human_identity_challenge') {
+    // Challenge phrasing only: a question about AI, bots or human reviewers is an ordinary question.
     return /\b(?:verify|confirm|prove|demonstrate)\b.{0,50}\b(?:you are|you re|applicant is)\b.{0,30}\b(?:human|not a bot|not a robot)\b/.test(text)
-      || /\b(?:select|choose|check|type|enter|write|answer)\b.{0,50}\b(?:human|not a bot|not a robot)\b/.test(text)
-      || /\bif you are\b.{0,25}\b(?:an? )?(?:ai|bot|robot|automated agent|language model)\b/.test(text)
-      || /\b(?:ai assistant|automated agent|language model|bot|robot)s?\b.{0,60}\b(?:do not|must not|should not|select|choose|type|enter|answer)\b/.test(text);
+      || /\bare you (?:a )?(?:human|robot|bot)\b/.test(text)
+      || /\b(?:i am|i m) not a (?:ro)?bot\b/.test(text)
+      || /\b(?:select|choose|check|type|enter)\b.{0,20}\b(?:i am|i m) (?:a )?human\b/.test(text)
+      || /\bif you are (?:an? )?(?:ai|bot|robot|automated agent|language model|llm)\b(?! (?:engineer|researcher|developer|scientist|specialist|practitioner|expert)).{0,80}\b(?:write|type|include|answer|respond|ignore|mention|say|enter|select|choose|do not)\b/.test(text)
+      || /\b(?:ai assistants?|automated agents?|language models?|llms?|bots?|robots?)\b.{0,30}\b(?:do not|must not|should not|must|should)\b.{0,20}\b(?:select|choose|type|enter|answer|write|respond)\b/.test(text);
   }
   return false;
 }
@@ -267,7 +273,7 @@ export function rememberRule(memory, input, now = new Date().toISOString()) {
   else rules.push(rule);
   return {
     action: index >= 0 ? 'rule_updated' : 'rule_created',
-    memory: { ...memory, version: 3, updatedAt: now, rules },
+    memory: { ...memory, version: 4, updatedAt: now, rules },
   };
 }
 
@@ -303,7 +309,6 @@ export function search(memory, input) {
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
     throw new Error('limit must be an integer from 1 to 100');
   }
-  const { company = '', role = '' } = input;
   const candidates = memory.records
     .filter(record => selectedApplies(record, input))
     .flatMap((record) => {
@@ -448,7 +453,7 @@ function assertAliasMetadataMatches(previous, input) {
 }
 
 export function lookup(memory, input) {
-  const { key, label, company = '', role = '' } = input;
+  const { key, label } = input;
   if (!key && !label) throw new Error('lookup requires --key or --label');
   const normalized = normalizeQuestion(label);
   if (input.answerSource) validateSelection(input);
@@ -647,11 +652,20 @@ export function resolveQuestion(memory, input) {
   };
 }
 
+// Reuse is automatic: an answer is saved at the widest scope its meaning supports.
+// A company relationship stays with its company; a reviewed meaning is global; an
+// unreviewed answer stays with its posting, or with its company and role.
+function defaultScope(input) {
+  if (/^company_relationship\./.test(input.context?.intent || '') && input.company) return 'company';
+  if (truth(input.reviewedMeaning)) return 'global';
+  return input.postingKey ? 'posting' : 'job';
+}
+
 export function remember(memory, input, now = new Date().toISOString()) {
   const key = required(input.key, 'key');
   const label = required(input.label, 'label');
   const value = answerValue(input.value);
-  const scope = String(input.scope ?? input.answerSource ?? 'job').trim();
+  const scope = String(input.scope ?? input.answerSource ?? defaultScope(input)).trim();
   if (input.answerSource) {
     validateSelection(input);
     if (scope !== input.answerSource && !truth(input.sharedBasic)) throw new Error('save scope must equal selected answer source');
@@ -660,10 +674,6 @@ export function remember(memory, input, now = new Date().toISOString()) {
   }
   if (truth(input.sharedBasic) && (scope !== 'global' || !truth(input.reviewedMeaning) || !/^profile\.(identity|contact|education|history)\./.test(input.context?.intent || ''))) throw new Error('shared basic requires reviewed profile meaning and global scope');
   if (!VALID_SCOPES.has(scope)) throw new Error(`Invalid scope: ${scope}`);
-  const reuseAuthorized = input.reuseAuthorized === true || input.reuseAuthorized === 'true';
-  if (scope !== 'job' && scope !== 'posting' && !reuseAuthorized) {
-    throw new Error(`${scope} scope requires explicit reuse authorization`);
-  }
   const resolvedScopeKey = scopeKey(scope, input.company, input.role, input.postingKey);
   const id = `${key}::${scope}:${resolvedScopeKey}`;
   const records = [...memory.records];
@@ -696,7 +706,7 @@ export function remember(memory, input, now = new Date().toISOString()) {
     records[index] = record;
     return {
       action: approvedAlias ? 'alias_confirmed' : 'alias_added',
-      memory: { ...memory, version: 3, updatedAt: now, records, rules: memory.rules || [] },
+      memory: { ...memory, version: 4, updatedAt: now, records, rules: memory.rules || [] },
     };
   }
   const metadata = inferenceMetadata(input);
@@ -705,7 +715,6 @@ export function remember(memory, input, now = new Date().toISOString()) {
     id,
     key,
     label: previous.label || label,
-    normalizedLabel: normalizeQuestion(previous.label || label),
     aliases: correcting ? [] : aliases,
     ...(input.context ? { context: contextValue(input.context) } : {}),
     ...(truth(input.sharedBasic) ? { sharedBasic: true, reviewedMeaning: true } : {}),
@@ -794,7 +803,13 @@ export async function mutateMemory(requestedPath, command, input, { assertCurren
   while (true) {
     try {
       mkdirSync(lock, { mode: 0o700 });
-      writeFileSync(`${lock}/owner.json`, JSON.stringify({ pid: process.pid, hostname: hostname(), token }), { mode: 0o600, flag: 'wx' });
+      try {
+        writeFileSync(`${lock}/owner.json`, JSON.stringify({ pid: process.pid, hostname: hostname(), token }), { mode: 0o600, flag: 'wx' });
+      } catch (ownerError) {
+        // This process made the directory, so an ownerless lock is safe to remove here.
+        rmSync(lock, { recursive: true, force: true });
+        throw ownerError;
+      }
       break;
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
@@ -823,7 +838,7 @@ export async function mutateMemory(requestedPath, command, input, { assertCurren
     }
     let result;
     if (command === 'remember') {
-      if (classifyQuestion(input).status === 'human_only' || /password|secret|credential/i.test(`${input.key || ''} ${input.label || ''}`)) throw new Error('Human verification and credentials cannot be learned');
+      if (classifyQuestion(input).status === 'human_only' || SECRET_LABEL.test(normalizeLabel(`${input.key || ''} ${input.label || ''}`))) throw new Error('Human verification and credentials cannot be learned');
       result = remember(memory, input);
     } else if (command === 'remember-rule') result = rememberRule(memory, input);
     else if (command === 'forget' || command === 'forget-rule') {
@@ -844,8 +859,10 @@ export async function mutateMemory(requestedPath, command, input, { assertCurren
     if (targetRevision(committed) !== targetRevision(result.memory)) throw new Error('Committed memory verification failed');
     return { action: result.action, ...answerTarget(committed, targetInput), verification: verify(committed) };
   } finally {
-    const owner = JSON.parse(readFileSync(`${lock}/owner.json`, 'utf8'));
-    if (owner.token === token) rmSync(lock, { recursive: true });
+    // Release only our own lock, and never let an unreadable owner file mask the real error.
+    let owner = null;
+    try { owner = JSON.parse(readFileSync(`${lock}/owner.json`, 'utf8')); } catch {}
+    if (owner?.token === token) rmSync(lock, { recursive: true });
   }
 }
 function usage() {
@@ -854,7 +871,7 @@ function usage() {
     '  node application-memory.mjs resolve --memory <file> --label <verbatim ATS question> [--intent <canonical intent> --meaning-confirmed true --topic <topic> --relation <relation> --timeframe <timeframe> --qualifier <qualifier>] [--company <name>] [--role <title>]',
     '  node application-memory.mjs search --memory <file> --query <canonical fact keywords> [--company <name>] [--role <title>] [--limit <1-100>]',
     '  node application-memory.mjs lookup --memory <file> (--key <key> | --label <exact ATS question>) [--company <name>] [--role <title>] [--subject <name> --domain <name> --threshold <number> --comparison at_least --logic atomic --qualifiers none]',
-    '  node application-memory.mjs remember --memory <file> --key <key> --label <exact ATS question> --value <answer> [--scope global|company|posting|job] (--expected-revision <hash> | --expected-absent true) [--reuse-authorized true] [--approve-alias true] [--source <source>] [--company <name>] [--role <title>] [--subject <name> --domain <name> --threshold <number> --comparison at_least --logic atomic --qualifiers none]',
+    '  node application-memory.mjs remember --memory <file> --key <key> --label <exact ATS question> --value <answer> [--scope global|company|posting|job] (--expected-revision <hash> | --expected-absent true) [--reviewed-meaning true] [--posting-key <exact-key>] [--approve-alias true] [--source <source>] [--company <name>] [--role <title>] [--subject <name> --domain <name> --threshold <number> --comparison at_least --logic atomic --qualifiers none]',
     '  node application-memory.mjs remember-rule --memory <file> --id <rule id> --kind answer --intent <intent> --meaning <canonical meaning> --answer-key <key> --topic <topic> --relation <relation> --timeframe <timeframe> --qualifier <qualifier> --reuse-authorized true (--expected-revision <hash> | --expected-absent true) [--source <source>]',
     '  node application-memory.mjs target --memory <file> (--key <key> --scope <scope> | --id <rule-id> --target-type rule) [--company <company> --role <role> --posting-key <exact-key>]',
     '  node application-memory.mjs forget --memory <file> --key <key> --scope <scope> --expected-revision <hash>',

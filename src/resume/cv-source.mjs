@@ -16,8 +16,8 @@ export function stripEmphasis(value) {
 
 export function extractNumberTokens(value) {
   const text = stripEmphasis(value);
-  const range = /~?\d+(?:\.\d+)?(?:[KMB])?\s+to\s+~?\d+(?:\.\d+)?(?:[KMB])?(?:\s+(?:peak\s+)?QPS)?/gi;
-  const scalar = /~?\d+(?:\.\d+)?(?:[KMB])?(?:\+|%|x)?(?:\s+(?:peak\s+)?QPS)?/gi;
+  const range = /~?\d+(?:\.\d+)?(?:[KMB](?![a-z]))?\s+to\s+~?\d+(?:\.\d+)?(?:[KMB](?![a-z]))?(?:\s+(?:peak\s+)?QPS)?/gi;
+  const scalar = /~?\d+(?:\.\d+)?(?:[KMB](?![a-z]))?(?:\+|%|x)?(?:\s+(?:peak\s+)?QPS)?/gi;
   const tokens = [];
   const occupied = [];
   for (const match of text.matchAll(range)) {

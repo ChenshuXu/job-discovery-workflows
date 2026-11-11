@@ -16,6 +16,8 @@ function outreachRow(db, candidate, readyOnly = false) {
   if (!matches.length) throw new Error(readyOnly
     ? `AUTO_PREPARE candidate not found or not ready: ${candidate}`
     : `outreach candidate not found: ${candidate}`);
+  const outreachIds = [...new Set(matches.map(item => item.outreach_id))];
+  if (outreachIds.length > 1) throw new Error(`AMBIGUOUS_CANDIDATE: ${candidate} matches ${outreachIds.join(', ')}; use an outreach id or member id`);
   const row = matches.find(item => {
     try { canonicalPostIdentity({ post_urn: item.source_post_urn, post_url: item.source_post_url }); return true; }
     catch { return false; }

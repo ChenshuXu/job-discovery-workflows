@@ -15,7 +15,7 @@ export const WORKFLOWS = {
   apply: ['career-ops', 'interviews/apply/retention', 'browser'],
   gmail: ['career-ops', 'interviews', 'interviews/apply/retention', 'gmail-writer', 'gmail-accounts'],
   interview: ['interviews', 'interviews/apply/retention', 'browser'],
-  'post-scan': ['career-ops', 'post-scan', 'browser'], 'google-ats': ['google-ats-direct'],
+  'post-scan': ['career-ops', 'post-scan', 'browser'],
   'process-infographic': ['process-infographic', 'interviews', 'interviews/apply/retention'],
 };
 export function skillRoot(skillFile) {
@@ -46,7 +46,6 @@ export function setup({ root = ROOT, workflows = [], sources = [], apply = false
     files.add('config/discovery-adapters.v1.json'); files.add('config/daily-scan-runtime.json');
     for (const source of sources) files.add(`config/${['jobright', 'official-ats'].includes(source) ? source : 'jobspy-ego'}.json`);
   }
-  if (workflows.includes('google-ats')) files.add('config/google-ats-direct.json');
   const gmailAccounts = '.local/gmail-job-reply-review/accounts.json';
   if (workflows.includes('gmail')) files.add(gmailAccounts);
   if (workflows.includes('post-scan')) { files.add('config/linkedin-post-scan.json'); files.add('config/daily-scan-runtime.json'); files.add('config/jobspy-ego.json'); }
@@ -66,8 +65,8 @@ export function setup({ root = ROOT, workflows = [], sources = [], apply = false
     }
     writes.push(relative); operations.push(() => { mkdirSync(path.dirname(target), { recursive: true }); writeFileSync(target, bytes, { flag: 'wx' }); });
   }
-  const inventory = checkSetup({ root, careerOps });
   if (links) {
+    const inventory = checkSetup({ root, careerOps });
     if (!path.isAbsolute(links)) throw new Error('--links must be an explicit absolute host Skill directory');
     noSymlinks(links);
     for (const item of inventory.checks.filter(x => x.id.startsWith('skill:'))) {

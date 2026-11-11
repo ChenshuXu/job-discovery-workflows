@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { combineRun } from './combine.mjs';
@@ -26,6 +26,8 @@ try {
   }
   const resolutionFile = path.join(root, 'triage/canonical-url-resolutions.json');
   if (existsSync(resolutionFile) && !values.force) throw new Error(`resolution ledger exists; recover with the standalone planner or explicitly use --force: ${resolutionFile}`);
+  // Recombining can change the pre-scope records, so an earlier location audit no longer applies.
+  if (values.force) rmSync(path.join(root, 'triage/location-scope.json'), { force: true });
 
   const combined = combineRun(root);
   const beforeResolution = validateRun(root);

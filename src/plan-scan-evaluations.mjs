@@ -8,7 +8,7 @@ import { evaluateLocationScope, isAllowedLocationDecision, loadLocationPolicy } 
 import { validateRun } from './run-contract.mjs';
 import { collectHistoricalSemanticContexts } from './posting-history.mjs';
 import { RESULT_SCHEMA_VERSION } from './scoring-safety.mjs';
-import { semanticIdentity } from './semantic-jd-identity.mjs';
+import { semanticIdentity, semanticPair } from './semantic-jd-identity.mjs';
 import { applyCareerBlacklist, assertCareerBlacklistUnchanged } from './career-ops-blacklist.mjs';
 import { snapshotScoringInputs, validateScoringInputs } from './scoring-inputs.mjs';
 import { resolveCareerPaths } from './career-ops-paths.mjs';
@@ -132,7 +132,6 @@ export function assignKeys(keys, workerCount, records) {
   return assignments;
 }
 
-const semanticPair = identity => `${identity.semantic_job_key}\0${identity.posting_context_key}`;
 
 function buildSemanticDeduplicationAudit({ records, exactAudit, semanticHistory, runRoot, runId, mode }) {
   const exactDuplicates = new Set(exactAudit.results.filter(item => item.duplicate).map(item => item.primary_key));
@@ -181,10 +180,33 @@ function buildSemanticDeduplicationAudit({ records, exactAudit, semanticHistory,
   };
 }
 
+const STAGED_ACQUISITION = 'acquisition.scoped.json';
+const SCOPE_REMOVALS = 'triage/scope-removals.json';
+
+// The plan commits in this order: staged scoped acquisition and removal list, then
+// assignments.json (the commit point), then the acquisition swap and JD deletions.
+// A run interrupted after the commit point is rolled forward; one interrupted before
+// it still holds its unscoped acquisition and is planned again from scratch.
+function finishPlanCommit(root) {
+  const staged = path.join(root, STAGED_ACQUISITION);
+  const removals = path.join(root, SCOPE_REMOVALS);
+  if (!existsSync(path.join(root, 'assignments.json'))) {
+    rmSync(staged, { force: true });
+    rmSync(removals, { force: true });
+    return;
+  }
+  if (existsSync(staged)) renameSync(staged, path.join(root, 'acquisition.json'));
+  if (existsSync(removals)) {
+    for (const jdPath of JSON.parse(readFileSync(removals, 'utf8')).jd_paths) rmSync(path.join(root, jdPath), { force: true });
+    rmSync(removals);
+  }
+}
+
 export function planEvaluations(runDir, runtimeFile, careerDir, { allowBlacklisted = [] } = {}) {
   const root = path.resolve(runDir);
   if (!careerDir) throw new Error('Career-Ops path is required for exact historical deduplication');
   const careerRoot = path.resolve(careerDir);
+  finishPlanCommit(root);
   const run = validateRun(root);
   if (run.errors.length) throw new Error(`run contract failed: ${run.errors.join('; ')}`);
   const file = path.join(root, 'assignments.json');
@@ -290,15 +312,16 @@ export function planEvaluations(runDir, runtimeFile, careerDir, { allowBlacklist
     ...locationScope.accepted.filter(item => semanticAliases.has(item.primary_key)).map(record => record.primary_key),
     ...blacklist.excluded.map(item => item.posting_key),
   ]);
-  for (const record of run.records.filter(item => removedKeys.has(item.primary_key))) rmSync(path.join(root, record.jd_path), { force: true });
-  atomicJson(path.join(root, 'acquisition.json'), acquisition);
   mkdirSync(path.dirname(resolutionFile), { recursive: true });
+  atomicJson(path.join(root, STAGED_ACQUISITION), acquisition);
+  atomicJson(path.join(root, SCOPE_REMOVALS), { jd_paths: run.records.filter(item => removedKeys.has(item.primary_key)).map(record => record.jd_path) });
   if (permScope) atomicJson(path.join(root, 'triage/perm-employer-scope.json'), permScope.audit);
   atomicJson(path.join(root, 'triage/blacklist.json'), blacklist.audit);
   atomicJson(resolutionFile, { ...resolution, history_deduplication: audit, semantic_deduplication: semanticDeduplication });
   const staged = `${file}.tmp-${process.pid}`;
   writeFileSync(staged, `${JSON.stringify(output, null, 2)}\n`, { mode: 0o600 });
   renameSync(staged, file);
+  finishPlanCommit(root);
   return { file, output };
 }
 
@@ -311,7 +334,7 @@ if (isCli) {
     const allowAt = process.argv.indexOf('--allow-blacklisted');
     const run = at >= 0 ? process.argv[at + 1] : null;
     const career = careerAt >= 0 ? process.argv[careerAt + 1] : null;
-    if (!run || !career) throw new Error('Usage: node src/plan-scan-evaluations.mjs --run runs/<run-id> --career-ops ../career-ops [--runtime-config <file>]');
+    if (!run || !career) throw new Error('Usage: node src/plan-scan-evaluations.mjs --run runs/<run-id> --career-ops ../career-ops [--runtime-config <file>] [--allow-blacklisted key1,key2] [--full]');
     const allowBlacklisted = allowAt >= 0 ? String(process.argv[allowAt + 1] ?? '').split(',').filter(Boolean) : [];
     if (allowAt >= 0 && !allowBlacklisted.length) throw new Error('--allow-blacklisted requires exact posting keys authorized by the user');
     const { output, file } = planEvaluations(run, configAt >= 0 ? process.argv[configAt + 1] : undefined, career, { allowBlacklisted });

@@ -66,7 +66,7 @@ function readValidationEvidence(root, worker, plan) {
 // Only the CLI records rejected evaluations. Library readers and finalized runs
 // remain read-only; this is evidence, not a scheduler or a retry queue.
 function validateForCli(runDir, worker, options = {}) {
-  const value = validateWorkerParts(runDir, worker, { ...options, collectItemErrors: true });
+  const value = validateWorkerParts(runDir, worker, { ...options, collectItemErrors: true, enforceRetryBudget: true });
   const { root, plan, itemFailures } = value;
   if (itemFailures.length && !existsSync(path.join(root, 'receipt.json'))
       && !existsSync(path.join(root, 'results', `${worker}.json`))) {
@@ -80,7 +80,8 @@ function validateForCli(runDir, worker, options = {}) {
       const entry = evidence.failures[key] ??= { jd_content: failure.jd_content, attempts: [] };
       if (entry.jd_content !== failure.jd_content) throw new Error(`${key}: validation JD evidence changed`);
       const hash = evaluationContent(failure.rejected_result);
-      if (!entry.attempts.some(attempt => attempt.evaluation_content === hash)) {
+      // The ledger stops at the budget so its count stays a valid terminal attempt count.
+      if (entry.attempts.length <= plan.runtime.failure.per_job_retry_limit && !entry.attempts.some(attempt => attempt.evaluation_content === hash)) {
         entry.attempts.push({ evaluation_content: hash, error: failure.error, rejected_result: failure.rejected_result });
         changed = true;
       }
@@ -117,6 +118,11 @@ export function validateWorkerParts(runDir, worker, options = {}) {
   const records = new Map((acquisition.acquired ?? []).map(record => [String(record.primary_key), record]));
   validatePermRun(root, acquisition, [...records.values()]);
   const recorded = existsSync(evidenceFile(root, worker)) ? readJson(evidenceFile(root, worker)) : null;
+  // Read once: failed items are checked against the run context recorded in the worker ledger.
+  const currentPlanContent = String(readFileSync(planFile));
+  const currentAcquisitionContent = String(readFileSync(path.join(root, 'acquisition.json')));
+  // Finished runs stay readable as recorded; only active work spends the frozen budget.
+  const retryBudget = options.enforceRetryBudget && !existsSync(path.join(root, 'receipt.json')) ? plan.runtime.failure.per_job_retry_limit + 1 : null;
   const batchSize = plan.runtime.scheduler.batch_size;
   const parts = [];
   const results = [];
@@ -172,13 +178,17 @@ export function validateWorkerParts(runDir, worker, options = {}) {
               throw new Error(`${key}: terminal validation evidence does not match recorded failures`);
             }
             {
-              const contextFields = ['schema_version', 'run_id', 'worker', 'assignments_content', 'acquisition_content', 'validator_content'];
+              // The heavy context lives once in the worker ledger; parts written before that
+              // embed a copy on each failed item, which must still match when present.
+              const identityFields = ['schema_version', 'run_id', 'worker'];
+              const embeddedFields = ['assignments_content', 'acquisition_content', 'validator_content'];
               const jdFile = path.join(root, record.jd_path);
               const currentJdContent = existsSync(jdFile) ? String(readFileSync(jdFile)) : null;
-              if (contextFields.some(field => recorded?.[field] !== item.validation_evidence[field])
+              if (identityFields.some(field => recorded?.[field] !== item.validation_evidence[field])
+                  || embeddedFields.some(field => field in item.validation_evidence && recorded?.[field] !== item.validation_evidence[field])
                   || recorded.schema_version !== 1 || recorded.run_id !== plan.run_id || recorded.worker !== worker
-                  || recorded.assignments_content !== String(readFileSync(planFile))
-                  || recorded.acquisition_content !== String(readFileSync(path.join(root, 'acquisition.json')))
+                  || recorded.assignments_content !== currentPlanContent
+                  || recorded.acquisition_content !== currentAcquisitionContent
                   || typeof recorded.validator_content !== 'string'
                   || currentJdContent !== item.validation_evidence.jd_content) {
                 throw new Error(`${key}: terminal validation evidence context or JD changed`);
@@ -222,6 +232,10 @@ export function validateWorkerParts(runDir, worker, options = {}) {
             if (item.report || item.work_authorization !== undefined) workAuthorization = deriveReportWorkAuthorization({ item, jdText, candidateText });
           },
         });
+        if (retryBudget !== null && (recorded?.failures?.[key]?.attempts?.length ?? 0) >= retryBudget) {
+          canRecordFailure = false;
+          throw new Error(`${key}: retry budget spent after ${retryBudget} rejected evaluations; terminalize it with --fail-key --attempts ${retryBudget}`);
+        }
         const result = { ...derived, semantic_job_key: identity.semantic_job_key, posting_context_key: identity.posting_context_key };
         if (result.report_allowed !== Boolean(result.report)) throw new Error(`${key}: report payload must exist exactly for report candidates`);
         if (workAuthorization !== undefined) result.work_authorization = workAuthorization;
@@ -293,7 +307,7 @@ function writeWorkerResults(value, worker) {
 }
 
 export function mergeWorkerResults(runDir, worker) {
-  return writeWorkerResults(validateWorkerParts(runDir, worker), worker);
+  return writeWorkerResults(validateWorkerParts(runDir, worker, { enforceRetryBudget: true }), worker);
 }
 
 export function failWorkerResult(runDir, worker, key, attempts, noRepairReason) {
@@ -322,20 +336,24 @@ export function failWorkerResult(runDir, worker, key, attempts, noRepairReason) 
     if (errors.length) throw new Error(`${key}: cannot replace an invalid terminal failure`);
     return { file, result: rejected, changed: false };
   }
-  if (!errors.length) throw new Error(`${key}: a valid result cannot be marked FAILED`);
-  if (!existsSync(evidenceFile(root, worker))) throw new Error(`${key}: validation evidence is required before terminalization`);
-  const evidence = readValidationEvidence(root, worker, validation.plan);
-  const history = evidence.failures[key];
+  const evidence = existsSync(evidenceFile(root, worker)) ? readValidationEvidence(root, worker, validation.plan) : null;
+  const history = evidence?.failures[key];
   const observed = history ? validateRejectedAttempts(key, history) : [];
+  // A payload written after the budget was spent is outside the ledger. The posting
+  // ends on the last recorded rejection, whether or not that late payload is valid.
+  const overBudget = observed.length > runtime.failure.per_job_retry_limit
+    && !observed.some(attempt => attempt.evaluation_content === evaluationContent(rejected));
+  if (!errors.length && !overBudget) throw new Error(`${key}: a valid result cannot be marked FAILED`);
+  if (!evidence) throw new Error(`${key}: validation evidence is required before terminalization`);
   if (observed.length !== attempts) throw new Error(`${key}: observed rejected evaluations (${observed.length}) do not match requested attempts (${attempts})`);
   const failure = validation.itemFailures.find(item => item.posting_key === key);
   const last = observed.at(-1);
-  if (!failure || failure.jd_content !== history.jd_content || last.evaluation_content !== evaluationContent(rejected)
-      || last.error !== errors.join('; ')) throw new Error(`${key}: current rejected evaluation does not match validation evidence`);
-  const { failures, ...context } = evidence;
+  if (!overBudget && (!failure || failure.jd_content !== history.jd_content || last.evaluation_content !== evaluationContent(rejected)
+      || last.error !== errors.join('; '))) throw new Error(`${key}: current rejected evaluation does not match validation evidence`);
+  const { failures, assignments_content, acquisition_content, validator_content, ...context } = evidence;
   const result = { posting_key: key, status: 'FAILED', attempts: observed.length, error: last.error, report: null,
     ...(noRepair ? { no_repair_reason: noRepairReason.trim() } : {}),
-    rejected_result: rejected, validation_evidence: { ...context, ...history } };
+    rejected_result: overBudget ? last.rejected_result : rejected, validation_evidence: { ...context, ...history } };
   artifact.results[slot] = result;
   if (readFileSync(file, 'utf8') !== before) throw new Error(`${key}: part changed during validation`);
   const staged = `${file}.tmp-${process.pid}`;
@@ -355,7 +373,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const attemptsAt = process.argv.indexOf('--attempts');
     const noRepairAt = process.argv.indexOf('--no-repair-reason');
     if (noRepairAt >= 0 && (failAt < 0 || !process.argv[noRepairAt + 1] || process.argv[noRepairAt + 1].startsWith('--'))) throw new Error('--no-repair-reason requires --fail-key and a reason');
-    if (!run || !worker) throw new Error('Usage: node src/merge-worker-results.mjs --run runs/<run-id> --worker worker-N');
+    if (!run || !worker) throw new Error('Usage: node src/merge-worker-results.mjs --run runs/<run-id> --worker worker-N [--validate-through-part N] [--fail-key <key> --attempts N [--no-repair-reason <reason>]] [--json | --full]');
     if (failAt >= 0) {
       if (throughAt >= 0 || attemptsAt < 0) throw new Error('--fail-key requires --attempts and cannot be combined with --validate-through-part');
       const result = failWorkerResult(run, worker, process.argv[failAt + 1], Number(process.argv[attemptsAt + 1]), noRepairAt >= 0 ? process.argv[noRepairAt + 1] : undefined);
@@ -366,7 +384,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     } else {
       const result = writeWorkerResults(validateForCli(run, worker), worker);
       console.log(JSON.stringify(full ? result : compactSummary({ stage: 'worker-merge', status: 'COMPLETE', artifact: result.file,
-        counts: { worker, validated_parts: result.part_count, results: result.result_count, failed: result.output.results.filter(row => row.status === 'FAILED').length } })));
+        counts: { worker, validated_parts: result.part_count, results: result.result_count, failed: result.output.results.filter(row => String(row.status).toUpperCase() === 'FAILED').length } })));
     }
   } catch (error) {
     if (jsonMode) console.log(JSON.stringify(diagnosticOutput(error, run, worker, full)));

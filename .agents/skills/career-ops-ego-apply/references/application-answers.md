@@ -53,7 +53,7 @@ node .agents/skills/career-ops-ego-apply/scripts/application-memory.mjs remember
   --expected-absent true
 ```
 
-Use `--scope company|global --reuse-authorized true` only when the user explicitly authorizes that reuse. When keyword discovery finds an existing key but lookup returns `key_review`, add the verbatim ATS wording with `--approve-alias true` only after checking the same subject, domain, time range, threshold, qualifiers, and scope. Re-run lookup and require `exact` before entering the answer. Alias approval may add only the wording alias; it must not replace the answer, domain, threshold, source, or other metadata. Verify every write with the script's `verify` command. Never store passwords, OTPs, CAPTCHA data, or unsupported narrative claims.
+Without `--scope`, an answer is saved at the widest scope its meaning supports: pass `--reviewed-meaning true` after checking the question's meaning and choices to save it globally; a `company_relationship.*` context intent stays with its company; otherwise it stays with its posting (`--posting-key`) or its company and role. No separate reuse authorization is needed. When keyword discovery finds an existing key but lookup returns `key_review`, add the verbatim ATS wording with `--approve-alias true` only after checking the same subject, domain, time range, threshold, qualifiers, and scope. Re-run lookup and require `exact` before entering the answer. Alias approval may add only the wording alias; it must not replace the answer, domain, threshold, source, or other metadata. Verify every write with the script's `verify` command. Never store passwords, OTPs, CAPTCHA data, or unsupported narrative claims.
 
 
 ## Application Assist selected-source interface
@@ -102,7 +102,7 @@ let reviewStillCurrent = true;
 // After deliberate final user confirmation, with the same source and target:
 await mutateMemory(memoryPath, 'remember', {
   ...query, scope: query.answerSource, value: { type: 'text', value: 'Remote' },
-  source: 'user_review', userConfirmed: true, reuseAuthorized: true,
+  source: 'user_review', userConfirmed: true,
   ...(reviewed.revision ? { expectedRevision: reviewed.revision } : { expectedAbsent: true }),
 }, { assertCurrent: () => { if (!reviewStillCurrent) throw new Error('STALE_REVIEW'); } });
 const fresh = resolveQuestion(readMemoryChecked(memoryPath), query);

@@ -5,7 +5,6 @@ import path from 'node:path';
 import { postingRequisition } from './posting-identity.mjs';
 import { renderCompactReport, appendPermHistoryReference, PERM_REPORT_LAYOUT } from './scan-report-contract.mjs';
 import { renderPermHistoryReference } from './perm-history.mjs';
-export { discoveryVia } from './scan-report-contract.mjs';
 
 const MAX_BATCH = 50;
 const atomicWrite = (file, text) => { mkdirSync(path.dirname(file), { recursive: true }); const staged = `${file}.tmp-${process.pid}`; writeFileSync(staged, text); renameSync(staged, file); };

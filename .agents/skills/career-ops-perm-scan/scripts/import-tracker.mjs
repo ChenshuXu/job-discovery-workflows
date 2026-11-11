@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { validatePermEmployers } from '../../../../src/perm-employers.mjs';
+import { employerName, validatePermEmployers } from '../../../../src/perm-employers.mjs';
 
 const arg = name => { const at = process.argv.indexOf(name); return at < 0 ? null : process.argv[at + 1]; };
 const statuses = new Set(['正常办理', '已暂停', '受限', 'LMT难通过', '不确定']);
@@ -16,6 +16,8 @@ try {
   if (!cutoff || !displayed || current !== displayed || headers.length !== displayed || headers.some(match => match[2] !== '正常办理')) {
     throw new Error('capture must show every normal-status group with no search/platform filter; counts or snapshot layout differ');
   }
+  // Aliases are added to the catalog by hand from evidence; a refresh keeps them per company.
+  const priorAliases = new Map(existsSync(out) ? JSON.parse(readFileSync(out, 'utf8')).companies.map(entry => [employerName(entry.company), entry.aliases ?? []]) : []);
   const groups = headers.map((header, index) => {
     const block = snapshot.slice(header.index, headers[index + 1]?.index ?? snapshot.length).split(/\n {10}container /)[0];
     const sourceCount = Number(block.match(/^ {14}text "(\d+) 条来源"/m)?.[1]);
@@ -29,7 +31,7 @@ try {
         url: section.match(/anchor \[[^\n]*url=(https?:\/\/[^\]\n]+)\]/)?.[1] ?? null }];
     });
     if (sources.length !== sourceCount) throw new Error(`${header[1]}: source count ${sources.length} differs from displayed ${sourceCount}`);
-    return { company: header[1], aliases: [], status: header[2], information_date: block.match(/^ {14}text "信息时间 ([^"]+)"/m)?.[1],
+    return { company: header[1], aliases: priorAliases.get(employerName(header[1])) ?? [], status: header[2], information_date: block.match(/^ {14}text "信息时间 ([^"]+)"/m)?.[1],
       source_count: sourceCount, conflicting_statuses: [...new Set(sources.map(source => source.status).filter(status => status && status !== '正常办理'))], sources };
   });
   const catalog = validatePermEmployers({ schema_version: 1, source_url: 'https://muse.ai/s/perm-tracker-2-gh65gxaxqvxfxyu',

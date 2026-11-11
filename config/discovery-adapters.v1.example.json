@@ -12,6 +12,7 @@
         "src/adapters/jobspy_linkedin_scan.py"
       ],
       "config": "config/jobspy-ego.json",
+      "timeout_ms": 2700000,
       "employer_exclusions": true
     },
     "ego-browser": {
@@ -21,6 +22,7 @@
         "src/adapters/egobrowser_linkedin_scan.mjs"
       ],
       "config": "config/jobspy-ego.json",
+      "timeout_ms": 1500000,
       "employer_exclusions": true
     },
     "jobright": {
@@ -30,6 +32,7 @@
         "src/adapters/jobright_recommendations_scan.mjs"
       ],
       "config": "config/jobright.json",
+      "timeout_ms": 900000,
       "employer_exclusions": true
     },
     "official-ats": {

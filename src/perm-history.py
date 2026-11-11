@@ -138,14 +138,18 @@ class Links(html.parser.HTMLParser):
 def discover():
     page = fetch(INDEX); links = Links(); links.feed(page)
     result=[]
-    for fy in (2025,2026):
+    # The newest fiscal year on the index plus the complete year before it.
+    published={int(m.group(1)) for url in links.links for m in [re.search(r'PERM_Disclosure_Data_FY(\d{4})_Q[1-4]\.xlsx(?:\?|$)',url,re.I)] if m}
+    if not published: raise ValueError('Official index has no PERM disclosure')
+    current=max(published)
+    for fy in (current-1,current):
         xlsx=[]
         for url in links.links:
             match=re.search(r'PERM_Disclosure_Data_FY'+str(fy)+r'_Q([1-4])\.xlsx(?:\?|$)',url,re.I)
             if match: xlsx.append((int(match.group(1)),official(url)))
         if not xlsx: raise ValueError(f'Official index has no FY{fy} PERM disclosure')
         q=max(x[0] for x in xlsx)
-        if fy == 2025 and q != 4: raise ValueError('FY2025 full-year Q4 is required')
+        if fy == current-1 and q != 4: raise ValueError(f'FY{fy} full-year Q4 is required')
         candidates=sorted({u for quarter,u in xlsx if quarter==q})
         if len(candidates)!=1: raise ValueError('Ambiguous official release URLs')
         layouts=sorted({official(u) for u in links.links if re.search(r'PERM_Record_Layout_FY'+str(fy)+r'_Q'+str(q)+r'\.pdf(?:\?|$)',u,re.I)})
@@ -158,10 +162,12 @@ def discover():
 def validate_source_manifest(manifest):
     if manifest.get('schema_version') != 1: raise ValueError('Unsupported source manifest')
     sources=manifest.get('sources',[])
-    if len(sources)!=2 or sorted(s.get('fiscal_year') for s in sources)!=[2025,2026]: raise ValueError('Exactly one FY2025 and one FY2026 source required; cumulative quarters cannot be combined')
+    years=sorted(s.get('fiscal_year') for s in sources) if len(sources)==2 else []
+    if len(years)!=2 or not all(isinstance(y,int) for y in years) or years[1]!=years[0]+1:
+        raise ValueError('Exactly one source for each of two consecutive fiscal years required; cumulative quarters cannot be combined')
     for s in sources:
         fy=s['fiscal_year'];q=s['quarter']
-        if q not in (1,2,3,4) or (fy==2025 and q!=4): raise ValueError('Invalid quarter/full-year selection')
+        if q not in (1,2,3,4) or (fy==years[0] and q!=4): raise ValueError('Invalid quarter/full-year selection')
         end=[f'{fy-1}-12-31',f'{fy}-03-31',f'{fy}-06-30',f'{fy}-09-30'][q-1]
         if s['coverage_start']!=f'{fy-1}-10-01' or s['coverage_end']!=end: raise ValueError('Coverage dates do not match release')
         for key in ('xlsx','layout'):
@@ -401,9 +407,13 @@ def import_aliases(path,merge=False):
     return {'status':'COMPLETE','path':str(target),'alias_count':len(registry['aliases'])}
 
 
-def add_statistics(result,records):
+def coverage_years(result):
+    return [c['fiscal_year'] for c in result['coverage']]
+
+
+def add_statistics(result,records,years):
     result.update(summarize(records));result['total_disclosed_cases']=result.pop('disclosed_cases')
-    result['years']={str(fy):summarize([r for r in records if r['decision_fiscal_year']==fy]) for fy in (2025,2026)}
+    result['years']={str(fy):summarize([r for r in records if r['decision_fiscal_year']==fy]) for fy in years}
     result['breakdowns']={}
     for label,fields in [('job_titles',('job_title',)),('soc',('soc_code','soc_title')),('primary_worksites',('worksite_city','worksite_state','multiple_worksites')),('law_firms',('law_firm',)),('representatives',('law_firm','representative_last','representative_first','representative_middle'))]:
         groups={}
@@ -431,13 +441,13 @@ def apply_alias(db,result,alias,aliases,contexts):
         records=[r for r in records if (norm(r['employer_city']),norm(r['employer_state'])) in locations]
         entity={'legal_name':target['legal_name'],'locations':target['locations'],'evidence_ids':target['evidence_ids']}
         entity['match_status']='verified_alias' if records else 'not_found'
-        if records:add_statistics(entity,records)
+        if records:add_statistics(entity,records,coverage_years(result))
         else:entity['match_reason']='Verified legal identity has no disclosed records in the selected local releases; complete application count remains unavailable'
         entities.append(entity)
         result['matched_employers'] += [{'name':target['legal_name'],**p} for p in target['locations']]
     result['entities']=entities
     if len(entities)==1:
-        if entities[0].get('cases'):add_statistics(result,entities[0]['cases'])
+        if entities[0].get('cases'):add_statistics(result,entities[0]['cases'],coverage_years(result))
         else:result.update(match_status='not_found',match_reason=entities[0]['match_reason'])
     else:result['match_reason']='Multiple verified legal entities are displayed separately; no group total is inferred'
     return result
@@ -463,19 +473,20 @@ def query(db,manifest,pointer,company,aliases=None,contexts=None,suggestion_cach
     elif len(identities)>1:
         result['match_reason']='Exact legal name has conflicting employer locations; identity requires disambiguation'
     if not identities:
-        pairs=db.execute('SELECT DISTINCT json_extract(payload,"$.employer"),json_extract(payload,"$.trade") FROM cases')
+        all_pairs=lambda:db.execute('SELECT DISTINCT json_extract(payload,"$.employer"),json_extract(payload,"$.trade") FROM cases')
+        pairs=None
         if suggestion_cache is not None:
             if 'index' not in suggestion_cache:
                 index={}
-                for employer,trade in pairs:
+                for employer,trade in all_pairs():
                     for suffix in {stem(employer),stem(trade)}:
                         if suffix:index.setdefault(suffix,[]).append((employer,trade))
                 suggestion_cache['index']=index
             pairs=suggestion_cache['index'].get(stem(company),[])
-        for employer,trade in pairs:
+        for employer,trade in (all_pairs() if pairs is None else pairs):
             if stem(company) and stem(company) in {stem(employer),stem(trade)}:result['suggestions'].append({'employer':employer,'trade':trade,'reason':'legal-suffix variant only; requires independent identity evidence'})
     if result['match_status']!='exact':return result
-    return add_statistics(result,records)
+    return add_statistics(result,records,coverage_years(result))
 
 
 def markdown(results):
@@ -529,8 +540,8 @@ def preview(path,ident):
         if not proof.is_file():raise ValueError('Selection validation artifact is missing')
     db,manifest,pointer=load_current()
     try:
-        aliases=load_aliases(db)
-        results=[query(db,manifest,pointer,c['company'],aliases,[{'posting_key':e.get('posting_key'),'posting_url':e.get('posting_url')} for e in c['scored_evidence']]) for c in companies]
+        aliases=load_aliases(db);suggestion_cache={}
+        results=[query(db,manifest,pointer,c['company'],aliases,suggestion_cache=suggestion_cache,contexts=[{'posting_key':e.get('posting_key'),'posting_url':e.get('posting_url')} for e in c['scored_evidence']]) for c in companies]
     finally:db.close()
     output=guarded(DATA/'previews'/ident);output.mkdir(parents=True,exist_ok=True)
     if any(output.iterdir()):raise ValueError('Preview already exists; choose a new id')
@@ -552,7 +563,7 @@ def preview(path,ident):
     check_rows=[]
     for r in results:
         for status in STATUSES:
-            for fy in (2025,2026):
+            for fy in [s['fiscal_year'] for s in manifest['sources']]:
                 c=next((c for c in r.get('cases',[c for entity in r.get('entities',[]) for c in entity.get('cases',[])]) if c['status']==status and c['decision_fiscal_year']==fy),None)
                 if c:check_rows.append({'company':r['company'],'status':status,'fiscal_year':fy,'case_number':c['case_number'],'source_file':c['source_file'],'sheet':c['sheet'],'row':c['row'],'manual_verification':'pending'})
     write_json(output/'spot-checks.json',{'checks':check_rows,'note':'Source locators for independent human/raw-workbook cross-check; not claimed as manually verified.'})
@@ -603,8 +614,8 @@ def scan_batch(payload):
     finally:db.close()
 
 
-def company_review_queue(payload):
-    batch=scan_batch(payload);by_id={r['id']:r['result'] for r in batch['references']};companies={}
+def company_review_queue(payload,batch=None):
+    batch=batch or scan_batch(payload);by_id={r['id']:r['result'] for r in batch['references']};companies={}
     for posting in batch['postings']:
         result=by_id[posting['reference_id']]
         if not posting['scored'] or result['match_status'] in ('exact','verified_alias') or result.get('alias_verification')=='verified':continue
@@ -629,7 +640,7 @@ def company_review(payload,freeze=False):
     snapshot=dict(baseline);aliases={norm(a['source_company']):a for a in baseline['aliases']['aliases']};evidence=dict(baseline['evidence'])
     if freeze:
         db,_,_=load_current(baseline['pointer'])
-        try:updates=load_aliases(db)['registry']['aliases'] if verified else []
+        try:updates=(load_aliases(db) or {'registry':{'aliases':[]}})['registry']['aliases'] if verified else []
         finally:db.close()
     else:
         if review.get('schema_version')!=1 or review.get('status')!='COMPLETE' or review.get('records')!=payload['records']:raise ValueError('Frozen company review binding changed')
@@ -657,7 +668,7 @@ def company_review(payload,freeze=False):
 def main():
     p=argparse.ArgumentParser(description=__doc__);commands=p.add_subparsers(dest='command',required=True)
     commands.add_parser('refresh')
-    commands.add_parser('scan-snapshot');commands.add_parser('scan-batch')
+    commands.add_parser('scan-snapshot');commands.add_parser('scan-batch');commands.add_parser('scan-batch-reviewed')
     for command in ('company-review-queue','company-review-freeze','company-review-check'):commands.add_parser(command)
     i=commands.add_parser('import');i.add_argument('--manifest',required=True)
     a=commands.add_parser('aliases-import');a.add_argument('--file',required=True);a.add_argument('--merge',action='store_true')
@@ -666,6 +677,10 @@ def main():
     args=p.parse_args();guarded(DATA)
     if args.command=='scan-snapshot':result=scan_snapshot()
     elif args.command=='scan-batch':result=scan_batch(without_checksums(json.load(sys.stdin)))
+    elif args.command=='scan-batch-reviewed':
+        # One batch serves both the review gate and the artifact, instead of building it twice.
+        payload=without_checksums(json.load(sys.stdin));batch=scan_batch(payload)
+        result={'batch':batch,'review':company_review_queue(payload,batch)}
     elif args.command=='company-review-queue':result=company_review_queue(without_checksums(json.load(sys.stdin)))
     elif args.command in ('company-review-freeze','company-review-check'):result=company_review(without_checksums(json.load(sys.stdin)),freeze=args.command=='company-review-freeze')
     elif args.command=='refresh':

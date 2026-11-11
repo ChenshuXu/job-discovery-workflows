@@ -88,6 +88,15 @@ test('network diagnostics classify failures without retaining response values or
   }
 });
 
+test('a filter change between two drains is caught', async t => {
+  const filterEvent = [{ method: 'Network.responseReceived', params: { requestId: 'f', response: { url: 'https://jobright.ai/swan/filter/get/filter', status: 200 } } }];
+  t.mock.method(globalThis, 'drainEvents', async () => filterEvent);
+  t.mock.method(globalThis, 'cdp', async () => ({ body: JSON.stringify({ result: { daysAgo: 7 } }) }));
+  const later = await drainJobrightBatches({ jobs: 0, filter: 0 }, { daysAgo: 1 });
+  assert.equal(later.errors[0]?.classification, 'filter_changed');
+  t.mock.restoreAll();
+});
+
 test('UI collection stops at a response error and preserves already validated jobs', async t => {
   const config = loadJobrightConfig();
   let drains = 0;
@@ -342,4 +351,34 @@ test('a complete empty traversal is a valid EMPTY source but cannot satisfy Jobr
       return true;
     },
   );
+});
+
+
+test('ekn tracking tokens fall back to Jobright and saved captures resume without rewriting sources', async () => {
+  const token = `opaque-R0${'A'.repeat(300)}1`;
+  const redirect = `https://www.ziprecruiter.com/ekn/${token}?tsid=123`;
+  const fx = await runFixture('ekn-resume', {
+    filter_snapshot: acceptedFilter(), batches: [[{ jobright_id: IDS.unresolved }]],
+    details: { [IDS.unresolved]: { company: 'Acme', title: 'Backend Engineer', location: 'Seattle, WA',
+      employment_type: 'Full-time', workplace_type: 'Hybrid', publish_time_desc: '2 hours ago',
+      official_url: redirect, description: LONG } },
+  });
+  const key = `jobright:jobright.ai:${IDS.unresolved.toUpperCase()}`;
+  assert.equal(fx.summary.list_capture.dispositions[0].posting_key, key);
+  const source = path.join(fx.runRoot, `sources/jobright/jobs/${IDS.unresolved}.md`);
+  const current = readFileSync(source, 'utf8');
+  const oldKey = `generic:ziprecruiter.com:R0${'A'.repeat(300)}1`;
+  const saved = current.replace(/^\*\*URL:\*\*.*$/m, `**URL:** ${redirect}`)
+    .replace(/^\*\*Posting Key:\*\*.*$/m, `**Posting Key:** ${oldKey}`);
+  writeFileSync(source, saved);
+  const env = { ...process.env, JOB_DISCOVERY_ADAPTER_REGISTRY: fx.registry };
+  execFileSync(process.execPath, [COMBINE, '--run', fx.runRoot], { env, stdio: 'pipe' });
+  const acquisition = JSON.parse(readFileSync(path.join(fx.runRoot, 'acquisition.json'), 'utf8'));
+  assert.deepEqual(acquisition.keys, [key]);
+  const jd = readFileSync(path.join(fx.runRoot, acquisition.acquired[0].jd_path), 'utf8');
+  assert.ok(jd.includes(`**Original Job URL:** ${redirect}`));
+  assert.equal(readFileSync(source, 'utf8'), saved);
+  assert.equal(JSON.parse(execFileSync(process.execPath, [VERIFY, '--run', fx.runRoot], { env, encoding: 'utf8' })).ok, true);
+  writeFileSync(source, saved.replace(`**Source Job ID:** ${IDS.unresolved}`, `**Source Job ID:** ${IDS.first}`));
+  assert.throws(() => execFileSync(process.execPath, [COMBINE, '--run', fx.runRoot], { env, stdio: 'pipe' }), /posting|identity/);
 });

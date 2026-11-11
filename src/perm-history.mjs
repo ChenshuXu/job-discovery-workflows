@@ -65,7 +65,9 @@ function build(runRoot, run, results) {
         batch.markdown += '\n## 本次公司名称核实\n\n' + review.companies.map(item => `- ${cell(item.company)}：${cell(item.outcome)}；${cell(item.note)}`).join('\n') + '\n';
         return { ...batch, ...layout, company_review: companyReview };
       }
-      if (python('company-review-queue', { snapshot, records }).status === 'required') throw new Error('PERM company research is incomplete; run review-perm-companies prepare, research, then freeze before commit');
+      const { batch, review } = python('scan-batch-reviewed', { snapshot, records });
+      if (review.status === 'required') throw new Error('PERM company research is incomplete; run review-perm-companies prepare, research, then freeze before commit');
+      return { ...batch, ...layout };
     }
     return { ...python('scan-batch', { snapshot, records }), ...layout };
   }
@@ -113,13 +115,15 @@ export function renderPermHistoryReference(artifact, record, reportFile, runRoot
   }
   const reviewed = artifact.company_review?.companies.find(item => item.company === record.company);
   if (modern && reviewed) lines.push(`本次名称核实：${text({ verified: '已核实', ambiguous: '存在歧义，已询问', not_found: '未找到足够证据', source_unavailable: '来源不可用', publisher: '发布方或客户未确认' }[reviewed.outcome])}；${text(reviewed.note)}`);
+  // A fiscal year is year-to-date while its newest release is not Q4.
+  const partialYear = year => (result.coverage ?? []).some(item => String(item.fiscal_year) === year && item.quarter !== 4);
   const entities = result.years ? [result] : result.entities ?? [];
   for (const entity of entities) {
     if (entity.legal_name) lines.push('', `法人明细：${text(entity.legal_name)}。`);
     if (!entity.years) continue;
     if (modern) {
       const years = Object.entries(entity.years);
-      lines.push('', '|裁定结果|' + years.map(([year]) => `FY${year}${year === '2026' ? ' YTD' : ''}`).join('|') + '|', '|---|' + years.map(() => '---:').join('|') + '|');
+      lines.push('', '|裁定结果|' + years.map(([year]) => `FY${year}${partialYear(year) ? ' YTD' : ''}`).join('|') + '|', '|---|' + years.map(() => '---:').join('|') + '|');
       lines.push('|已披露案件|' + years.map(([, summary]) => summary.disclosed_cases).join('|') + '|');
       for (const [status, label] of [['Certified', '认证'], ['Certified-Expired', '认证后过期'], ['Denied', '拒绝'], ['Withdrawn', '撤回']]) lines.push(`|${label}|` + years.map(([, summary]) => summary.status_counts[status]).join('|') + '|');
     } else {
@@ -131,7 +135,7 @@ export function renderPermHistoryReference(artifact, record, reportFile, runRoot
     }
     if (modern) for (const [year, summary] of Object.entries(entity.years)) {
       const rate = summary.historical_certification_share;
-      lines.push(`- FY${year}${year === '2026' ? ' YTD' : ''} 曾认证占比：${rate.numerator}/${rate.denominator}（${rate.value === null ? '不可计算' : (100 * rate.value).toFixed(1) + '%'}）。`);
+      lines.push(`- FY${year}${partialYear(year) ? ' YTD' : ''} 曾认证占比：${rate.numerator}/${rate.denominator}（${rate.value === null ? '不可计算' : (100 * rate.value).toFixed(1) + '%'}）。`);
     }
     lines.push('', '曾认证占比 =（认证 + 认证后过期）/（认证 + 认证后过期 + 拒绝）；撤回不计分母。');
     lines.push(`最近裁定：${cell(entity.recent_dates.decision)}；最近认证：${cell(entity.recent_dates.certification_decision)}。`);

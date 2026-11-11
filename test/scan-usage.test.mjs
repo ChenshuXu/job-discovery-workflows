@@ -80,6 +80,19 @@ test('aggregation counts disjoint root scopes, reports actual settings, and neve
   assert.deepEqual(refreshScanUsage({ runRoot, collect: observation, now: done }), value);
 });
 
+test('a refresh after session logs were pruned keeps the measured usage file', t => {
+  const runRoot = fixture(t);
+  startScanUsage({ runRoot, capture, now: at });
+  bindScanWorkers({ runRoot, workers: [`worker-1=${child}`] });
+  refreshScanUsage({ runRoot, collect: observation, now: done });
+  const measured = readFileSync(path.join(runRoot, 'usage.json'), 'utf8');
+  const pruned = () => ({ issues: ['session_file_missing'], threads: [] });
+  const value = refreshScanUsage({ runRoot, collect: pruned, now: '2026-12-20T00:00:00Z' });
+  assert.equal(readFileSync(path.join(runRoot, 'usage.json'), 'utf8'), measured);
+  assert.equal(value.kept_existing, true);
+  assert.equal(value.tokens.total_tokens, 240);
+});
+
 test('unbound nonempty workers and absent sessions remain unknown; empty sets have null denominators', t => {
   const runRoot = fixture(t);
   assert.equal(collectScanUsage({ runRoot, collect: observation }).tokens, null);
@@ -170,4 +183,27 @@ test('CLI backfill/refresh creates only observability files and refuses ambiguou
   symlinkSync(target, path.join(runRoot, 'usage.json'));
   assert.notEqual(run(['refresh', '--run', runRoot, '--sessions-dir', sessions]).status, 0);
   assert.deepEqual(JSON.parse(readFileSync(target)), { untouched: true });
+});
+
+test('a Claude session binds agent ids and an alias matches the model it resolved to', t => {
+  const runRoot = path.join(mkdtempSync(path.join(tmpdir(), 'claude-scan-usage-')), 'claude-run');
+  t.after(() => rmSync(path.dirname(runRoot), { recursive: true, force: true }));
+  mkdirSync(runRoot);
+  writeFileSync(path.join(runRoot, 'assignments.json'), JSON.stringify({ assignments: { 'worker-1': ['a:1'] }, runtime: { worker: { model: 'opus', reasoning_effort: 'high' } } }));
+  const session = '11111111-2222-4333-8444-555555555555';
+  const agent = 'aea523df2326203c6';
+  startScanUsage({ runRoot, now: at, capture: () => ({ host: 'claude', status: 'complete', coordinator_thread_id: session, session_id: session, root_turn_id: session, captured_at: at, selection: 'claude_session', issues: [] }) });
+  bindScanWorkers({ runRoot, workers: [`worker-1=${agent}`] });
+  const tokens = { input_tokens: 10, cached_input_tokens: 5, cache_write_input_tokens: 1, output_tokens: 2, reasoning_output_tokens: 1, total_tokens: 12, uncached_input_tokens: 5 };
+  const thread = (id, model) => ({ thread_id: id, status: 'complete', tokens, issues: [], wall_ms: 1, observed_settings: [{ model, reasoning_effort: 'high', tokens }] });
+  const collect = ({ scope, threadIds }) => {
+    assert.equal(scope.host, 'claude');
+    assert.deepEqual(threadIds, [session, agent]);
+    return { issues: [], threads: [thread(session, 'claude-opus-5-5'), thread(agent, 'claude-opus-5-5')] };
+  };
+  const value = collectScanUsage({ runRoot, collect, now: done });
+  assert.equal(value.status, 'complete');
+  assert.equal(value.workers[0].requested_observed_mismatch, false);
+  assert.equal(collectScanUsage({ runRoot, now: done, collect: options => ({ ...collect(options), threads: [thread(session, 'claude-opus-5-5'), thread(agent, 'claude-sonnet-5-5')] }) }).workers[0].requested_observed_mismatch, true);
+  assert.throws(() => bindScanWorkers({ runRoot, workers: ['worker-1=short'] }), /worker binding/);
 });

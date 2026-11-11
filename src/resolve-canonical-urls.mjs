@@ -35,6 +35,18 @@ function unresolvedGreenhouseEmbed(value) {
     : null;
 }
 
+// Header fields are structured source data. Body text can link to other roles, so it
+// names the official posting only through one unambiguous exact ATS identity.
+function officialCandidate(text) {
+  const bodyStart = text.search(/^## Job Description/m);
+  const header = bodyStart < 0 ? text : text.slice(0, bodyStart);
+  const fromHeader = urls(header).map(url => ({ url, key: official(url) })).find(item => item.key);
+  if (fromHeader || bodyStart < 0) return fromHeader;
+  const exact = urls(text.slice(bodyStart)).map(url => ({ url, key: official(url) }))
+    .filter(item => item.key && EXACT_ATS.has(item.key.split(':', 1)[0]));
+  return new Set(exact.map(item => item.key)).size === 1 ? exact[0] : undefined;
+}
+
 async function followGreenhouseTenantRedirect(candidate, fetchImpl) {
   try {
     let current = candidate.url;
@@ -55,8 +67,8 @@ async function followGreenhouseTenantRedirect(candidate, fetchImpl) {
         : null;
     }
     return null;
-  } catch {
-    return null;
+  } catch (error) {
+    return { lookup_error: error.message };
   }
 }
 
@@ -77,12 +89,17 @@ export async function resolveCanonicalUrls(runDir, { force = false, fetchImpl = 
     const text = readFileSync(jdFile, 'utf8');
     const capturedUrls = urls(text);
     const redirect = capturedUrls.map(unresolvedGreenhouseEmbed).find(Boolean);
-    let candidate = capturedUrls.map(url => ({ url, key: official(url) })).find(item => item.key);
-    if (!candidate && redirect) candidate = await followGreenhouseTenantRedirect(redirect, fetchImpl);
+    let candidate = officialCandidate(text);
+    let lookupError = null;
+    if (!candidate && redirect) {
+      candidate = await followGreenhouseTenantRedirect(redirect, fetchImpl);
+      if (candidate?.lookup_error) { lookupError = candidate.lookup_error; candidate = null; }
+    }
     const hasLinkedIn = record.posting_keys.some(key => key.startsWith('linkedin:'));
     const needsResolution = hasLinkedIn || Boolean(redirect);
     if (!needsResolution || !candidate) {
-      results.push({ posting_key: record.primary_key, status: needsResolution ? 'UNRESOLVED' : 'NOT_APPLICABLE', reason: needsResolution ? 'No exact official posting URL in captured JD' : undefined });
+      const reason = !needsResolution ? undefined : lookupError ? `redirect lookup failed: ${lookupError}` : 'No exact official posting URL in captured JD';
+      results.push({ posting_key: record.primary_key, status: needsResolution ? 'UNRESOLVED' : 'NOT_APPLICABLE', reason });
       enriched.push({ ...record, _text: text, _size: statSync(jdFile).size });
       continue;
     }

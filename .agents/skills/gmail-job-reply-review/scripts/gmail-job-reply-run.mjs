@@ -24,6 +24,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import {
   ActiveInterviewsLockError,
   assertInterviewProcessesPreserved,
+  IDENTITY_RE,
   readInterviewProcessSummary,
   validateActiveInterviews,
   withActiveInterviewsLock,
@@ -93,10 +94,6 @@ function requiredReceiptTargets(classification) {
     return ['register'];
   }
   return [];
-}
-
-function allowedReceiptTargets(classification) {
-  return requiredReceiptTargets(classification);
 }
 
 function registerIdentity(classification) {
@@ -207,7 +204,7 @@ function validateOpaqueId(value) {
 function validateIdentityKey(value) {
   if (value === undefined) return null;
   if (typeof value !== 'string'
-      || !/^(?:tracker:#\d+|action:[A-Za-z0-9._-]+|ambiguous:[A-Za-z0-9._-]+)$/.test(value)) {
+      || !IDENTITY_RE.test(value)) {
     throw new CliError('INVALID_ARGUMENT', 'Invalid --identity-key');
   }
   return value;
@@ -554,12 +551,19 @@ function summaryBaseline(document) {
   const linked = new Map(interviewSummaryGuards(document).map(guard => [guard.path, guard]));
   const files = runGit(['-C', gitRoot, 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', `${relative(gitRoot, dirname(ACTIVE_INTERVIEWS_PATH))}/*/process-summary.md`]);
   if (files.status !== 0) throw new CliError('GIT_COMMIT_FAILED', 'Cannot inspect existing process summaries');
-  const paths = new Set([...linked.keys(), ...files.stdout.split('\0').filter(Boolean).map(file => join(gitRoot, file))]);
-  return [...paths].map(path => {
-    const status = runGit(['-C', gitRoot, 'status', '--porcelain=v1', '--', relative(gitRoot, path)]);
-    if (status.status !== 0) throw new CliError('GIT_COMMIT_FAILED', 'Cannot inspect process-summary Git state');
-    return { path, expected_content: readFileSnapshot(path, true).content, linked: linked.has(path), dirty: Boolean(status.stdout.trim()) };
-  });
+  const paths = [...new Set([...linked.keys(), ...files.stdout.split('\0').filter(Boolean).map(file => join(gitRoot, file))])];
+  if (!paths.length) return [];
+  // One status call for every summary; -z entries are `XY path`, and a rename adds its source path.
+  const status = runGit(['-C', gitRoot, 'status', '--porcelain=v1', '-z', '--', ...paths.map(path => relative(gitRoot, path))]);
+  if (status.status !== 0) throw new CliError('GIT_COMMIT_FAILED', 'Cannot inspect process-summary Git state');
+  const entries = status.stdout.split('\0').filter(Boolean);
+  const dirty = new Set();
+  for (let index = 0; index < entries.length; index += 1) {
+    dirty.add(entries[index].slice(3));
+    if (/^[RC]/.test(entries[index])) index += 1;
+  }
+  return paths.map(path => ({ path, expected_content: readFileSnapshot(path, true).content, linked: linked.has(path),
+    dirty: dirty.has(relative(gitRoot, path)) }));
 }
 
 function commitInterviewDocument(guards, baselineSummaries = []) {
@@ -911,6 +915,26 @@ function archivePath(directory, runId) {
   return join(directory, `${runId}.json`);
 }
 
+// Whole-file copies prove a live run's receipts and guards. An archived run keeps the
+// receipts' decisions and single-line evidence, not copies of the workspace files, and
+// keeps the warning counts and their delta rather than the full before/after lists.
+const ARCHIVED_RECEIPT_FILE_FIELDS = ['file_content', 'applications_content', 'status_log_content'];
+const ARCHIVED_BASELINE_FILE_FIELDS = ['active_interviews_content', 'applications_content', 'status_log_content'];
+
+function stripFileContents(record) {
+  for (const field of ARCHIVED_BASELINE_FILE_FIELDS) delete record.workspace_baseline?.[field];
+  for (const summary of record.workspace_baseline?.interview_summaries ?? []) delete summary.expected_content;
+  for (const side of ['before', 'after']) delete record.verification?.[side]?.fingerprints;
+  for (const mailbox of Object.values(record.mailboxes ?? {})) {
+    for (const candidate of Object.values(mailbox.candidates ?? {})) {
+      for (const receipt of candidate.classification?.receipts ?? []) {
+        for (const field of ARCHIVED_RECEIPT_FILE_FIELDS) delete receipt[field];
+      }
+    }
+  }
+  return record;
+}
+
 function archiveFailed(run, reasonCode, status = 'aborted') {
   const record = structuredClone(run);
   record.status = status;
@@ -935,7 +959,7 @@ function archiveFailed(run, reasonCode, status = 'aborted') {
     ).length;
     delete record.workspace_baseline.status_log_line_counts;
   }
-  atomicWritePrivateJson(archivePath(FAILED_DIR, run.run_id), record);
+  atomicWritePrivateJson(archivePath(FAILED_DIR, run.run_id), stripFileContents(record));
 }
 
 function stateCursor(state, path) {
@@ -945,17 +969,28 @@ function stateCursor(state, path) {
   return parseIso(state.last_successful_run_at, `${basename(path)} cursor`);
 }
 
+// Gmail connectors do not all honor epoch-second after:/before: operands; one
+// returns an empty result for them, indistinguishable from an empty window.
+// Date operands work everywhere but are day-granular in an unspecified time
+// zone, so the query is a padded superset. stagePageCandidates enforces the
+// exact window from each result's received time.
+function gmailSearchDate(iso, dayOffset) {
+  const date = new Date(iso);
+  date.setUTCDate(date.getUTCDate() + dayOffset);
+  return date.toISOString().slice(0, 10).replaceAll('-', '/');
+}
+
 function mailboxTemplate(statePath, state, cutoffAt) {
   const priorCursor = stateCursor(state, statePath);
   const searchAfterAt = new Date(Date.parse(priorCursor) - OVERLAP_MS).toISOString();
-  const afterEpoch = Math.floor(Date.parse(searchAfterAt) / 1000);
-  const beforeEpoch = Math.floor(Date.parse(cutoffAt) / 1000) + 1;
+  const afterDate = gmailSearchDate(searchAfterAt, -1);
+  const beforeDate = gmailSearchDate(cutoffAt, 2);
   return {
     state_path: statePath,
     prior_cursor_at: priorCursor,
     search_after_at: searchAfterAt,
     scan_cutoff_at: cutoffAt,
-    required_query: `in:anywhere after:${afterEpoch} before:${beforeEpoch} -in:spam -in:trash`,
+    required_query: `in:anywhere after:${afterDate} before:${beforeDate} -in:spam -in:trash`,
     status: 'pending',
     candidates: {},
     pages: [],
@@ -965,9 +1000,8 @@ function mailboxTemplate(statePath, state, cutoffAt) {
 }
 
 function frozenCutoffIso() {
-  // Gmail's numeric before: operator is second-granular. Freeze at the end of
-  // the previous whole second so before:<next-second> exactly covers the
-  // declared cutoff instead of silently including a future fraction.
+  // Received times are second-granular. Freeze at the end of the previous whole
+  // second so the cutoff cannot silently include a future fraction.
   return new Date(Math.floor(Date.now() / 1000) * 1000 - 1).toISOString();
 }
 
@@ -1037,16 +1071,20 @@ function secondaryLegacyFloor(state) {
   return stateCursor(state, SECONDARY_STATE_PATH);
 }
 
-function candidateAlreadyProcessed(mailbox, candidate, state) {
+// Built once per page; the committed-ID sets hold up to a thousand entries each.
+function processedCandidateCheck(mailbox, state) {
   if (mailbox === 'primary') {
-    return new Set(state.processed_message_ids ?? []).has(candidate.opaque_id);
+    const processed = new Set(state.processed_message_ids ?? []);
+    return candidate => processed.has(candidate.opaque_id);
   }
-  const priorVersion = secondaryActualVersionMap(state).get(candidate.opaque_id);
-  if (priorVersion !== undefined) {
-    return Date.parse(priorVersion) >= Date.parse(candidate.received_at);
-  }
-  return secondaryLegacyTokens(state).has(candidate.opaque_id)
-    && Date.parse(secondaryLegacyFloor(state)) >= Date.parse(candidate.received_at);
+  const versions = secondaryActualVersionMap(state);
+  const legacyTokens = secondaryLegacyTokens(state);
+  const legacyFloor = Date.parse(secondaryLegacyFloor(state));
+  return candidate => {
+    const priorVersion = versions.get(candidate.opaque_id);
+    if (priorVersion !== undefined) return Date.parse(priorVersion) >= Date.parse(candidate.received_at);
+    return legacyTokens.has(candidate.opaque_id) && legacyFloor >= Date.parse(candidate.received_at);
+  };
 }
 
 function applicationRows(text) {
@@ -1271,7 +1309,7 @@ function validateCommitGate(run) {
     for (const candidate of Object.values(mailbox.candidates)) {
       const classification = candidate.classification;
       const requiredTargets = requiredReceiptTargets(classification);
-      const allowedTargets = allowedReceiptTargets(classification);
+      const allowedTargets = requiredReceiptTargets(classification);
       if (TRACKER_OUTCOMES[classification.disposition]) {
         assertArchivedOutcome(registerDocument, classification);
       }
@@ -1310,7 +1348,7 @@ function validateCommitGate(run) {
             );
           }
           if (receipt.file_content !== registerHash) {
-            throw new CliError('REGISTER_RECEIPT_STALE', `${candidate.key} register marker is absent`);
+            throw new CliError('REGISTER_RECEIPT_STALE', `${candidate.key} register or linked summaries changed after the receipt`);
           }
         } else {
           const trackerKey = trackerReceiptIdentity(classification);
@@ -1434,7 +1472,7 @@ function completedRecord(run, completedAt, syncCheck, after, delta, finalGate) {
     tracker_receipt_count: receipts.filter((item) => item.target === 'tracker').length,
     receipts,
   };
-  return record;
+  return stripFileContents(record);
 }
 
 function commitSummary(completed, recoveredTransaction) {
@@ -1469,9 +1507,20 @@ function applyTransaction(run) {
       || run.transaction.workspace_guards.length < 3) {
     throw new CliError('INVALID_TRANSACTION', 'Workspace guards are absent');
   }
-  for (const guard of run.transaction.workspace_guards) {
-    const snapshot = readFileSnapshot(guard.path, true);
-    if (snapshot.content !== guard.expected_content) {
+  const applied = run.transaction.state_targets.filter(target => existsSync(target.path)
+    && fileContent(target.path) === target.target_content).length;
+  // Once every cursor is written the run only needs archiving; a later workspace edit
+  // is someone else's change, not a reason to strand it.
+  if (applied < run.transaction.state_targets.length) {
+    for (const guard of run.transaction.workspace_guards) {
+      const snapshot = readFileSnapshot(guard.path, true);
+      if (snapshot.content === guard.expected_content) continue;
+      if (applied === 0 && !existsSync(archivePath(COMPLETED_DIR, run.run_id))) {
+        // Nothing was applied: return the run to verification so commit or abort can proceed.
+        run.phase = 'verification_failed';
+        delete run.transaction;
+        atomicWritePrivateJson(ACTIVE_PATH, run);
+      }
       throw new CliError('STATE_CONFLICT', 'Receipt source changed before cursor commit', {
         path: guard.path,
       });
@@ -1597,7 +1646,9 @@ function validatePageToken(value, label) {
 
 function stagePageCandidates(run, mailboxName, candidates) {
   const mailbox = run.mailboxes[mailboxName];
-  const state = readJson(mailbox.state_path);
+  const alreadyProcessed = processedCandidateCheck(mailboxName, readJson(mailbox.state_path));
+  const byOpaqueId = new Map();
+  for (const existing of Object.values(mailbox.candidates)) if (!byOpaqueId.has(existing.opaque_id)) byOpaqueId.set(existing.opaque_id, existing);
   const results = [];
   for (const candidate of candidates) {
     const received = Date.parse(candidate.received_at);
@@ -1606,12 +1657,11 @@ function stagePageCandidates(run, mailboxName, candidates) {
       results.push({ key: candidate.key, status: 'outside_frozen_window' });
       continue;
     }
-    if (candidateAlreadyProcessed(mailboxName, candidate, state)) {
+    if (alreadyProcessed(candidate)) {
       results.push({ key: candidate.key, status: 'previously_committed' });
       continue;
     }
-    const sameOpaqueId = Object.values(mailbox.candidates)
-      .find((existing) => existing.opaque_id === candidate.opaque_id);
+    const sameOpaqueId = byOpaqueId.get(candidate.opaque_id);
     if (sameOpaqueId && mailboxName === 'primary' && sameOpaqueId.key !== candidate.key) {
       throw new CliError(
         'RESULT_VERSION_CONFLICT',
@@ -1627,6 +1677,7 @@ function stagePageCandidates(run, mailboxName, candidates) {
       staged_at: nowIso(),
       classification: null,
     };
+    if (!byOpaqueId.has(candidate.opaque_id)) byOpaqueId.set(candidate.opaque_id, mailbox.candidates[candidate.key]);
     results.push({ key: candidate.key, status: 'staged' });
   }
   return results;
@@ -1817,7 +1868,7 @@ async function classify(options, descriptors) {
       mailbox: mailboxName,
       classified_count: classified,
       idempotent_count: idempotent,
-      register_markers: allowedReceiptTargets({
+      register_markers: requiredReceiptTargets({
         disposition,
         interview_process_identity: binding?.processIdentity ?? null,
       }).includes('register')
@@ -1875,7 +1926,6 @@ function refreshTrackerReceiptSnapshots(
   run,
   applicationsHash,
   statusLogHash,
-  statusLogLines,
   applicationRowsSnapshot,
   currentCounts,
 ) {
@@ -1966,7 +2016,7 @@ async function receipt(options, descriptors) {
       const identityKey = target === 'tracker'
         ? trackerReceiptIdentity(classification)
         : registerIdentity(classification);
-      if (!allowedReceiptTargets(classification).includes(target)) {
+      if (!requiredReceiptTargets(classification).includes(target)) {
         throw new CliError(
           'UNEXPECTED_RECEIPT',
           `${classification.disposition} does not accept a ${target} receipt`,
@@ -2063,7 +2113,6 @@ async function receipt(options, descriptors) {
         run,
         applicationsHash,
         statusLogHash,
-        statusLogLines,
         applicationRowsSnapshot,
         currentStatusLogCounts,
       );
@@ -2304,49 +2353,6 @@ async function status(options) {
   });
 }
 
-async function supersedeLedger(options) {
-  const runId = requiredOption(options, 'run-id');
-  const reasonCode = requiredOption(options, 'reason-code');
-  if (!/^[a-f0-9-]{36}$/.test(runId) || !/^[a-z0-9_-]{1,64}$/.test(reasonCode)) {
-    throw new CliError('INVALID_ARGUMENT', 'Invalid run ID or reason code');
-  }
-  ensureDirectories();
-  return withPipelineLock(ACTIVE_PATH, async () => {
-    if (existsSync(ACTIVE_PATH)) {
-      throw new CliError('LOCK_BUSY', 'Cannot migrate a ledger while a run is active');
-    }
-    const path = archivePath(COMPLETED_DIR, runId);
-    if (!existsSync(path)) throw new CliError('LEDGER_NOT_FOUND', `No completed ledger: ${runId}`);
-    const record = readJson(path);
-    const idempotent = record.authoritative === false
-      && record.superseded_reason_code === reasonCode;
-    if (record.verification) {
-      if (record.verification.before?.fingerprints) {
-        record.verification.before = compactWarningCapture(record.verification.before);
-      }
-      if (record.verification.after?.fingerprints) {
-        record.verification.after = compactWarningCapture(record.verification.after);
-      }
-      if (record.verification.delta) {
-        record.verification.delta = compactWarningDelta(record.verification.delta);
-      }
-    }
-    if (idempotent) {
-      atomicWritePrivateJson(path, record);
-      return { run_id: runId, authoritative: false, idempotent: true };
-    }
-    record.authoritative = false;
-    record.audit_status = 'superseded_pre_page_evidence';
-    record.superseded_reason_code = reasonCode;
-    record.superseded_at = nowIso();
-    record.page_evidence_complete = false;
-    record.content_classification_complete = null;
-    record.classification_complete = null;
-    atomicWritePrivateJson(path, record);
-    return { run_id: runId, authoritative: false, idempotent: false };
-  });
-}
-
 function help() {
   return {
     mailbox_transaction_options: '--career-ops-root PATH --interviews-file PATH [--state-root PATH]',
@@ -2360,7 +2366,6 @@ function help() {
       'gmail-job-reply-run.mjs commit --run-id ID --token TOKEN',
       'gmail-job-reply-run.mjs abort --run-id ID --token TOKEN --reason-code CODE',
       'gmail-job-reply-run.mjs status [--run-id ID --token TOKEN]',
-      'gmail-job-reply-run.mjs supersede-ledger --run-id ID --reason-code CODE',
       'gmail-job-reply-run.mjs check FILE',
       'gmail-job-reply-run.mjs prepare FILE CANDIDATE',
       'gmail-job-reply-run.mjs apply FILE CANDIDATE BASELINE_FILE',
@@ -2392,7 +2397,6 @@ async function main() {
     case 'commit': return commit(options);
     case 'abort': return abort(options);
     case 'status': return status(options);
-    case 'supersede-ledger': return supersedeLedger(options);
     default: throw new CliError('UNKNOWN_COMMAND', `Unknown command: ${command}`);
   }
 }

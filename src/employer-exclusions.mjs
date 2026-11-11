@@ -25,30 +25,46 @@ export function validateEmployerExclusionRules(rules) {
   return rules;
 }
 
-export function matchExcludedEmployer({ company = '', description = '' }, rules) {
+// Rules come from a loaded config object; validate and compile each array once.
+const compiledRules = new WeakMap();
+
+function compiledFor(rules) {
+  if (Array.isArray(rules) && compiledRules.has(rules)) return compiledRules.get(rules);
   validateEmployerExclusionRules(rules);
+  const compiled = rules.map(rule => ({
+    rule,
+    company: compile(rule.company_pattern),
+    attribution: compile(rule.attribution_line_pattern),
+    employer: compile(`^(?:${rule.company_pattern})(?:\\s*\\([^)]*\\))?$`),
+    signals: rule.jd_signal_patterns.map(compile),
+  }));
+  compiledRules.set(rules, compiled);
+  return compiled;
+}
+
+function statedEmployer(line) {
+  return line.match(/^(.{1,100}?) is building a (?:central )?pipeline of .{1,120}?\btalent\b/i)?.[1]
+    || line.match(/^(.{1,100}?) is hiring an? (?:(?!(?:to|for|with|using|not)\b)[A-Za-z0-9.+/#-]+ ){0,8}(?:engineer|developer|scientist|architect|manager|specialist|analyst|designer)\b/i)?.[1];
+}
+
+export function matchExcludedEmployer({ company = '', description = '' }, rules) {
+  const compiled = compiledFor(rules);
   const companyText = clean(company);
   const jd = String(description ?? '').replace(/\r/g, '');
-  const lines = jd.split('\n').map(clean).filter(Boolean);
+  const lines = jd.split('\n').map(clean).filter(Boolean).map(line => ({ line, employer: statedEmployer(line) }));
 
-  for (const rule of rules) {
-    if (compile(rule.company_pattern).test(companyText)) {
+  for (const { rule, company: companyPattern, attribution: attributionPattern, employer: employerPattern, signals: signalPatterns } of compiled) {
+    if (companyPattern.test(companyText)) {
       return { id: rule.id, reason: rule.reason, source: 'company', evidence: `Company: ${companyText}` };
     }
 
-    const attribution = lines.find(line => {
-      if (compile(rule.attribution_line_pattern).test(line)) return true;
-      const pipelineEmployer = line.match(/^(.{1,100}?) is building a (?:central )?pipeline of .{1,120}?\btalent\b/i)?.[1];
-      const hiringEmployer = line.match(/^(.{1,100}?) is hiring an? (?:(?!(?:to|for|with|using|not)\b)[A-Za-z0-9.+/#-]+ ){0,8}(?:engineer|developer|scientist|architect|manager|specialist|analyst|designer)\b/i)?.[1];
-      const employer = pipelineEmployer || hiringEmployer;
-      return employer && compile(`^(?:${rule.company_pattern})(?:\\s*\\([^)]*\\))?$`).test(employer);
-    });
+    const attribution = lines.find(({ line, employer }) => attributionPattern.test(line) || (employer && employerPattern.test(employer)))?.line;
     if (attribution) {
       return { id: rule.id, reason: rule.reason, source: 'jd_attribution', evidence: `JD attribution: ${attribution}` };
     }
 
-    const signals = rule.jd_signal_patterns
-      .map(pattern => jd.match(compile(pattern))?.[0])
+    const signals = signalPatterns
+      .map(pattern => jd.match(pattern)?.[0])
       .filter(Boolean)
       .map(clean);
     if (signals.length >= rule.required_jd_signal_count) {

@@ -223,6 +223,21 @@ print(json.dumps([match_excluded_employer(item['company'], item['description'], 
 });
 
 
+test('a company name followed by CJK text matches the same rule in both runtimes', () => {
+  const cases = [{ company: 'Amazon中国', description: '' }, { company: 'AWS云', description: '' }, { company: 'Amazon', description: '' }];
+  const helper = `
+import json, sys
+sys.path.insert(0, sys.argv[1])
+from employer_exclusions import match_excluded_employer
+payload = json.load(sys.stdin)
+print(json.dumps([(match_excluded_employer(item['company'], item['description'], payload['rules']) or {}).get('id') for item in payload['cases']]))
+`;
+  const python = JSON.parse(execFileSync('python3', ['-c', helper, path.join(ROOT, 'src/adapters')], { input: JSON.stringify({ rules: RULES, cases }), encoding: 'utf8' }));
+  const javascript = cases.map(item => matchExcludedEmployer(item, RULES)?.id ?? null);
+  assert.deepEqual(python, javascript);
+  assert.deepEqual(javascript, ['amazon-aws', 'amazon-aws', 'amazon-aws']);
+});
+
 test('explicit empty employer policy is allowed in both runtimes; missing policy still fails', () => {
   assert.deepEqual(validateEmployerExclusionRules([]), []);
   assert.equal(matchExcludedEmployer({ company: 'Example' }, []), null);

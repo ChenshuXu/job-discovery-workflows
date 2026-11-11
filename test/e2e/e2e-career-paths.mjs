@@ -52,7 +52,7 @@ mkdirSync(paths.jdsRoot,{recursive:true});
 writeFileSync(path.join(paths.jdsRoot, 'discovery-path-e2e-'+input.key.replace(/[^A-Za-z0-9._-]/g,'-')+'.md'),input.jd);
 const scanner = await import(pathToFileURL(path.join(input.codeRoot,'scan.mjs')).href);
 await scanner.appendToScanHistory([{url:input.url,company:'Fixture Company',title:'Backend Engineer',location:'Seattle, WA',source:'e2e',description:input.jd}], '2026-10-03', 'daily-scan:path-e2e');
-const observations = ['skipped_title', 'skipped_location', 'skipped_age', 'skipped_no_apply_control', 'added', 'skipped_expired'];
+const observations = ['skipped_title', 'skipped_location', 'skipped_age', 'skipped_no_apply_control', 'added', 'skipped_expired', 'skipped_content', 'skipped_visa', 'skipped_country_eligibility', 'skipped_experience'];
 for (const [i, status] of observations.entries()) {
   await scanner.appendToScanHistory([{url:input.url.replace(/900[12]$/, String(9100+i)),company:'Fixture Company',title:'Backend Engineer',location:'Seattle, WA',source:'e2e'}], '2026-10-03', status);
 }
@@ -129,7 +129,7 @@ export function runPathsE2E({ outRoot, sourceRoot } = {}) {
     check('resume output stays in data root', result.resolved.targetPath.startsWith(path.join(activeDataRoot,'output')+path.sep));
     check('candidate CV comes from selected data root', result.cv.roles[0].bullets[0].text === 'Built distributed services using Java.');
     check('history includes committed exact posting key', result.history.some(([found]) => found === key));
-    check('observational rows never suppress rediscovery', [9100,9101,9102,9103].every(id=>!result.history.some(([found])=>found==='greenhouse:fixture:'+id)));
+    check('observational rows never suppress rediscovery', [9100,9101,9102,9103,9106,9107,9108,9109].every(id=>!result.history.some(([found])=>found==='greenhouse:fixture:'+id)));
     check('committed and terminal history still suppress duplicates', [9104,9105].every(id=>result.history.some(([found])=>found==='greenhouse:fixture:'+id)));
     const trackerText = readFileSync(trackerFile,'utf8');
     const parser = require(path.join(codeRoot, 'tracker-parse.mjs'));

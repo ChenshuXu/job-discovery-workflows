@@ -48,7 +48,7 @@ try {
       if (plan.research_version === 1) budgetPart.results[0].research.company = inflated.acquired[0].company;
       fx.write(budgetPartFile, budgetPart);
     }
-    const rejected = fx.run(`reject-keywords-${name}`, script('merge-worker-results.mjs'), ['--run', testedRun, '--worker', worker], { expect: 1 });
+    const rejected = fx.run(`reject-keywords-${name}`, script('merge-worker-results.mjs'), ['--run', testedRun, '--worker', worker], { independentCase: true, expect: 1 });
     fx.check(`${name} fails for keyword/budget contract without data writes`,
       /keywords|exceeds 12000/.test(rejected.stderr) && manifest(fx.dataRoot) === before);
     fx.write(acquisitionFile, acquisition); fx.write(partFile, original);
@@ -84,7 +84,7 @@ if(summary.result_schema_version!==6||body.includes('## Keywords extracted'))thr
 console.log(JSON.stringify({version:summary.result_schema_version,rule_hashes_verified:r.historical_rule_snapshots_verified}));`);
   const historicalBefore = manifest(historical);
   fx.run('read-v6', inspect, [historical]);
-  fx.run('reject-v6-new-merge', script('merge-worker-results.mjs'), ['--run', historical, '--worker', worker], { expect: 1 });
+  fx.run('reject-v6-new-merge', script('merge-worker-results.mjs'), ['--run', historical, '--worker', worker], { independentCase: true, expect: 1 });
   const oldPlanRejected = fx.run('reject-v6-new-plan', script('plan-scan-evaluations.mjs'), ['--run', historical, '--career-ops', fx.codeRoot], { expect: 1 });
   fx.check('v6 planning stops at schema gate', oldPlanRejected.stderr.includes('result_schema_version must be 8'));
   fx.check('historical v6 remains byte-identical', manifest(historical) === historicalBefore);

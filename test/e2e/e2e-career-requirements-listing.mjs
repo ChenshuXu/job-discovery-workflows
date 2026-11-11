@@ -63,7 +63,7 @@ try {
     ['total-budget', report => { report.requirement_importance = Array.from({ length: 80 }, (_, i) => ({ requirement: `Requirement ${i + 1}`, jd_signal: 'Required:', evidence: 'structural', importance: 'high', match: 'partial' })); }],
   ]) {
     const bad = JSON.parse(original); mutate(bad.results.find(item => item.posting_key === postingKey(urls[0])).report); fx.write(partFile, bad);
-    const rejected = fx.run(`reject-${name}`, script('merge-worker-results.mjs'), ['--run', run, '--worker', worker], { expect: 1 });
+    const rejected = fx.run(`reject-${name}`, script('merge-worker-results.mjs'), ['--run', run, '--worker', worker], { independentCase: true, expect: 1 });
     fx.check(`${name} rejected specifically without Career-Ops mutation`, /requirement_importance|exceeds 12000/.test(rejected.stderr) && manifest(fx.dataRoot) === before);
     fx.write(partFile, original);
   }
@@ -92,7 +92,7 @@ for(const item of r.candidates){const body=renderCompactReport({result:item,reco
 console.log('Historical v7 remains v7 without synthesized requirements');`);
   const oldBefore = manifest(oldRoot);
   fx.run('read-v7-without-migration', readOld, [oldRoot]);
-  fx.run('reject-v7-new-merge', script('merge-worker-results.mjs'), ['--run', oldRoot, '--worker', worker], { expect: 1 });
+  fx.run('reject-v7-new-merge', script('merge-worker-results.mjs'), ['--run', oldRoot, '--worker', worker], { independentCase: true, expect: 1 });
   fx.check('historical bytes unchanged', manifest(oldRoot) === oldBefore);
   const missingRoot = path.join(fx.root, 'missing-interface', path.basename(run)); cpSync(run, missingRoot, { recursive: true });
   const identityModule = path.join(fx.codeRoot, 'listing-fingerprint.mjs'), identitySource = readFileSync(identityModule, 'utf8');

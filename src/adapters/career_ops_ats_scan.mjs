@@ -4,10 +4,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { careerOpsCodeRoot } from '../career-ops-paths.mjs';
-import { postingKey } from '../posting-identity.mjs';
+import { postingKey, safePostingKey } from '../posting-identity.mjs';
 import { matchExcludedEmployer, validateEmployerExclusionRules } from '../employer-exclusions.mjs';
 import { validateJd } from '../run-contract.mjs';
-import { fetchOfficialPosting, HttpClient, mapLimit } from './google_ats_direct_scan.mjs';
+import { fetchOfficialPosting, HttpClient, mapLimit } from './official_ats_posting.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const ID = 'official-ats';
@@ -19,6 +19,25 @@ const SITES = {
 const readJson = file => JSON.parse(readFileSync(file, 'utf8'));
 const writeJson = (file, value) => writeFileSync(file, JSON.stringify(value, null, 2) + '\n', { flag: 'wx' });
 const line = value => String(value ?? '').replace(/[\r\n]+/g, ' ').trim();
+
+// Greenhouse boards embedded on a company site carry the requisition in gh_jid, and the
+// upstream offer names the board. Together they give the exact board posting URL.
+// A date-only value (JSON-LD datePosted) can mean any time that day: it is inside the
+// window if the day's end is, and in the future only if the day's start is.
+export function postedWithinWindow(postedAt, now, maxHours) {
+  const text = String(postedAt ?? '').trim();
+  const earliest = Date.parse(text);
+  if (!Number.isFinite(earliest)) return false;
+  const latest = /^\d{4}-\d{2}-\d{2}$/.test(text) ? earliest + 24 * 3600000 - 1 : earliest;
+  return latest >= now.getTime() - maxHours * 3600000 && earliest <= now.getTime() + 300000;
+}
+
+export function officialOfferUrl(offer) {
+  const requisition = new URL(offer.url).searchParams.get('gh_jid');
+  return offer.source === 'greenhouse-full' && /^\d+$/.test(requisition ?? '') && offer.company
+    ? `https://job-boards.greenhouse.io/${encodeURIComponent(offer.company)}/jobs/${requisition}`
+    : offer.url;
+}
 
 export function loadCareerAtsConfig(file = path.join(ROOT, 'config/official-ats.json')) {
   const config = readJson(file);
@@ -47,7 +66,7 @@ function parseArgs(argv) {
   return options;
 }
 
-export async function runCareerAts(options) {
+async function runCareerAts(options) {
   const config = loadCareerAtsConfig(options.configFile);
   const codeRoot = careerOpsCodeRoot(options.careerRoot);
   const scanner = path.join(codeRoot, 'scan-ats-full.mjs');
@@ -91,13 +110,13 @@ export async function runCareerAts(options) {
     const seen = new Set();
     await mapLimit(upstream.offers, config.official_fetch_concurrency, async offer => {
       try {
-        const key = postingKey(offer.url);
+        const url = officialOfferUrl(offer);
+        const key = postingKey(url);
         if (!key || !config.ats.includes(key.split(':')[0])) throw new Error('offer has no supported exact ATS identity');
         if (seen.has(key)) { audit.push({ posting_key: key, status: 'DUPLICATE' }); return; }
         seen.add(key);
-        const posting = await fetchOfficialPosting({ link: offer.url }, { ats_sites: config.ats.map(id => ({ id, domains: SITES[id] })) }, http, now);
-        const posted = Date.parse(posting.posted_at);
-        if (!Number.isFinite(posted) || posted < now.getTime() - config.max_post_age_hours * 3600000 || posted > now.getTime() + 300000) {
+        const posting = await fetchOfficialPosting({ link: url }, { ats_sites: config.ats.map(id => ({ id, domains: SITES[id] })) }, http, now);
+        if (!postedWithinWindow(posting.posted_at, now, config.max_post_age_hours)) {
           audit.push({ posting_key: key, status: 'SKIPPED_AGE', posted_at: posting.posted_at || null }); return;
         }
         if (!posting.company || !posting.title || validateJd(posting.description, key).length) throw new Error('official JD is incomplete or blocked');
@@ -108,7 +127,7 @@ export async function runCareerAts(options) {
           'Workplace Type': posting.workplace_type, 'Workplace Type Source': posting.workplace_type_source, 'Structured Remote Signal': posting.structured_remote_signal,
           'Posted': posting.posted_at, 'Source': 'Career-Ops official ATS', 'Discovery Run': options.runId };
         const markdown = `# ${line(posting.company)} - ${line(posting.title)}\n\n${Object.entries(fields).map(([name, value]) => `**${name}:** ${line(value)}`).join('\n')}\n\n## Job Description\n\n${posting.description.trim()}\n`;
-        const file = `jobs/${key.replace(/[^A-Za-z0-9._-]/g, '-')}.md`;
+        const file = `jobs/${safePostingKey(key)}.md`;
         writeFileSync(path.join(source, file), markdown, { flag: 'wx' });
         captured.push({ posting_key: key, url: posting.canonical_url, file });
         audit.push({ posting_key: key, status: 'CAPTURED', file });

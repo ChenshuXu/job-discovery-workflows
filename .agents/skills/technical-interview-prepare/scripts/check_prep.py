@@ -119,8 +119,8 @@ def check(paths):
                 issue("duplicate_block_id", path, number, block)
             seen_blocks[block] = number
         previous, width, question_ids = None, None, {}
-        question_header = False
         priority_order = -1
+        heading_seen = False
         for number, line in prose_lines(text):
             if re.search(r"\{len\([^{}\n]*\)\}", INLINE_CODE.sub("", line)):
                 issue("unrendered_count", path, number, "Reader text contains an unevaluated count")
@@ -128,20 +128,18 @@ def check(paths):
             separator = bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells)
             if separator and previous and width is None:
                 width = len(previous)
-                priority_order = -1
                 totals["tables"] += 1
-                question_header |= bool(re.search(r"\bQ-ID\b|题号", previous[0], re.I))
+            # Preparation questions are checkbox tasks only; tables never carry Q-IDs.
+            question_cell = ""
             if cells and width is not None:
                 if len(cells) != width:
                     issue("table_columns", path, number, f"Expected {width} cells; found {len(cells)}")
-                question_cell = cells[0]
             else:
                 width = None
-                task = re.match(r"^\s*[-*+] (?:\[[ xX]\] )?(.+)$", line)
+                task = re.match(r"^\s*[-*+] \[[ xX]\] (.+)$", line)
                 question_cell = task.group(1) if task else ""
-                question_header |= bool(task and re.match(r"Q(?:[-_\d]|\b)", question_cell, re.I))
                 if re.match(r"^ {0,3}#{1,6}\s", line):
-                    priority_order = -1
+                    heading_seen = True
             question = re.match(r"^[*_`]*Q-?(\d+)\b", question_cell, re.I)
             if question:
                 identifier = f"Q{int(question.group(1))}"
@@ -150,14 +148,25 @@ def check(paths):
                     issue("duplicate_question_id", path, number,
                           f"{identifier}; first at line {question_ids[identifier]}")
                 question_ids[identifier] = number
-                priority = re.search(r"/\s*(优先|接着|有余力)(?:准备|再看)?\s*(?:[:：/]|$)", question_cell)
+                block = BLOCK.search(INLINE_CODE.sub("", line))
+                if not block:
+                    issue("missing_task_block_id", path, number, f"{identifier}: task line has no ^q block ID")
+                elif not re.fullmatch(rf"q0*{int(question.group(1))}", block.group(1), re.I):
+                    issue("task_block_mismatch", path, number, f"{identifier}: block ^{block.group(1)}")
+                priority =re.search(r"/\s*(优先|接着|有余力)(?:准备|再看)?\s*(?:[:：/]|$)", question_cell)
                 if priority:
                     rank = ("优先", "接着", "有余力").index(priority.group(1))
+                    # Round-group headings share their chapter's order: a heading opens a new
+                    # scope only when the next ranked task restarts at 1 or carries no number.
+                    sequence = re.search(r"/\s*(?:优先|接着|有余力)(?:准备|再看)?\s*[:：]\s*(\d+)\s*·", question_cell)
+                    if heading_seen and (not sequence or int(sequence.group(1)) == 1):
+                        priority_order = -1
+                    heading_seen = False
                     if rank < priority_order:
                         issue("preparation_order", path, number,
                               f"{identifier}: {priority.group(1)} appears after a lower-priority question")
                     priority_order = max(priority_order, rank)
-            elif re.match(r"^[*_`]*Q(?:[-_\d]|\b)", question_cell, re.I) and not separator:
+            elif re.match(r"^[*_`]*Q(?:[-_\d]|\b)", question_cell, re.I):
                 issue("unrecognized_question_id", path, number, question_cell)
             previous = cells
             for destination, wiki in local_links(line):
@@ -219,10 +228,8 @@ def check(paths):
                         continue
                     if fragment not in target_anchors:
                         issue("missing_source_anchor", path, number, f"{target}#{fragment}")
-        if question_header and not question_ids:
-            issue("no_question_ids", path, 0, "Question table found but no question IDs recognized")
     if not paths:
-        issue("usage", "", 0, "Usage: check_prep.py PREP.md [EXTRA_READER_DOC.md ...] or --self-test")
+        issue("usage", "", 0, "Usage: check_prep.py PREP.md EVIDENCE.md [EXTRA_READER_DOC.md ...] or --self-test")
     return dict(status="FAIL" if issues else "PASS", scope="mechanical_only", checks=totals,
                 not_checked=["claim accuracy", "question coverage", "frequency correctness", "search completion"],
                 issues=issues)
@@ -277,42 +284,40 @@ Candidates: {len(people)}
         result = check([bad])
         codes = {item["code"] for item in result["issues"]}
         assert codes == {"temporary_path", "duplicate_source_anchor", "local_link_not_file",
-                         "missing_source_anchor", "duplicate_question_id", "table_columns", "unrendered_count"}, result
+                         "missing_source_anchor", "table_columns", "unrendered_count"}, result
         assert sum(item["code"] == "temporary_path" for item in result["issues"]) == 5
         assert check([good, bad])["status"] == "FAIL"
         assert check([folder / "missing.md"])["issues"][0]["code"] == "document_unreadable"
         probe = folder / "question-ids.md"
-        probe.write_text('| Q-ID | Question |\n| --- | --- |\n| Q-001 | first |\n| Q002 | second |\n')
-        assert check([probe])["status"] == "PASS"
-        assert check([probe])["checks"]["question_ids"] == 2
-        probe.write_text(probe.read_text().replace('Q002', 'Q001'))
-        assert any(i['code'] == 'duplicate_question_id' for i in check([probe])['issues'])
-        probe.write_text('| Q-ID | Question |\n| --- | --- |\n| Q_001 | malformed |\n')
-        assert {i['code'] for i in check([probe])['issues']} == {'unrecognized_question_id', 'no_question_ids'}
-        probe.write_text('| Q-ID | Question |\n| --- | --- |\n')
-        assert check([probe])['issues'][0]['code'] == 'no_question_ids'
-        probe.write_text('# Acceptance\nNo question table in this auxiliary document.\n')
-        assert check([probe])['status'] == 'PASS'
-        header = '| Q-ID / 顺序 / 理由 | Question |\n| --- | --- |\n'
-        rows = ['| Q020 / 优先：本轮要求 | first |\n',
-                '| Q003 / 接着准备：相关 | second |\n',
-                '| Q002 / 有余力再看：补充 | third |\n']
-        probe.write_text(header + ''.join(rows))
-        assert check([probe])['status'] == 'PASS'  # IDs are stable, not ranks.
-        probe.write_text(header + rows[0] + rows[2] + rows[1])
-        assert [i['code'] for i in check([probe])['issues']] == ['preparation_order']
-        probe.write_text(header + rows[2] + rows[0] + rows[1])
-        assert len(check([probe])['issues']) == 2
-        probe.write_text(header + rows[2] + '\n## Next round\n' + header + rows[0])
-        assert check([probe])['status'] == 'PASS'  # Each round/table has its own order.
-        probe.write_text('### Coding\n- [ ] Q002 / 优先准备：first\n\n  Details.\n\n'
-                         '- [x] Q001 / 接着准备：second\n\n### BQ\n- [X] Q003 / 优先准备：third\n')
-        assert check([probe])['status'] == 'PASS'
+
+        def codes_of(text):
+            probe.write_text(text)
+            return [i['code'] for i in check([probe])['issues']]
+
+        task = '- [ ] {} / {}：{} · item ^{}\n\n'
+        first, second, third = (task.format('Q020', '优先准备', 1, 'q020'),
+                                task.format('Q003', '接着准备', 2, 'q003'),
+                                task.format('Q002', '有余力再看', 3, 'q002'))
+        assert codes_of(first + second + third) == []  # IDs are stable, not ranks.
+        probe.write_text(first + second + third)
         assert check([probe])['checks']['question_ids'] == 3
-        probe.write_text(probe.read_text() + header + '| Q002 | duplicate in table |\n')
-        assert [i['code'] for i in check([probe])['issues']] == ['duplicate_question_id']
-        probe.write_text('- [ ] Q001 / 有余力再看：later\n\n- [x] Q002 / 优先准备：earlier\n')
-        assert [i['code'] for i in check([probe])['issues']] == ['preparation_order']
+        assert codes_of(first + third + second) == ['preparation_order']
+        assert codes_of(third + first + second) == ['preparation_order', 'preparation_order']
+        # Round-group headings continue the chapter's numbering, so an inversion across them fails.
+        assert codes_of('## Coding\n\n### Group A\n\n' + task.format('Q002', '有余力再看', 1, 'q002')
+                        + '### Group B\n\n' + task.format('Q020', '优先准备', 2, 'q020')) == ['preparation_order']
+        # A new chapter restarts numbering at 1 and gets its own order.
+        restart = task.format('Q030', '优先准备', 1, 'q030')
+        assert codes_of('## Coding\n\n' + third + '## BQ\n\n' + restart) == []
+        assert codes_of('- [x] Q-001 / 优先准备：1 · a ^q001\n\n- [X] Q1 / 接着准备：2 · b ^q1\n') == [
+            'duplicate_question_id']
+        assert codes_of('- [ ] Q_001 / 优先准备：1 · malformed ^q001\n') == ['unrecognized_question_id']
+        assert codes_of('- [ ] Q004 / 优先准备：1 · no block\n') == ['missing_task_block_id']
+        assert codes_of('- [ ] Q004 / 优先准备：1 · wrong block ^q040\n') == ['task_block_mismatch']
+        # Tables and plain index bullets are not preparation tasks.
+        assert codes_of('| Q-ID | Question |\n| --- | --- |\n| Q001 | a |\n| Q001 | b |\n\n'
+                        '- Q001 → Q002 merged ^m001\n- Q001 again\n') == []
+        assert codes_of('# Acceptance\nNo questions in this auxiliary document.\n') == []
         (folder / '.obsidian').mkdir()
         other = folder / 'evidence folder/source.md'
         other.write_text('## 来源详情\n\nSource. ^s-one\n\n[[question-ids#^q001|返回题目]]\n')
@@ -328,7 +333,7 @@ Candidates: {len(people)}
                          'Duplicate. ^q001\n')
         assert {i['code'] for i in check([probe])['issues']} == {
             'missing_block_id', 'local_link_not_file', 'missing_heading', 'duplicate_block_id'}
-    return dict(status="PASS", scope="mechanical_self_test", cases="valid links/tables/code and negative checks")
+    return dict(status="PASS", scope="mechanical_self_test", cases="valid links/tables/tasks/code and negative checks")
 
 
 if __name__ == "__main__":

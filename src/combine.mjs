@@ -4,11 +4,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadRunProfile } from './adapter-registry.mjs';
 import { employmentTypeDisplay, employmentTypeValues } from './employment-type.mjs';
-import { legacyPostingKey, matchesStoredPostingKey, normalizePostingKeys, postingKey, primaryPostingKey, samePosting } from './posting-identity.mjs';
+import { legacyPostingKey, matchesStoredPostingKey, normalizePostingKeys, postingKey, primaryPostingKey, samePosting, safePostingKey } from './posting-identity.mjs';
 
-const arg = name => process.argv[process.argv.indexOf(name) + 1];
+const arg = name => { const index = process.argv.indexOf(name); return index < 0 ? undefined : process.argv[index + 1]; };
 const field = (text, name) => text.match(new RegExp(`^\\*\\*${name}:\\*\\*[ \\t]*([^\\r\\n]*)\\r?$`, 'mi'))?.[1]?.trim() ?? '';
-const safeKey = key => String(key).replace(/[^A-Za-z0-9._-]/g, '-');
 
 function setMarkdownField(text, name, value) {
   const line = `**${name}:** ${value}`;
@@ -33,7 +32,7 @@ function withMergedMetadata(text, record, runId) {
 
 function files(dir) {
   if (!existsSync(dir)) return [];
-  return readdirSync(dir).filter(name => name.endsWith('.md') && name !== 'index.md').map(name => path.join(dir, name));
+  return readdirSync(dir).filter(name => name.endsWith('.md')).map(name => path.join(dir, name));
 }
 
 function summary(runRoot, adapter) {
@@ -57,16 +56,30 @@ function summary(runRoot, adapter) {
 }
 
 export function sourceRecord(runRoot, adapter, file) {
-  const text = readFileSync(file, 'utf8');
-  const url = field(text, 'URL');
-  const declaredKey = field(text, 'Posting Key');
-  const parsedKey = postingKey(url);
+  let text = readFileSync(file, 'utf8');
+  let url = field(text, 'URL');
+  let declaredKey = field(text, 'Posting Key');
+  let parsedKey = postingKey(url);
+  // Old captures can contain a tracking token mistaken for a requisition.
+  if (!parsedKey && adapter === 'jobright' && /^https?:\/\/(?:www\.)?ziprecruiter\.com\/(?:kn|ekn)\//i.test(url)) {
+    const fallbackUrl = field(text, 'Jobright URL');
+    const fallbackKey = postingKey(fallbackUrl);
+    const sourceId = field(text, 'Source Job ID');
+    const legacy = legacyPostingKey(url);
+    if (!/^[a-f0-9]{24}$/i.test(sourceId) || fallbackKey !== `jobright:jobright.ai:${sourceId.toUpperCase()}`
+        || !declaredKey.startsWith('generic:ziprecruiter.com:') || !legacy?.endsWith(declaredKey.slice('generic:ziprecruiter.com:'.length))) {
+      throw new Error(`${path.relative(runRoot, file)} captured redirect has conflicting posting identity`);
+    }
+    text = setMarkdownField(text, 'Original Job URL', url);
+    url = fallbackUrl;
+    parsedKey = fallbackKey;
+    declaredKey = fallbackKey;
+  }
   if (!parsedKey) throw new Error(`${path.relative(runRoot, file)} URL has no parser-v2 exact posting identity`);
   if (declaredKey && !matchesStoredPostingKey(url, declaredKey, { identityParserVersion: 2 }) && declaredKey !== legacyPostingKey(url)) {
     throw new Error(`${path.relative(runRoot, file)} posting key contradicts URL identity`);
   }
   const key = parsedKey;
-  if (!url) throw new Error(`${path.relative(runRoot, file)} has no exact posting identity`);
   const linkedinId = field(text, 'LinkedIn Job ID') || url.match(/linkedin\.com\/jobs\/view\/(?:[^/?#]*-)?(\d+)/i)?.[1] || null;
   const location = field(text, 'Location');
   const employmentType = field(text, 'Employment Type') || 'unknown';
@@ -158,7 +171,7 @@ export function writeAcquisition(runRoot, profile, adapterOutcomes, records, det
   rmSync(jobsRoot, { recursive: true, force: true });
   mkdirSync(jobsRoot, { recursive: true });
   const acquired = records.map(record => {
-    const jdPath = `jobs/${safeKey(record.primary_key)}.md`;
+    const jdPath = `jobs/${safePostingKey(record.primary_key)}.md`;
     writeFileSync(path.join(runRoot, jdPath), withMergedMetadata(record._text, record, path.basename(runRoot)));
     const { _text, _size, ...publicRecord } = record;
     return { ...publicRecord, jd_path: jdPath };

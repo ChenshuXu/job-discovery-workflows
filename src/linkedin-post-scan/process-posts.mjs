@@ -42,6 +42,8 @@ function exactOpportunity(post) {
 export function processCapturedPosts(db, { runId, queryKey, posts, config }) {
   const counts = { observed: 0, unchanged: 0, tombstoned: 0, exact_jobs: 0, outreach_ready: 0, review: 0, excluded: 0, identity_review: [], errors: [] };
   for (let post of posts ?? []) {
+    // Each post is stored all-or-nothing, so a post whose routing failed is new again next time.
+    db.exec('SAVEPOINT post');
     try {
       const route = required(post.decision?.route, 'decision.route');
       counts.observed += 1;
@@ -93,7 +95,10 @@ export function processCapturedPosts(db, { runId, queryKey, posts, config }) {
       }
       throw new Error(`unsupported route: ${route}`);
     } catch (error) {
+      db.exec('ROLLBACK TO post');
       counts.errors.push({ post_urn: post?.post_urn ?? null, error: error.message, raw_decision: post?.decision ?? null });
+    } finally {
+      db.exec('RELEASE post');
     }
   }
   return counts;

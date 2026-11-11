@@ -133,6 +133,33 @@ test('terminalization preserves the exact rejected payload and changes only the 
   assert.throws(() => failWorkerResult(run, 'worker-1', 'b:2', attempts), /already finalized/);
 });
 
+test('a terminal failure keeps run context once in the worker ledger, and older embedded context still validates', () => {
+  const run = fixture();
+  const file = path.join(run, 'results/worker-1.part-1.json');
+  const artifact = JSON.parse(readFileSync(file));
+  for (const evidence of ['Missing initial evidence.', 'Missing second evidence.']) {
+    artifact.results[0].level_evidence = `JD: "${evidence}"`;
+    writeFileSync(file, JSON.stringify(artifact));
+    assert.equal(validatePartFromCli(run).status, 1);
+  }
+  const attempts = loadDailyScanRuntime().failure.per_job_retry_limit + 1;
+  const failed = failWorkerResult(run, 'worker-1', 'a:1', attempts).result;
+  for (const field of ['assignments_content', 'acquisition_content', 'validator_content']) {
+    assert.equal(field in failed.validation_evidence, false, `${field} is not repeated on the failed item`);
+  }
+  assert.doesNotThrow(() => validateWorkerParts(run, 'worker-1'));
+  // A part written before this change embeds the same context; it must still load.
+  const ledger = JSON.parse(readFileSync(validationEvidenceFile(run)));
+  const older = JSON.parse(readFileSync(file));
+  Object.assign(older.results[0].validation_evidence, {
+    assignments_content: ledger.assignments_content, acquisition_content: ledger.acquisition_content, validator_content: ledger.validator_content });
+  writeFileSync(file, JSON.stringify(older));
+  assert.doesNotThrow(() => validateWorkerParts(run, 'worker-1'));
+  older.results[0].validation_evidence.acquisition_content = 'changed';
+  writeFileSync(file, JSON.stringify(older));
+  assert.throws(() => validateWorkerParts(run, 'worker-1'), /context or JD changed/);
+});
+
 test('terminalization requires an observed changed rejected evaluation, not an asserted attempts count', () => {
   const run = fixture();
   const file = path.join(run, 'results/worker-1.part-1.json');
@@ -190,6 +217,78 @@ test('a successful repair is validated and merged without waiting for a second r
   assert.equal(validatePartFromCli(run).status, 0);
   assert.equal(readFileSync(validationEvidenceFile(run), 'utf8'), evidenceBefore);
   assert.equal(mergeWorkerResults(run, 'worker-1').output.results[0].level_signal, 'target');
+});
+
+function exhaustRetryBudget(run) {
+  const file = path.join(run, 'results/worker-1.part-1.json');
+  const part = JSON.parse(readFileSync(file));
+  const valid = part.results[0].level_evidence;
+  for (const quote of ['first', 'second']) {
+    part.results[0].level_evidence = `JD: "Missing ${quote} evidence."`;
+    writeFileSync(file, JSON.stringify(part));
+    assert.equal(validatePartFromCli(run).status, 1);
+  }
+  return { file, part, valid };
+}
+
+test('a passing repair after the retry budget is spent is refused and not recorded as a rejection', () => {
+  const run = fixture();
+  const { file, part, valid } = exhaustRetryBudget(run);
+  const before = readFileSync(validationEvidenceFile(run), 'utf8');
+  part.results[0].level_evidence = valid;
+  writeFileSync(file, JSON.stringify(part));
+  const result = validatePartFromCli(run);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr + result.stdout, /retry budget/);
+  assert.equal(readFileSync(validationEvidenceFile(run), 'utf8'), before);
+  assert.throws(() => mergeWorkerResults(run, 'worker-1'), /retry budget/);
+});
+
+test('a spent budget always leaves a terminal exit that preserves the last recorded rejection', () => {
+  for (const next of ['valid', 'invalid']) {
+    const run = fixture();
+    const { file, part, valid } = exhaustRetryBudget(run);
+    part.results[0].level_evidence = next === 'valid' ? valid : 'JD: "Missing third evidence."';
+    writeFileSync(file, JSON.stringify(part));
+    assert.equal(validatePartFromCli(run).status, 1);
+    const ledger = JSON.parse(readFileSync(validationEvidenceFile(run)));
+    assert.equal(ledger.failures['a:1'].attempts.length, 2, next);
+    const failed = failWorkerResult(run, 'worker-1', 'a:1', 2);
+    assert.equal(failed.result.status, 'FAILED');
+    assert.match(failed.result.rejected_result.level_evidence, /Missing second evidence/);
+    assert.doesNotThrow(() => validateWorkerParts(run, 'worker-1'));
+  }
+});
+
+test('a terminal FAILED slot cannot be replaced by a later passing payload', () => {
+  const run = fixture();
+  const { file, valid } = exhaustRetryBudget(run);
+  failWorkerResult(run, 'worker-1', 'a:1', 2);
+  const part = JSON.parse(readFileSync(file));
+  part.results[0] = { ...rawResult('a:1'), level_evidence: valid };
+  writeFileSync(file, JSON.stringify(part));
+  assert.equal(validatePartFromCli(run).status, 1);
+});
+
+test('read-only inspection of a finished run does not apply the live retry budget', () => {
+  const run = fixture();
+  const { file, part, valid } = exhaustRetryBudget(run);
+  part.results[0].level_evidence = valid;
+  writeFileSync(file, JSON.stringify(part));
+  writeFileSync(path.join(run, 'receipt.json'), JSON.stringify({ status: 'COMPLETE' }));
+  assert.equal(validatePartFromCli(run).status, 0);
+});
+
+test('the merge summary counts a lower-case failed status', () => {
+  const run = fixture();
+  const file = path.join(run, 'results/worker-1.part-1.json');
+  const part = JSON.parse(readFileSync(file));
+  part.results[0] = { posting_key: 'a:1', status: 'failed', attempts: 2, error: 'historical failure', report: null };
+  writeFileSync(file, JSON.stringify(part));
+  writeFileSync(path.join(run, 'results/worker-1.part-2.json'), JSON.stringify({ result_schema_version: 8, worker: 'worker-1', part: 2, results: [rawResult('c:3')] }));
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('../src/merge-worker-results.mjs', import.meta.url)), '--run', run, '--worker', 'worker-1', '--json'], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(JSON.parse(result.stdout).counts.failed, 1);
 });
 
 test('library and finalized-run validation stay read-only and legacy FAILED artifacts remain valid', () => {
@@ -428,6 +527,24 @@ test('merger uses the report threshold snapshotted in assignment runtime', () =>
   assignments.runtime.reporting.full_report_threshold = 3.5;
   writeFileSync(file, JSON.stringify(assignments));
   assert.throws(() => validateWorkerParts(run, 'worker-1'), /report payload must exist exactly for report candidates/);
+});
+
+test('a staff-equivalent result below a lowered threshold is not a report candidate', () => {
+  const run = fixture();
+  const file = path.join(run, 'assignments.json');
+  const assignments = JSON.parse(readFileSync(file, 'utf8'));
+  assignments.runtime.reporting.full_report_threshold = 3.5;
+  writeFileSync(file, JSON.stringify(assignments));
+  const below = key => rawResult(key, { fit_score: 3.0 });
+  writeFileSync(path.join(run, 'results/worker-1.part-1.json'), JSON.stringify({ result_schema_version: 8, worker: 'worker-1', part: 1,
+    results: [rawResult('a:1', { fit_score: 4.2, level_signal: 'staff_equivalent', rationale: 'Staff-equivalent scope is above the target level.' }), below('b:2')] }));
+  writeFileSync(path.join(run, 'results/worker-1.part-2.json'), JSON.stringify({ result_schema_version: 8, worker: 'worker-1', part: 2, results: [below('c:3')] }));
+  mergeWorkerResults(run, 'worker-1');
+  mergeWorkerResults(run, 'worker-2');
+  const loaded = loadScanResults(run);
+  assert.equal(loaded.byKey.get('a:1').score, 3.5);
+  assert.deepEqual(loaded.errors, []);
+  assert.deepEqual(loaded.candidates, []);
 });
 
 test('merger uses the retry limit snapshotted in assignment runtime', () => {

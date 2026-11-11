@@ -16,9 +16,9 @@ const BOOLEAN_FLAGS = new Set(['--latest-complete', '--json']);
 const SELECTABLE_STATUS = 'Evaluated';
 const LOCAL_TIME_ZONE = 'America/Los_Angeles';
 const PRIORITY = new Map([
-  ['greenhouse', 1], ['ashby', 2], ['microsoft', 3], ['oracle', 4],
-  ['workday', 5], ['rippling', 6], ['google', 7], ['lever', 8],
-  ['linkedin', 9], ['generic', 10],
+  ['greenhouse', 1], ['ashby', 2], ['icims', 3], ['microsoft', 4], ['oracle', 5],
+  ['workday', 6], ['rippling', 7], ['google', 8], ['lever', 9],
+  ['linkedin', 10], ['generic', 11],
 ]);
 
 function usage() {
@@ -200,7 +200,7 @@ function classifyPosting(value) {
   else if (host.endsWith('.oraclecloud.com')) ats = 'oracle';
 
   const tenant = fingerprint?.tenant || host;
-  const recipe = ['greenhouse', 'ashby', 'microsoft', 'oracle', 'workday', 'google', 'linkedin'].includes(ats) ? ats : 'generic';
+  const recipe = ['greenhouse', 'ashby', 'icims', 'microsoft', 'oracle', 'workday', 'google', 'linkedin'].includes(ats) ? ats : 'generic';
   return {
     ats,
     recipe,

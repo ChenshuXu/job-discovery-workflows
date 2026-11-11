@@ -6,14 +6,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadCareerInterfaces } from './commit-scan.mjs';
 import { matchExcludedEmployer } from './employer-exclusions.mjs';
-import { postingKey } from './posting-identity.mjs';
+import { postingKey, discoveryJdName } from './posting-identity.mjs';
 
 
 const moduleRoot = path.dirname(fileURLToPath(import.meta.url));
 const read = file => readFileSync(file, 'utf8');
 const json = file => JSON.parse(read(file));
 const exact = (items, label) => { if (items.length !== 1) throw new Error(`${label}: expected exactly one match, found ${items.length}`); return items[0]; };
-const safeKey = key => key.replace(/[^A-Za-z0-9._-]/g, '-');
 const canonical = url => { try { return postingKey(url); } catch { return null; } };
 const field = (text, name) => exact([...text.matchAll(new RegExp(`^\\*\\*${name}:\\*\\*[ \\t]*([^\\r\\n]*)`, 'gm'))], `JD ${name} header`)[1].trim();
 
@@ -91,7 +90,7 @@ function buildPlan({ runRoot, careerRoot, manifest, interfaces, trackerText }) {
     if (receipt.committed_evaluated_keys?.filter(value => value === key).length !== 1 || receipt.job_issue_keys?.includes(key)
         || receipt.reports?.some(item => item.posting_key === key)) throw new Error(`${key}: not an unreported committed posting`);
     const record = exact(acquisition.acquired.filter(item => item.primary_key === key), `${key}: acquisition`);
-    const sourceFile = containedFile(runRoot, record.jd_path), jdFile = containedFile(resolveCareerPaths(careerRoot).dataRoot, `jds/discovery-${manifest.run_id}-${safeKey(key)}.md`);
+    const sourceFile = containedFile(runRoot, record.jd_path), jdFile = containedFile(resolveCareerPaths(careerRoot).dataRoot, `jds/${discoveryJdName(manifest.run_id, key)}`);
     const sourceText = read(sourceFile), jdText = read(jdFile);
     if (sourceText !== jdText || field(jdText, 'Posting Key') !== key || field(jdText, 'URL') !== record.primary_url
         || field(jdText, 'Discovery Run') !== manifest.run_id || canonical(record.primary_url) !== key) throw new Error(`${key}: frozen/persisted JD identity or bytes changed`);

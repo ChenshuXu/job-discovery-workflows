@@ -41,7 +41,7 @@ try {
   const part = parse(file); part.results[0].report.hiring_manager_review = review; fx.write(file, part);
   const original = readFileSync(file, 'utf8'), before = JSON.stringify(treeManifest(fx.dataRoot));
   fx.write(path.join(run, 'assignments.json'), { ...plan, hiring_manager_review_version: 99 });
-  const wrongVersion = fx.run('reject-policy-version', script('merge-worker-results.mjs'), ['--run', run, '--worker', worker], { expect: 1 });
+  const wrongVersion = fx.run('reject-policy-version', script('merge-worker-results.mjs'), ['--run', run, '--worker', worker], { independentCase: true, expect: 1 });
   fx.check('unsupported review version is rejected', wrongVersion.stderr.includes('hiring_manager_review_version'));
   fx.write(path.join(run, 'assignments.json'), plan);
   for (const [name, mutate, error] of [
@@ -57,7 +57,7 @@ try {
     ['duplicate-concern', report => { report.hiring_manager_review.concerns[1] = structuredClone(report.hiring_manager_review.concerns[0]); }, 'duplicate'],
   ]) {
     const bad = JSON.parse(original); mutate(bad.results[0].report); fx.write(file, bad);
-    const rejected = fx.run(`reject-${name}`, script('merge-worker-results.mjs'), ['--run', run, '--worker', worker], { expect: 1 });
+    const rejected = fx.run(`reject-${name}`, script('merge-worker-results.mjs'), ['--run', run, '--worker', worker], { independentCase: true, expect: 1 });
     fx.check(`${name}: specific error and no candidate/report mutation`, rejected.stderr.includes(error) && JSON.stringify(treeManifest(fx.dataRoot)) === before);
     fx.write(file, original);
   }

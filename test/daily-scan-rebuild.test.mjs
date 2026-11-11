@@ -469,9 +469,32 @@ test('planner excludes nonlocal and ambiguous locations before worker assignment
   const career = careerFixture(root);
   captureBaseline({ runRoot: run, careerRoot: career });
   combineRun(run);
+  const unscoped = readFileSync(path.join(run, 'acquisition.json'), 'utf8');
+  const jdCopies = new Map(JSON.parse(unscoped).acquired.map(record => [record.jd_path, readFileSync(path.join(run, record.jd_path), 'utf8')]));
   const plan = planEvaluations(run, undefined, career).output;
   const acquisition = JSON.parse(readFileSync(path.join(run, 'acquisition.json')));
   assert.deepEqual(acquisition.keys.sort(), ['linkedin:linkedin.com:50000001', 'linkedin:linkedin.com:50000002']);
+  const scopedText = readFileSync(path.join(run, 'acquisition.json'), 'utf8');
+  const assignmentsText = readFileSync(path.join(run, 'assignments.json'), 'utf8');
+  const removedJds = [...jdCopies.keys()].filter(jdPath => !acquisition.acquired.some(record => record.jd_path === jdPath));
+  assert.equal(removedJds.length, 4);
+  // Recreate the state of a planner killed between its commit point and the acquisition swap.
+  const interrupt = () => {
+    writeFileSync(path.join(run, 'acquisition.scoped.json'), scopedText);
+    writeFileSync(path.join(run, 'acquisition.json'), unscoped);
+    writeFileSync(path.join(run, 'triage/scope-removals.json'), JSON.stringify({ jd_paths: removedJds }));
+    for (const jdPath of removedJds) writeFileSync(path.join(run, jdPath), jdCopies.get(jdPath));
+  };
+  interrupt();
+  assert.deepEqual(planEvaluations(run, undefined, career).output, plan, 'a planner killed after its commit point rolls forward');
+  assert.equal(readFileSync(path.join(run, 'acquisition.json'), 'utf8'), scopedText);
+  assert.ok(removedJds.every(jdPath => !existsSync(path.join(run, jdPath))));
+  assert.ok(!existsSync(path.join(run, 'acquisition.scoped.json')) && !existsSync(path.join(run, 'triage/scope-removals.json')));
+  interrupt();
+  unlinkSync(path.join(run, 'assignments.json'));
+  planEvaluations(run, undefined, career);
+  assert.equal(readFileSync(path.join(run, 'assignments.json'), 'utf8'), assignmentsText, 'a planner killed before its commit point plans again from the unscoped acquisition');
+  assert.equal(readFileSync(path.join(run, 'acquisition.json'), 'utf8'), scopedText);
   assert.deepEqual(Object.values(plan.assignments).flat().sort(), acquisition.keys.sort());
   assert.equal(acquisition.location_exclusion_count, 4);
   assert.equal(acquisition.location_ambiguous_count, 1);
@@ -582,6 +605,25 @@ test('canonical resolution merges the Ashby query-link duplicate before assignme
   assert.deepEqual(Object.values(planEvaluations(run, undefined, career).output.assignments).flat(), [key]);
 });
 
+test('canonical resolution ignores generic and competing links in a JD body', async t => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'daily-body-links-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const run = path.join(root, 'runs', 'run-1');
+  source(run, 'jobspy', {
+    '1000000301.md': markdown({ url: 'https://www.linkedin.com/jobs/view/1000000301', id: '1000000301', source: 'jobspy', extra: 'See our other role: https://jobs.acme.com/job/12345' }),
+    '1000000302.md': markdown({ url: 'https://www.linkedin.com/jobs/view/1000000302', id: '1000000302', source: 'jobspy', company: 'Other', extra: 'Teams: https://boards.greenhouse.io/acme/jobs/111 and https://boards.greenhouse.io/acme/jobs/222' }),
+  });
+  source(run, 'ego-browser', {});
+  source(run, 'jobright', {});
+  const career = careerFixture(root);
+  captureBaseline({ runRoot: run, careerRoot: career });
+  combineRun(run);
+  const { results } = await resolveCanonicalUrls(run);
+  assert.deepEqual(results.map(item => item.status), ['UNRESOLVED', 'UNRESOLVED']);
+  const acquisition = JSON.parse(readFileSync(path.join(run, 'acquisition.json')));
+  assert.deepEqual(acquisition.acquired.map(item => item.primary_key).sort(), ['linkedin:linkedin.com:1000000301', 'linkedin:linkedin.com:1000000302']);
+});
+
 test('fixture source merges one LinkedIn and Greenhouse posting, then completes exact-set closeout', async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'daily-multisource-'));
   const run = path.join(root, 'runs', 'run-1');
@@ -677,6 +719,42 @@ test('canonical URL resolution follows a Greenhouse tenant redirect without gues
   assert.deepEqual(requests, [sourceUrl, intermediateUrl].map(url => ({ url, options: { method: 'HEAD', redirect: 'manual' } })));
 });
 
+test('a failed Greenhouse redirect lookup is recorded as a lookup failure', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'daily-greenhouse-offline-'));
+  const run = path.join(root, 'runs', 'run-1');
+  source(run, 'jobspy', {});
+  source(run, 'ego-browser', {});
+  source(run, 'jobright', {
+    'examplepay.md': markdown({ url: 'https://app.greenhouse.io/embed/job_app?token=1000001', key: 'greenhouse:app.greenhouse.io:1000001',
+      source: 'jobright', company: 'Example Pay', role: 'Backend API Engineer' }),
+  });
+  combineRun(run);
+  await resolveCanonicalUrls(run, { fetchImpl: async () => { throw new Error('getaddrinfo ENOTFOUND'); } });
+  const [result] = JSON.parse(readFileSync(path.join(run, 'triage/canonical-url-resolutions.json'), 'utf8')).results;
+  assert.equal(result.status, 'UNRESOLVED');
+  assert.equal(result.reason, 'redirect lookup failed: getaddrinfo ENOTFOUND');
+});
+
+test('leftover JDs from an interrupted commit are isolated together, before any write', async () => {
+  const fx = bulkRun(8);
+  captureBaseline({ runRoot: fx.run, careerRoot: fx.career });
+  planEvaluations(fx.run, undefined, fx.career);
+  const records = new Map(JSON.parse(readFileSync(path.join(fx.run, 'acquisition.json'))).acquired.map(record => [record.primary_key, record]));
+  writeWorkerResults(fx.run, key => {
+    const record = records.get(key);
+    return { posting_key: key, score: 4.2, hard_exclusion: false, report: report(record.company, record.title, record.primary_url, key) };
+  });
+  const leftovers = [...records.keys()].sort().slice(0, 3);
+  for (const key of leftovers) write(path.join(fx.career, 'jds', `discovery-run-1-${key.replace(/[^A-Za-z0-9._-]/g, '-')}.md`), 'left by an interrupted commit');
+  const syncLog = path.join(fx.career, 'sync.log');
+  write(path.join(fx.career, 'tracker.mjs'), `import { appendFileSync } from 'node:fs';\nif (process.argv[2] !== 'sync') process.exitCode = 1;\nelse appendFileSync(${JSON.stringify(syncLog)}, 'sync\\n');\n`);
+  const { receipt } = await commitScan(fx.run, fx.career, '2026-08-07');
+  assert.equal(receipt.status, 'COMPLETE');
+  assert.deepEqual(receipt.job_issues.filter(item => item.code === 'JD_PERSIST_FAILED').map(item => item.posting_key).sort(), leftovers);
+  assert.equal(receipt.committed_evaluated_keys.length, 5);
+  assert.equal(readFileSync(syncLog, 'utf8'), 'sync\n', 'one tracker sync: no rollback cycle per leftover JD');
+});
+
 test('worker failures persist only committed history and complete whenever any posting succeeds', async () => {
   const fx = bulkRun(150, index => index === 5 ? 'U.S. citizenship is required.' : '');
   captureBaseline({ runRoot: fx.run, careerRoot: fx.career });
@@ -699,6 +777,7 @@ test('worker failures persist only committed history and complete whenever any p
   assert.deepEqual(receipt.hard_exclusion_keys, [hardExclusionKey]);
   const history = readFileSync(path.join(fx.career, 'data/scan-history.tsv'), 'utf8').split('\n').filter(line => line.includes('daily-scan:run-1'));
   assert.equal(history.length, 145);
+  assert.deepEqual([...new Set(history.map(line => line.split('\t')[1]))], ['2026-08-07'], 'scan history uses the run date, not the clock');
   for (const key of failedKeys) assert.doesNotMatch(history.join('\n'), new RegExp(key.split(':').at(-1)));
 });
 

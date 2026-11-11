@@ -6,7 +6,7 @@ import { estimateXmlPageFit } from '../page-fit.mjs';
 import { countWordPages } from '../page-count.mjs';
 import { enforcePageResult } from './resume-build.mjs';
 
-export function checkTemplate(templatePath = resolve('assets/cv-template.docx'), { source = loadCvSource(), countPages = countWordPages } = {}) {
+function checkTemplate(templatePath = resolve('assets/cv-template.docx'), { source = loadCvSource(), countPages = countWordPages } = {}) {
   const baseline = buildTemplateBaseline({ templatePath, source });
   const fit = estimateXmlPageFit({
     documentXml: readDocxEntry(templatePath, 'word/document.xml').toString('utf8'),

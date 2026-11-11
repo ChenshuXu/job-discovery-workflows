@@ -157,6 +157,16 @@ test('requires every TODO to identify exactly one active process', () => {
   );
 });
 
+test('an Identity that is the start of another Identity is not matched inside it', () => {
+  const short = '| action:acme |  | Acme | Backend Engineer | Recruiter Screen |  | Action Required | 2000-01-01 | First process. |';
+  const longer = '| action:acme-onsite |  | Acme | Backend Engineer | Onsite |  | Action Required | 2000-01-01 | Second process. |';
+  const parsed = validateActiveInterviews(document({
+    active: [short, longer],
+    todos: ['- [ ] **Acme / action:acme-onsite：** book travel', '- [ ] **Acme / action:acme：** send availability'],
+  }));
+  assert.deepEqual(parsed.todos.map(todo => todo.identity), ['action:acme-onsite', 'action:acme']);
+});
+
 test('admitted identities persist and reopened terminal history remains visible', () => {
   const active = TRACKED.replace('Action Required', 'Waiting');
   const previous = validateActiveInterviews(document({ active: [active], archived: [ARCHIVED] }));

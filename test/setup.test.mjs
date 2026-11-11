@@ -11,16 +11,17 @@ test('setup is create-only, selection-aware and resolves all linked Skills outsi
   for (const name of ['package.json', 'src', '.agents']) cpSync(name, path.join(root, name), { recursive: true });
   const examples = existsSync('release/overrides/config') ? 'release/overrides/config' : 'config';
   cpSync(examples, path.join(root, 'config'), { recursive: true, filter: file => file === examples || file.endsWith('.example.json') });
-  const preview = setup({ root, workflows: ['google-ats'], links });
-  assert.deepEqual(preview.writes.filter(x => !path.isAbsolute(x)), ['config/google-ats-direct.json']);
+  const jobright = { workflows: ['daily-scan'], sources: ['jobright'] };
+  const preview = setup({ root, ...jobright, links });
+  assert.deepEqual(preview.writes.filter(x => !path.isAbsolute(x)).sort(),
+    ['config/daily-scan-runtime.json', 'config/discovery-adapters.v1.json', 'config/jobright.json']);
   assert.equal(existsSync(links), false);
-  setup({ root, workflows: ['google-ats'], links, apply: true });
-  const file = path.join(root, 'config/google-ats-direct.json');
-  const config = JSON.parse(readFileSync(file)); config.role_terms = ['user choice']; writeFileSync(file, JSON.stringify(config));
+  setup({ root, ...jobright, links, apply: true });
+  const file = path.join(root, 'config/jobright.json');
+  const config = JSON.parse(readFileSync(file)); config.min_jd_chars = 321; writeFileSync(file, JSON.stringify(config));
   const before = readFileSync(file, 'utf8');
-  const second = setup({ root, workflows: ['google-ats'], links, apply: true });
+  const second = setup({ root, ...jobright, links, apply: true });
   assert.deepEqual(second.writes, []); assert.equal(readFileSync(file, 'utf8'), before);
-  assert.ok(second.results[0].checks.every(x => !x.id.startsWith('career-ops:')));
   for (const skill of readdirSync(links)) assert.equal(skillRoot(path.join(links, skill, 'SKILL.md')), root);
   assert.deepEqual(readdirSync(links).sort(), readdirSync(path.join(root, '.agents/skills')).sort());
   const infographic = setup({ root, workflows: ['process-infographic'] });
@@ -39,11 +40,11 @@ test('setup is create-only, selection-aware and resolves all linked Skills outsi
     else process.env.CAREER_OPS_CODE_ROOT = priorCareerOps;
   }
   const first = path.join(links, readdirSync(links)[0]); rmSync(first); mkdirSync(first);
-  assert.throws(() => setup({ root, workflows: ['google-ats'], links, apply: true }), /conflict/);
+  assert.throws(() => setup({ root, ...jobright, links, apply: true }), /conflict/);
   assert.throws(() => setup({ root, workflows: ['daily-scan'] }), /sources/);
   assert.throws(() => setup({ root, workflows: ['unknown'] }), /Unknown/);
   const outside = path.join(dir, 'outside'); writeFileSync(outside, 'private'); rmSync(file); symlinkSync(outside, file);
-  assert.throws(() => setup({ root, workflows: ['google-ats'], apply: true }), /Symlink/);
+  assert.throws(() => setup({ root, ...jobright, apply: true }), /Symlink/);
   assert.equal(readFileSync(outside, 'utf8'), 'private');
 });
 

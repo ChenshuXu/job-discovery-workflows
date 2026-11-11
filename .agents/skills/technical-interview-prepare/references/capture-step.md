@@ -14,21 +14,22 @@
    BBS 的导航间隔放在下一次动作前；本次动作返回立即取正文，不先固定等待 10 秒而错过
    自动返回的提示。易消失的提示另保存可见提示区域/截图；多次观察可追加快照，不覆盖首帧。
 
-下面是观察与落盘片段，放在完成本次单一页面动作后。`output` 换成本次公司归档下
-包含 worker、递增步号的绝对路径；task space、tab 和动作按已观察状态填写，不复制占位值。
+下面是观察与落盘片段，放在完成本次单一页面动作后。`page` 是本步已用
+`taskSpace(<id>).page("<label>")` 取得的 Page；`output` 换成本次公司归档下包含 worker、
+递增步号的绝对路径；空间 ID、Page label 和动作按已观察状态填写，不复制占位值。
 
 ```javascript
 const fs = await import('node:fs');
-const page = await js(String.raw`(() => ({
+const capture = await page.evaluate(() => ({
   url: location.href,
   title: document.title,
   text: document.body?.innerText || '',
   links: [...document.querySelectorAll('a')].map(a => ({text: a.innerText, url: a.href}))
-}))()`);
-page.captured_at = new Date().toISOString();
-fs.writeFileSync(output, JSON.stringify(page, null, 2) + '\n', {flag: 'wx'});
-cliLog({capture: output, url: page.url, title: page.title});
-// 可在此按需截取同页图片；读取保存结果后，才在新 heredoc 中执行下一次页面动作。
+}));
+capture.captured_at = new Date().toISOString();
+fs.writeFileSync(output, JSON.stringify(capture, null, 2) + '\n', {flag: 'wx'});
+console.log(JSON.stringify({capture: output, url: capture.url, title: capture.title}));
+// 可在此用 page.screenshot({ path }) 截取同页图片；读取保存结果后，才在新 heredoc 中执行下一次页面动作。
 ```
 
 4. 运行 `python3 scripts/check_capture.py /absolute/path/to/capture.json`（脚本相对 Skill）。
